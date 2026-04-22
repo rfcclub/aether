@@ -1,0 +1,12 @@
+bin/
+obj/
+
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+.vs/
+store/*.db
+store/*.db-*
+.claude/settings.local.json
