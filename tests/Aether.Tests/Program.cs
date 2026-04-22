@@ -211,6 +211,15 @@ static async Task VerifyOpenRouterProviderAsync()
         Messages: new[]
         {
             LlmMessage.User("List files"),
+            LlmMessage.AssistantToolCalls(
+                "",
+                new[]
+                {
+                    new LlmToolCall(
+                        Id: "call-1",
+                        Name: "glob",
+                        Arguments: new Dictionary<string, string> { ["pattern"] = "*.cs" })
+                }),
             LlmMessage.ToolResult("call-1", "glob", "src/Aether/Program.cs")
         },
         Tools: new[]
@@ -266,6 +275,7 @@ static async Task VerifyOpenRouterProviderAsync()
     Require(toolResponse.ToolCalls[0].Name == "glob", "OpenRouterProvider must parse tool call name.");
     Require(toolResponse.ToolCalls[0].Arguments["pattern"] == "*.cs", "OpenRouterProvider must parse tool call arguments.");
     Require(toolHandler.LastBody.Contains("\"tools\"", StringComparison.Ordinal), "OpenRouterProvider must send tool definitions.");
+    Require(toolHandler.LastBody.Contains("\"tool_calls\"", StringComparison.Ordinal), "OpenRouterProvider must send assistant tool-call messages.");
     Require(toolHandler.LastBody.Contains("\"role\":\"tool\"", StringComparison.Ordinal), "OpenRouterProvider must send tool result messages.");
     Require(toolHandler.LastBody.Contains("\"tool_call_id\":\"call-1\"", StringComparison.Ordinal), "OpenRouterProvider must send tool call ids for tool results.");
 
@@ -599,6 +609,34 @@ static async Task VerifyAetherSoulAsync(string root)
         Require(history.Count == 2, "AetherSoul must save user and assistant messages.");
         Require(history[0].Content == "hello", "AetherSoul must save user prompt.");
         Require(history[1].Content == "ack", "AetherSoul must save assistant response.");
+
+        var toolProvider = new FakeProvider(
+            new LlmResponse(
+                "",
+                new[]
+                {
+                    new LlmToolCall(
+                        Id: "call-1",
+                        Name: "read",
+                        Arguments: new Dictionary<string, string> { ["path"] = "notes.txt" })
+                }),
+            new LlmResponse("tool result final"));
+        var toolExecutor = new CapturingToolExecutor(new ToolResult(true, "file contents"));
+        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions);
+
+        var toolResponse = await toolSoul.ProcessAsync("tools", "inspect notes", CancellationToken.None);
+
+        Require(toolResponse.Content == "tool result final", "AetherSoul must return final provider content after tool calls.");
+        Require(toolProvider.Requests.Count == 2, "AetherSoul must continue the LLM loop after a tool call.");
+        Require(toolProvider.Requests[0].Tools is { Count: > 0 }, "AetherSoul must send built-in tool definitions to the provider.");
+        Require(toolProvider.Requests[0].Tools!.Any(tool => tool.Name == "read"), "AetherSoul must include the read tool definition.");
+        Require(toolExecutor.Calls.Count == 1, "AetherSoul must execute requested tool calls.");
+        Require(toolExecutor.Calls[0].Name == "read", "AetherSoul must execute the requested tool name.");
+        Require(toolProvider.Requests[1].Messages.Any(message =>
+            message.Role == "tool"
+            && message.ToolCallId == "call-1"
+            && message.ToolName == "read"
+            && message.Content.Contains("file contents", StringComparison.Ordinal)), "AetherSoul must send tool results back to the provider.");
     }
     finally
     {
@@ -683,18 +721,48 @@ internal sealed class CaptureHandler : HttpMessageHandler
 
 internal sealed class FakeProvider : ILLMProvider
 {
-    private readonly string _response;
+    private readonly Queue<LlmResponse> _responses;
 
     public FakeProvider(string response)
+        : this(new LlmResponse(response))
     {
-        _response = response;
     }
 
     public LlmRequest? LastRequest { get; private set; }
+    public List<LlmRequest> Requests { get; } = new();
+
+    public FakeProvider(params LlmResponse[] responses)
+    {
+        _responses = new Queue<LlmResponse>(responses);
+    }
 
     public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
         LastRequest = request;
-        return Task.FromResult(new LlmResponse(_response));
+        Requests.Add(request);
+        if (_responses.Count == 0)
+        {
+            throw new InvalidOperationException("FakeProvider has no more responses.");
+        }
+
+        return Task.FromResult(_responses.Dequeue());
+    }
+}
+
+internal sealed class CapturingToolExecutor : IToolExecutor
+{
+    private readonly ToolResult _result;
+
+    public CapturingToolExecutor(ToolResult result)
+    {
+        _result = result;
+    }
+
+    public List<ToolCall> Calls { get; } = new();
+
+    public Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+    {
+        Calls.Add(call);
+        return Task.FromResult(_result);
     }
 }

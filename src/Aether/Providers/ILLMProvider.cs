@@ -13,13 +13,19 @@ public sealed record LlmMessage(
     string Role,
     string Content,
     string? ToolCallId = null,
-    string? ToolName = null)
+    string? ToolName = null,
+    IReadOnlyList<LlmToolCall>? ToolCalls = null)
 {
     public static LlmMessage System(string content) => new("system", content);
 
     public static LlmMessage User(string content) => new("user", content);
 
     public static LlmMessage Assistant(string content) => new("assistant", content);
+
+    public static LlmMessage AssistantToolCalls(string content, IReadOnlyList<LlmToolCall> toolCalls)
+    {
+        return new LlmMessage("assistant", content, ToolCalls: toolCalls);
+    }
 
     public static LlmMessage ToolResult(string toolCallId, string toolName, string content)
     {

@@ -82,6 +82,25 @@ public sealed class OpenRouterProvider : ILLMProvider
             };
         }
 
+        if (message.Role == "assistant" && message.ToolCalls is { Count: > 0 })
+        {
+            return new
+            {
+                role = "assistant",
+                content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+                tool_calls = message.ToolCalls.Select(call => new
+                {
+                    id = call.Id,
+                    type = "function",
+                    function = new
+                    {
+                        name = call.Name,
+                        arguments = JsonSerializer.Serialize(call.Arguments, JsonOptions)
+                    }
+                }).ToArray()
+            };
+        }
+
         return new
         {
             role = message.Role,

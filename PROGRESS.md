@@ -86,6 +86,16 @@ Status: Completed
 - Updated OpenRouter response parsing for assistant tool calls.
 - Added smoke coverage for tool definitions, tool result messages, and parsed tool calls.
 
+### AetherSoul Tool-Loop Slice
+
+Status: Completed
+
+- Added built-in tool definitions for `read`, `glob`, `grep`, `bash`, `write`, and `edit`.
+- Taught `AetherSoul` to continue provider calls when assistant tool calls are returned.
+- Executes requested tools through `IToolExecutor` and appends tool-result messages.
+- Preserves assistant tool-call messages so OpenRouter receives a valid tool-result conversation shape.
+- Added smoke coverage for tool execution, provider continuation, tool definitions, and tool-result messages.
+
 ## In Progress
 
 No active implementation task is in progress.
@@ -94,11 +104,10 @@ No active implementation task is in progress.
 
 Track B next:
 
-1. Implement the sandboxed `bash` slice with timeout, output truncation, and bwrap/process backend tests.
-2. Add mutating built-in `write` and `edit` tools after the bash/path-safety slice is verified.
-3. Extend `ILLMProvider` contracts for tool calls using the Anthropic/OpenRouter tool-use shape.
-4. Teach `AetherSoul` to loop through provider tool calls and tool results.
-5. Add token-budgeted session history trimming before full compaction.
+1. Add token-budgeted session history trimming before full compaction.
+2. Persist or summarize tool turns in session history if real-provider use shows the next request needs more than final assistant text.
+3. Add more direct OpenRouter real-provider smoke around tool calls with `--api-key-file`.
+4. Harden sandbox backends beyond the current process-backed implementation.
 
 Track A later:
 
