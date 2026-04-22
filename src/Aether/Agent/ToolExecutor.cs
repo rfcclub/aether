@@ -33,7 +33,8 @@ public sealed class ToolExecutor : IToolExecutor
             "glob" => GlobAsync(call, ct),
             "grep" => GrepAsync(call, ct),
             "bash" => BashAsync(call, ct),
-            "write" or "edit" => Task.FromResult(new ToolResult(false, "", $"Tool not enabled yet: {call.Name}")),
+            "write" => WriteAsync(call, ct),
+            "edit" => EditAsync(call, ct),
             _ => Task.FromResult(new ToolResult(false, "", $"Unknown tool: {call.Name}"))
         };
     }
@@ -185,6 +186,56 @@ public sealed class ToolExecutor : IToolExecutor
         {
             return new ToolResult(false, "", $"Command failed: {ex.Message}");
         }
+    }
+
+    private async Task<ToolResult> WriteAsync(ToolCall call, CancellationToken ct)
+    {
+        var path = Required(call, "path");
+        var content = Required(call, "content");
+        if (!IsPathAllowed(path))
+        {
+            return new ToolResult(false, "", "Path not permitted");
+        }
+
+        var parent = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!string.IsNullOrWhiteSpace(parent))
+        {
+            if (!IsPathAllowed(parent))
+            {
+                return new ToolResult(false, "", "Path not permitted");
+            }
+
+            Directory.CreateDirectory(parent);
+        }
+
+        await File.WriteAllTextAsync(path, content, ct);
+        return new ToolResult(true, $"Wrote {path}");
+    }
+
+    private async Task<ToolResult> EditAsync(ToolCall call, CancellationToken ct)
+    {
+        var path = Required(call, "path");
+        var oldText = Required(call, "old");
+        var newText = Required(call, "new");
+        if (!IsPathAllowed(path))
+        {
+            return new ToolResult(false, "", "Path not permitted");
+        }
+
+        if (!File.Exists(path))
+        {
+            return new ToolResult(false, "", "File not found");
+        }
+
+        var content = await File.ReadAllTextAsync(path, ct);
+        if (!content.Contains(oldText, StringComparison.Ordinal))
+        {
+            return new ToolResult(false, "", "Text not found");
+        }
+
+        var updated = content.Replace(oldText, newText, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(path, updated, ct);
+        return new ToolResult(true, $"Edited {path}");
     }
 
     private bool IsPathAllowed(string path)

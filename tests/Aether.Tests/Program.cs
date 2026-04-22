@@ -421,14 +421,48 @@ static async Task VerifyToolExecutorAsync()
         Require(bashTruncated.Succeeded, "ToolExecutor bash must succeed even when output is truncated.");
         Require(bashTruncated.Output.Contains("[truncated]", StringComparison.Ordinal), "ToolExecutor bash must mark truncated output.");
 
-        foreach (var disabledTool in new[] { "write", "edit" })
-        {
-            var disabled = await executor.ExecuteAsync(
-                new ToolCall(disabledTool, new Dictionary<string, string>()),
-                CancellationToken.None);
-            Require(!disabled.Succeeded, $"ToolExecutor must keep {disabledTool} disabled until the mutating-tool slice.");
-            Require(disabled.Error == $"Tool not enabled yet: {disabledTool}", $"ToolExecutor must explain that {disabledTool} is not enabled yet.");
-        }
+        var writePath = Path.Combine(sandboxRoot, "created", "new.txt");
+        var write = await executor.ExecuteAsync(
+            new ToolCall("write", new Dictionary<string, string>
+            {
+                ["path"] = writePath,
+                ["content"] = "new file contents"
+            }),
+            CancellationToken.None);
+        Require(write.Succeeded, "ToolExecutor write must create files inside allowed paths.");
+        Require(await File.ReadAllTextAsync(writePath) == "new file contents", "ToolExecutor write must persist content.");
+
+        var writeDenied = await executor.ExecuteAsync(
+            new ToolCall("write", new Dictionary<string, string>
+            {
+                ["path"] = outsidePath,
+                ["content"] = "leak"
+            }),
+            CancellationToken.None);
+        Require(!writeDenied.Succeeded, "ToolExecutor write must reject files outside allowed paths.");
+        Require(writeDenied.Error == "Path not permitted", "ToolExecutor write denied path must use the expected error.");
+
+        var edit = await executor.ExecuteAsync(
+            new ToolCall("edit", new Dictionary<string, string>
+            {
+                ["path"] = notesPath,
+                ["old"] = "beta needle",
+                ["new"] = "beta replaced"
+            }),
+            CancellationToken.None);
+        Require(edit.Succeeded, "ToolExecutor edit must replace existing text.");
+        Require((await File.ReadAllTextAsync(notesPath)).Contains("beta replaced", StringComparison.Ordinal), "ToolExecutor edit must write replacement text.");
+
+        var editMissing = await executor.ExecuteAsync(
+            new ToolCall("edit", new Dictionary<string, string>
+            {
+                ["path"] = notesPath,
+                ["old"] = "missing text",
+                ["new"] = "replacement"
+            }),
+            CancellationToken.None);
+        Require(!editMissing.Succeeded, "ToolExecutor edit must fail when old text is absent.");
+        Require(editMissing.Error == "Text not found", "ToolExecutor edit missing text must use the expected error.");
 
         var unknown = await executor.ExecuteAsync(
             new ToolCall("nope", new Dictionary<string, string>()),

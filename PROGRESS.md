@@ -69,6 +69,14 @@ Status: Completed
 - Added output capture and truncation.
 - Added smoke coverage for success, denied cwd, non-zero exit, timeout, and truncation.
 
+### Tool Executor Mutating-Tool Slice
+
+Status: Completed
+
+- Added allowed-path `write` support.
+- Added allowed-path text replacement `edit` support.
+- Added smoke coverage for file creation, rejected outside writes, successful edits, and missing-text edit failures.
+
 ## In Progress
 
 No active implementation task is in progress.
