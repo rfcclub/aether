@@ -25,15 +25,18 @@ public sealed class OpenRouterProvider : ILLMProvider
     {
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions");
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-        httpRequest.Content = JsonContent.Create(new
+        var body = new Dictionary<string, object?>
         {
-            model = _options.Model,
-            messages = request.Messages.Select(message => new
-            {
-                role = message.Role,
-                content = message.Content
-            })
-        }, options: JsonOptions);
+            ["model"] = _options.Model,
+            ["messages"] = request.Messages.Select(ToOpenRouterMessage).ToArray()
+        };
+
+        if (request.Tools is { Count: > 0 })
+        {
+            body["tools"] = request.Tools.Select(ToOpenRouterTool).ToArray();
+        }
+
+        httpRequest.Content = JsonContent.Create(body, options: JsonOptions);
 
         using var response = await _client.SendAsync(httpRequest, ct);
         if (!response.IsSuccessStatusCode)
@@ -46,18 +49,83 @@ public sealed class OpenRouterProvider : ILLMProvider
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
 
-        var content = document.RootElement
+        var message = document.RootElement
             .GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString();
+            .GetProperty("message");
 
-        if (string.IsNullOrWhiteSpace(content))
+        var content = "";
+        if (message.TryGetProperty("content", out var contentElement)
+            && contentElement.ValueKind != JsonValueKind.Null)
         {
-            throw new InvalidOperationException("OpenRouter response did not contain assistant content.");
+            content = contentElement.GetString() ?? "";
         }
 
-        return new LlmResponse(content);
+        var toolCalls = ParseToolCalls(message);
+        if (string.IsNullOrWhiteSpace(content) && toolCalls.Count == 0)
+        {
+            throw new InvalidOperationException("OpenRouter response did not contain assistant content or tool calls.");
+        }
+
+        return new LlmResponse(content, toolCalls);
+    }
+
+    private static object ToOpenRouterMessage(LlmMessage message)
+    {
+        if (message.Role == "tool")
+        {
+            return new
+            {
+                role = "tool",
+                tool_call_id = message.ToolCallId,
+                name = message.ToolName,
+                content = message.Content
+            };
+        }
+
+        return new
+        {
+            role = message.Role,
+            content = message.Content
+        };
+    }
+
+    private static object ToOpenRouterTool(LlmTool tool)
+    {
+        using var parameters = JsonDocument.Parse(tool.ParametersJson);
+        return new
+        {
+            type = "function",
+            function = new
+            {
+                name = tool.Name,
+                description = tool.Description,
+                parameters = parameters.RootElement.Clone()
+            }
+        };
+    }
+
+    private static IReadOnlyList<LlmToolCall> ParseToolCalls(JsonElement message)
+    {
+        if (!message.TryGetProperty("tool_calls", out var callsElement)
+            || callsElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<LlmToolCall>();
+        }
+
+        var calls = new List<LlmToolCall>();
+        foreach (var callElement in callsElement.EnumerateArray())
+        {
+            var id = callElement.GetProperty("id").GetString() ?? "";
+            var function = callElement.GetProperty("function");
+            var name = function.GetProperty("name").GetString() ?? "";
+            var argumentsJson = function.GetProperty("arguments").GetString() ?? "{}";
+            var arguments = JsonSerializer.Deserialize<Dictionary<string, string>>(argumentsJson, JsonOptions)
+                ?? new Dictionary<string, string>();
+
+            calls.Add(new LlmToolCall(id, name, arguments));
+        }
+
+        return calls;
     }
 }
 

@@ -207,6 +207,68 @@ static async Task VerifyOpenRouterProviderAsync()
     Require(handler.LastBody.Contains("\"model\":\"openai/gpt-test\"", StringComparison.Ordinal), "OpenRouterProvider must send the configured model.");
     Require(handler.LastBody.Contains("\"role\":\"user\"", StringComparison.Ordinal), "OpenRouterProvider must send chat messages.");
 
+    var toolRequest = new LlmRequest(
+        Messages: new[]
+        {
+            LlmMessage.User("List files"),
+            LlmMessage.ToolResult("call-1", "glob", "src/Aether/Program.cs")
+        },
+        Tools: new[]
+        {
+            new LlmTool(
+                Name: "glob",
+                Description: "Find files by pattern.",
+                ParametersJson: """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "pattern": { "type": "string" }
+                      },
+                      "required": ["pattern"]
+                    }
+                    """)
+        });
+
+    var toolHandler = new CaptureHandler("""
+        {
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                      "name": "glob",
+                      "arguments": "{\"pattern\":\"*.cs\",\"root\":\"src\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """);
+    using var toolClient = new HttpClient(toolHandler)
+    {
+        BaseAddress = new Uri("https://openrouter.ai/api/v1/")
+    };
+    var toolProvider = new OpenRouterProvider(
+        toolClient,
+        new OpenRouterOptions("test-key", "openai/gpt-test", "https://openrouter.ai/api/v1"));
+
+    var toolResponse = await toolProvider.CompleteAsync(toolRequest, CancellationToken.None);
+    Require(toolResponse.Content == "", "OpenRouterProvider must allow empty assistant content when tool calls are present.");
+    Require(toolResponse.ToolCalls is not null && toolResponse.ToolCalls.Count == 1, "OpenRouterProvider must parse tool calls.");
+    Require(toolResponse.ToolCalls![0].Id == "call-1", "OpenRouterProvider must parse tool call id.");
+    Require(toolResponse.ToolCalls[0].Name == "glob", "OpenRouterProvider must parse tool call name.");
+    Require(toolResponse.ToolCalls[0].Arguments["pattern"] == "*.cs", "OpenRouterProvider must parse tool call arguments.");
+    Require(toolHandler.LastBody.Contains("\"tools\"", StringComparison.Ordinal), "OpenRouterProvider must send tool definitions.");
+    Require(toolHandler.LastBody.Contains("\"role\":\"tool\"", StringComparison.Ordinal), "OpenRouterProvider must send tool result messages.");
+    Require(toolHandler.LastBody.Contains("\"tool_call_id\":\"call-1\"", StringComparison.Ordinal), "OpenRouterProvider must send tool call ids for tool results.");
+
     var errorHandler = new CaptureHandler("""{"error":{"message":"model is unavailable"}}""", HttpStatusCode.BadRequest);
     using var errorClient = new HttpClient(errorHandler)
     {

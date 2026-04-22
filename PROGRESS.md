@@ -77,6 +77,15 @@ Status: Completed
 - Added allowed-path text replacement `edit` support.
 - Added smoke coverage for file creation, rejected outside writes, successful edits, and missing-text edit failures.
 
+### Provider Tool-Call Contract Slice
+
+Status: Completed
+
+- Extended provider contracts with tool definitions, tool result messages, and assistant tool calls.
+- Updated OpenRouter request serialization for OpenAI-compatible tools.
+- Updated OpenRouter response parsing for assistant tool calls.
+- Added smoke coverage for tool definitions, tool result messages, and parsed tool calls.
+
 ## In Progress
 
 No active implementation task is in progress.
