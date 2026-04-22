@@ -59,6 +59,16 @@ Status: Completed
 - Kept `bash`, `write`, and `edit` explicitly disabled until the sandbox/mutating-tool slice is implemented.
 - Added smoke coverage for allowed reads, rejected outside-path reads, recursive glob, recursive grep, disabled future tools, and unknown-tool errors.
 
+### Tool Executor Bash Slice
+
+Status: Completed
+
+- Added sandboxed `bash` execution through `ToolExecutor`.
+- Enforced allowed working directories.
+- Added timeout handling and process-tree cleanup.
+- Added output capture and truncation.
+- Added smoke coverage for success, denied cwd, non-zero exit, timeout, and truncation.
+
 ## In Progress
 
 No active implementation task is in progress.

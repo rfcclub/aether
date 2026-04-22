@@ -356,12 +356,77 @@ static async Task VerifyToolExecutorAsync()
         Require(grepWithContext.Output.Contains("notes.txt:1-alpha", StringComparison.Ordinal), "ToolExecutor grep must include before-context lines.");
         Require(grepWithContext.Output.Contains("notes.txt:3-gamma", StringComparison.Ordinal), "ToolExecutor grep must include after-context lines.");
 
-        foreach (var disabledTool in new[] { "bash", "write", "edit" })
+        var bash = await executor.ExecuteAsync(
+            new ToolCall("bash", new Dictionary<string, string>
+            {
+                ["cwd"] = sandboxRoot,
+                ["command"] = ShellEchoCommand("hello from bash")
+            }),
+            CancellationToken.None);
+        Require(bash.Succeeded, "ToolExecutor bash must succeed for allowed cwd.");
+        Require(bash.Output.Contains("hello from bash", StringComparison.Ordinal), "ToolExecutor bash must return stdout.");
+
+        var bashDenied = await executor.ExecuteAsync(
+            new ToolCall("bash", new Dictionary<string, string>
+            {
+                ["cwd"] = outsideRoot,
+                ["command"] = "pwd"
+            }),
+            CancellationToken.None);
+        Require(!bashDenied.Succeeded, "ToolExecutor bash must reject cwd outside allowed paths.");
+        Require(bashDenied.Error == "Path not permitted", "ToolExecutor bash denied cwd must use the expected error.");
+
+        var bashExit = await executor.ExecuteAsync(
+            new ToolCall("bash", new Dictionary<string, string>
+            {
+                ["cwd"] = sandboxRoot,
+                ["command"] = ShellStderrAndExitCommand("bad news", 7)
+            }),
+            CancellationToken.None);
+        Require(!bashExit.Succeeded, "ToolExecutor bash must fail on non-zero exit codes.");
+        Require(bashExit.Error == "Command exited with code 7", "ToolExecutor bash must report non-zero exit code.");
+        Require(bashExit.Output.Contains("bad news", StringComparison.Ordinal), "ToolExecutor bash must include stderr in output.");
+
+        var shortTimeoutExecutor = new ToolExecutor(new SandboxOptions(
+            Type: "process",
+            TimeoutMs: 100,
+            MaxMemoryMb: 128,
+            NetworkEnabled: false,
+            AllowedPaths: new[] { sandboxRoot },
+            MaxOutputBytes: 65536));
+        var bashTimeout = await shortTimeoutExecutor.ExecuteAsync(
+            new ToolCall("bash", new Dictionary<string, string>
+            {
+                ["cwd"] = sandboxRoot,
+                ["command"] = ShellSleepCommand(2)
+            }),
+            CancellationToken.None);
+        Require(!bashTimeout.Succeeded, "ToolExecutor bash must fail when a command times out.");
+        Require(bashTimeout.Error == "Command timed out", "ToolExecutor bash timeout must use the expected error.");
+
+        var truncatingExecutor = new ToolExecutor(new SandboxOptions(
+            Type: "process",
+            TimeoutMs: 1000,
+            MaxMemoryMb: 128,
+            NetworkEnabled: false,
+            AllowedPaths: new[] { sandboxRoot },
+            MaxOutputBytes: 12));
+        var bashTruncated = await truncatingExecutor.ExecuteAsync(
+            new ToolCall("bash", new Dictionary<string, string>
+            {
+                ["cwd"] = sandboxRoot,
+                ["command"] = ShellEchoCommand("abcdefghijklmnopqrstuvwxyz")
+            }),
+            CancellationToken.None);
+        Require(bashTruncated.Succeeded, "ToolExecutor bash must succeed even when output is truncated.");
+        Require(bashTruncated.Output.Contains("[truncated]", StringComparison.Ordinal), "ToolExecutor bash must mark truncated output.");
+
+        foreach (var disabledTool in new[] { "write", "edit" })
         {
             var disabled = await executor.ExecuteAsync(
                 new ToolCall(disabledTool, new Dictionary<string, string>()),
                 CancellationToken.None);
-            Require(!disabled.Succeeded, $"ToolExecutor must keep {disabledTool} disabled in the safe-tool slice.");
+            Require(!disabled.Succeeded, $"ToolExecutor must keep {disabledTool} disabled until the mutating-tool slice.");
             Require(disabled.Error == $"Tool not enabled yet: {disabledTool}", $"ToolExecutor must explain that {disabledTool} is not enabled yet.");
         }
 
@@ -383,6 +448,27 @@ static async Task VerifyToolExecutorAsync()
             Directory.Delete(outsideRoot, recursive: true);
         }
     }
+}
+
+static string ShellEchoCommand(string text)
+{
+    return OperatingSystem.IsWindows()
+        ? $"echo {text}"
+        : $"printf '{text}'";
+}
+
+static string ShellStderrAndExitCommand(string text, int exitCode)
+{
+    return OperatingSystem.IsWindows()
+        ? $"echo {text} 1>&2 & exit /b {exitCode}"
+        : $"printf '{text}' >&2; exit {exitCode}";
+}
+
+static string ShellSleepCommand(int seconds)
+{
+    return OperatingSystem.IsWindows()
+        ? $"powershell -NoProfile -Command \"Start-Sleep -Seconds {seconds}\""
+        : $"sleep {seconds}";
 }
 
 static async Task VerifyAetherSoulAsync(string root)

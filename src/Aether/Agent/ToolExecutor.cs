@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
@@ -6,6 +7,7 @@ namespace Aether.Agent;
 
 public sealed class ToolExecutor : IToolExecutor
 {
+    private readonly SandboxOptions _options;
     private readonly string[] _allowedPaths;
 
     public ToolExecutor(IConfiguration configuration)
@@ -15,6 +17,7 @@ public sealed class ToolExecutor : IToolExecutor
 
     public ToolExecutor(SandboxOptions options)
     {
+        _options = options;
         _allowedPaths = options.AllowedPaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.GetFullPath(path))
@@ -29,7 +32,8 @@ public sealed class ToolExecutor : IToolExecutor
             "read" => ReadAsync(call, ct),
             "glob" => GlobAsync(call, ct),
             "grep" => GrepAsync(call, ct),
-            "bash" or "write" or "edit" => Task.FromResult(new ToolResult(false, "", $"Tool not enabled yet: {call.Name}")),
+            "bash" => BashAsync(call, ct),
+            "write" or "edit" => Task.FromResult(new ToolResult(false, "", $"Tool not enabled yet: {call.Name}")),
             _ => Task.FromResult(new ToolResult(false, "", $"Unknown tool: {call.Name}"))
         };
     }
@@ -132,6 +136,57 @@ public sealed class ToolExecutor : IToolExecutor
         return new ToolResult(true, output.ToString().TrimEnd());
     }
 
+    private async Task<ToolResult> BashAsync(ToolCall call, CancellationToken ct)
+    {
+        var command = Required(call, "command");
+        var cwd = call.Arguments.TryGetValue("cwd", out var configuredCwd) ? configuredCwd : FirstAllowedPath();
+        if (!IsPathAllowed(cwd))
+        {
+            return new ToolResult(false, "", "Path not permitted");
+        }
+
+        if (!Directory.Exists(cwd))
+        {
+            return new ToolResult(false, "", "Directory not found");
+        }
+
+        var startInfo = CreateBashStartInfo(command, cwd);
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(Math.Max(1, _options.TimeoutMs));
+
+        try
+        {
+            if (!process.Start())
+            {
+                return new ToolResult(false, "", "Command failed to start");
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            await process.WaitForExitAsync(timeoutCts.Token);
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            var output = Truncate(FormatCommandOutput(stdout, stderr), _options.MaxOutputBytes);
+
+            if (process.ExitCode == 0)
+            {
+                return new ToolResult(true, output);
+            }
+
+            return new ToolResult(false, output, $"Command exited with code {process.ExitCode}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            TryKillProcessTree(process);
+            return new ToolResult(false, "", "Command timed out");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception)
+        {
+            return new ToolResult(false, "", $"Command failed: {ex.Message}");
+        }
+    }
+
     private bool IsPathAllowed(string path)
     {
         var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -146,6 +201,92 @@ public sealed class ToolExecutor : IToolExecutor
         return _allowedPaths.FirstOrDefault(Directory.Exists) ?? Directory.GetCurrentDirectory();
     }
 
+    private static ProcessStartInfo CreateBashStartInfo(string command, string cwd)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                WorkingDirectory = cwd,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+            .WithArgument("/c")
+            .WithArgument(command);
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = "/bin/bash",
+            WorkingDirectory = cwd,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }
+        .WithArgument("-lc")
+        .WithArgument(command);
+    }
+
+    private static string FormatCommandOutput(string stdout, string stderr)
+    {
+        var output = new StringBuilder();
+        if (!string.IsNullOrEmpty(stdout))
+        {
+            output.AppendLine("[stdout]");
+            output.Append(stdout);
+            if (!stdout.EndsWith(Environment.NewLine, StringComparison.Ordinal))
+            {
+                output.AppendLine();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(stderr))
+        {
+            output.AppendLine("[stderr]");
+            output.Append(stderr);
+            if (!stderr.EndsWith(Environment.NewLine, StringComparison.Ordinal))
+            {
+                output.AppendLine();
+            }
+        }
+
+        return output.ToString().TrimEnd();
+    }
+
+    private static string Truncate(string value, int maxBytes)
+    {
+        if (maxBytes <= 0)
+        {
+            return "[truncated]";
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(value);
+        if (bytes.Length <= maxBytes)
+        {
+            return value;
+        }
+
+        return Encoding.UTF8.GetString(bytes, 0, maxBytes) + Environment.NewLine + "[truncated]";
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     private static string Required(ToolCall call, string name)
     {
         if (call.Arguments.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value))
@@ -154,6 +295,15 @@ public sealed class ToolExecutor : IToolExecutor
         }
 
         throw new ArgumentException($"Missing required argument: {name}");
+    }
+}
+
+internal static class ProcessStartInfoExtensions
+{
+    public static ProcessStartInfo WithArgument(this ProcessStartInfo startInfo, string argument)
+    {
+        startInfo.ArgumentList.Add(argument);
+        return startInfo;
     }
 }
 
