@@ -1,0 +1,134 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+
+namespace Aether.Providers;
+
+/// <summary>
+/// Generic HTTP provider for custom/unknown endpoints.
+/// Supports configurable base URL, endpoint, auth, and response parsing.
+/// </summary>
+public sealed class GenericHttpProvider : ILLMProvider
+{
+    private readonly HttpClient _client;
+    private readonly GenericHttpOptions _options;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    public string Name => _options.Name;
+    public string Model => _options.Model;
+    public bool SupportsStreaming => false;
+    public bool SupportsTools => false;
+
+    public GenericHttpProvider(HttpClient client, GenericHttpOptions options)
+    {
+        _client = client;
+        _options = options;
+
+        if (_client.BaseAddress is null && !string.IsNullOrEmpty(_options.BaseUrl))
+        {
+            _client.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
+        }
+    }
+
+    public async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _options.Endpoint);
+
+        // Auth
+        if (!string.IsNullOrEmpty(_options.AuthHeader))
+        {
+            var parts = _options.AuthHeader.Split(':', 2);
+            if (parts.Length == 2)
+            {
+                httpRequest.Headers.Authorization = new AuthenticationHeaderValue(parts[0], parts[1]);
+            }
+            else
+            {
+                httpRequest.Headers.Add(_options.AuthHeader, _options.ApiKey);
+            }
+        }
+
+        var body = new Dictionary<string, object?>
+        {
+            ["model"] = _options.Model,
+            ["messages"] = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
+        };
+
+        httpRequest.Content = JsonContent.Create(body, options: JsonOptions);
+
+        using var response = await _client.SendAsync(httpRequest, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"GenericHttp request failed with HTTP {(int)response.StatusCode}. Response: {errorBody}");
+        }
+
+        return await ParseResponseAsync(response, ct);
+    }
+
+    public async Task<bool> HealthCheckAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "health");
+            if (!string.IsNullOrEmpty(_options.AuthHeader))
+            {
+                var parts = _options.AuthHeader.Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue(parts[0], parts[1]);
+                }
+            }
+
+            using var response = await _client.SendAsync(request, ct);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<LlmResponse> ParseResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        var root = document.RootElement;
+
+        // Try OpenAI-style response
+        if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array)
+        {
+            var message = choices[0].GetProperty("message");
+            var content = "";
+            if (message.TryGetProperty("content", out var contentElement) && contentElement.ValueKind != JsonValueKind.Null)
+            {
+                content = contentElement.GetString() ?? "";
+            }
+            return new LlmResponse(content, null);
+        }
+
+        // Try simple content field
+        if (root.TryGetProperty("content", out var simpleContent) && simpleContent.ValueKind != JsonValueKind.Null)
+        {
+            return new LlmResponse(simpleContent.GetString() ?? "", null);
+        }
+
+        // Try text field
+        if (root.TryGetProperty("text", out var text) && text.ValueKind != JsonValueKind.Null)
+        {
+            return new LlmResponse(text.GetString() ?? "", null);
+        }
+
+        // Return raw JSON as content
+        return new LlmResponse(root.GetRawText(), null);
+    }
+}
+
+public sealed record GenericHttpOptions(
+    string Name,
+    string Model,
+    string ApiKey,
+    string BaseUrl,
+    string Endpoint,
+    string AuthHeader);
