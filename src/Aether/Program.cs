@@ -4,6 +4,7 @@ using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
+using Aether.Tooling;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -47,12 +48,9 @@ builder.Services.AddSingleton(provider =>
 builder.Services.AddSingleton<IMessageQueue, ChannelMessageQueue>();
 builder.Services.AddSingleton<MessageRouter>();
 builder.Services.AddSingleton<ISessionManager, SessionManager>();
-builder.Services.AddSingleton<IMemorySystem>(provider =>
-{
-    var configuration = provider.GetRequiredService<IConfiguration>();
-    return new FileMemory(configuration["groups:path"] ?? "groups");
-});
+builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
 builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
+builder.Services.AddSingleton<IHostedService, AetherInitializationService>();
 builder.Services.AddHttpClient<ILLMProvider, OpenRouterProvider>((provider, client) =>
 {
     var configuration = provider.GetRequiredService<IConfiguration>();
