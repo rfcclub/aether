@@ -9,6 +9,51 @@ CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT
 );
 
+-- FTS5 virtual table for full-text search on messages
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    content=messages,
+    content_rowid=rowid
+);
+
+-- Trigger to keep FTS5 in sync with messages table
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+-- Promotion candidates for memory system
+CREATE TABLE IF NOT EXISTS promotion_candidates (
+    id TEXT PRIMARY KEY,
+    group_folder TEXT NOT NULL,
+    text TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    evidence_count INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    source TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Provider usage tracking for cost analysis
+CREATE TABLE IF NOT EXISTS provider_usage (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost_usd REAL,
+    latency_ms INTEGER,
+    timestamp TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     group_folder TEXT NOT NULL,
