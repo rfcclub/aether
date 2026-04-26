@@ -51,12 +51,28 @@ builder.Services.AddSingleton<ISessionManager, SessionManager>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
 builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
 builder.Services.AddSingleton<IHostedService, AetherInitializationService>();
+
+// LLM Providers
 builder.Services.AddHttpClient<ILLMProvider, OpenRouterProvider>((provider, client) =>
 {
     var configuration = provider.GetRequiredService<IConfiguration>();
     var baseUrl = configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1";
     client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
 });
+builder.Services.AddHttpClient<ILLMProvider, FireworksProvider>((provider, client) =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    var baseUrl = configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1";
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+});
+builder.Services.AddHttpClient<ILLMProvider, AnthropicProvider>((provider, client) =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    var baseUrl = configuration["anthropic:base_url"] ?? "https://api.anthropic.com";
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+});
+
+// Provider options
 builder.Services.AddSingleton(provider =>
 {
     var configuration = provider.GetRequiredService<IConfiguration>();
@@ -65,6 +81,44 @@ builder.Services.AddSingleton(provider =>
         Model: configuration["llm:model"] ?? "anthropic/claude-3-5-sonnet",
         BaseUrl: configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1");
 });
+builder.Services.AddSingleton(provider =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    return new FireworksOptions(
+        ApiKey: configuration["fireworks:api_key"] ?? "",
+        Model: configuration["fireworks:model"] ?? "accounts/fireworks/models/deepseek-v3-0324",
+        BaseUrl: configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1");
+});
+builder.Services.AddSingleton(provider =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    return new AnthropicOptions(
+        ApiKey: configuration["anthropic:api_key"] ?? "",
+        Model: configuration["anthropic:model"] ?? "claude-3-5-sonnet-20241022",
+        BaseUrl: configuration["anthropic:base_url"] ?? "https://api.anthropic.com");
+});
+
+// Provider health monitor
+builder.Services.AddSingleton<ProviderHealthMonitor>();
+
+// Provider routing
+builder.Services.AddSingleton(provider =>
+{
+    var providers = provider.GetRequiredService<IEnumerable<ILLMProvider>>().ToList();
+    var db = provider.GetRequiredService<AetherDb>();
+    var logger = provider.GetRequiredService<ILogger<ProviderRouter>>();
+    var options = new ProviderRoutingOptions
+    {
+        ProviderPriorities = new Dictionary<string, int>
+        {
+            ["fireworks"] = 1,
+            ["openrouter"] = 2,
+            ["anthropic"] = 3
+        }
+    };
+    return new ProviderRouter(providers, options, db, logger);
+});
+
 builder.Services.AddSingleton<AetherSoul>();
 
 Trace("before host build");

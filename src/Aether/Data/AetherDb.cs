@@ -115,6 +115,35 @@ public sealed class AetherDb
             IsMain: reader.GetInt32(2) == 1,
             Trigger: trigger);
     }
+
+    public async Task RecordProviderUsageAsync(ProviderUsage usage, CancellationToken ct = default)
+    {
+        await using var connection = await OpenConnectionAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO provider_usage (id, provider, model, input_tokens, output_tokens, cost_usd, latency_ms, timestamp)
+            VALUES ($id, $provider, $model, $inputTokens, $outputTokens, $costUsd, $latencyMs, $timestamp)
+            """;
+        command.Parameters.AddWithValue("$id", usage.Id);
+        command.Parameters.AddWithValue("$provider", usage.Provider);
+        command.Parameters.AddWithValue("$model", usage.Model);
+        command.Parameters.AddWithValue("$inputTokens", usage.InputTokens);
+        command.Parameters.AddWithValue("$outputTokens", usage.OutputTokens);
+        command.Parameters.AddWithValue("$costUsd", usage.CostUsd ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$latencyMs", usage.LatencyMs ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$timestamp", usage.Timestamp.ToString("O"));
+        await command.ExecuteNonQueryAsync(ct);
+    }
 }
 
 public readonly record struct GroupRoute(string Jid, string Folder, bool IsMain, string? Trigger);
+
+public readonly record struct ProviderUsage(
+    string Id,
+    string Provider,
+    string Model,
+    int InputTokens,
+    int OutputTokens,
+    double? CostUsd,
+    int? LatencyMs,
+    DateTimeOffset Timestamp);
