@@ -1,6 +1,8 @@
+using System.Text;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Sessions;
+using Aether.Skills;
 
 namespace Aether.Agent;
 
@@ -11,24 +13,37 @@ public sealed class AetherSoul
     private readonly IMemorySystem _memory;
     private readonly IToolExecutor _tools;
     private readonly ISessionManager _sessions;
+    private readonly ISkillRegistry _skills;
+    private readonly ISkillTrigger _skillTrigger;
 
-    public AetherSoul(ILLMProvider llm, IMemorySystem memory, IToolExecutor tools, ISessionManager sessions)
+    public AetherSoul(
+        ILLMProvider llm,
+        IMemorySystem memory,
+        IToolExecutor tools,
+        ISessionManager sessions,
+        ISkillRegistry skills,
+        ISkillTrigger skillTrigger)
     {
         _llm = llm;
         _memory = memory;
         _tools = tools;
         _sessions = sessions;
+        _skills = skills;
+        _skillTrigger = skillTrigger;
     }
 
-    public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct)
+    public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct = default)
     {
         var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
+        // Detect skill trigger before building messages
+        var skillContext = _skillTrigger.DetectTrigger(prompt, _skills.List().ToList());
+
         var messages = new List<LlmMessage>
         {
-            LlmMessage.System(BuildSystemPrompt(memoryContext))
+            LlmMessage.System(BuildSystemPrompt(memoryContext, skillContext))
         };
 
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
@@ -81,14 +96,34 @@ public sealed class AetherSoul
         return $"Tool failed: {result.Error}";
     }
 
-    private static string BuildSystemPrompt(string memoryContext)
+    private static string BuildSystemPrompt(string memoryContext, SkillContext? skillContext)
     {
-        if (string.IsNullOrWhiteSpace(memoryContext))
+        var sb = new StringBuilder();
+        sb.AppendLine("You are Aether, a lightweight personal AI agent.");
+
+        if (!string.IsNullOrWhiteSpace(memoryContext))
         {
-            return "You are Aether, a lightweight personal AI agent.";
+            sb.AppendLine().AppendLine(memoryContext);
         }
 
-        return $"You are Aether, a lightweight personal AI agent.{Environment.NewLine}{Environment.NewLine}{memoryContext}";
+        if (skillContext != null)
+        {
+            sb.AppendLine().AppendLine($"[Skill: {skillContext.Skill.Name}]");
+            if (!string.IsNullOrWhiteSpace(skillContext.Skill.Description))
+            {
+                sb.AppendLine($"Description: {skillContext.Skill.Description}");
+            }
+            if (!string.IsNullOrWhiteSpace(skillContext.Skill.Body))
+            {
+                sb.AppendLine().AppendLine(skillContext.Skill.Body);
+            }
+            if (skillContext.Skill.AutoApply)
+            {
+                sb.AppendLine().AppendLine("(Auto-apply mode — follow skill steps)");
+            }
+        }
+
+        return sb.ToString();
     }
 
     private static readonly IReadOnlyList<LlmTool> BuiltInTools = new[]

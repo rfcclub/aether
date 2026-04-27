@@ -25,10 +25,6 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
     protected OpenAiCompatibleProviderBase(HttpClient client)
     {
         Client = client;
-        if (Client.BaseAddress is null)
-        {
-            Client.BaseAddress = new Uri(GetBaseUrl().TrimEnd('/') + "/");
-        }
     }
 
     public virtual async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)

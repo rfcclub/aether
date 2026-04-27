@@ -37,8 +37,8 @@ public class ProviderRouter : ILLMProvider
         AetherDb db,
         ILogger<ProviderRouter> logger)
     {
-        _providers = providers.OrderBy(p => GetPriority(p.Name)).ToList();
         _options = options;
+        _providers = providers.OrderBy(p => GetPriority(p.Name)).ToList();
         _db = db;
         _logger = logger;
     }
@@ -112,10 +112,18 @@ public class ProviderRouter : ILLMProvider
         yield return fullResponse.Content;
     }
 
-    public Task<bool> HealthCheckAsync(CancellationToken ct = default)
+    public async Task<bool> HealthCheckAsync(CancellationToken ct = default)
     {
-        var checks = _providers.Select(p => p.HealthCheckAsync(ct));
-        return Task.WhenAll(checks).ContinueWith(t => t.Result.Any(r => r));
+        foreach (var p in _providers)
+        {
+            try
+            {
+                if (await p.HealthCheckAsync(ct))
+                    return true;
+            }
+            catch { }
+        }
+        return false;
     }
 
     private ILLMProvider? SelectEndpoint(string groupName)

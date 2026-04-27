@@ -14,7 +14,7 @@ public sealed class MessageRouter
         _queue = queue;
     }
 
-    public async Task<RoutedMessage?> RouteAsync(InboundMessage message, CancellationToken ct)
+    public async Task<RoutedMessage?> RouteAsync(InboundMessage message, CancellationToken ct = default)
     {
         if (message.IsFromBot)
         {

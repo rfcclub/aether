@@ -20,6 +20,9 @@ namespace Aether.Memory;
 /// </summary>
 public interface IMemorySystem
 {
+    // Context loading
+    Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default);
+
     // Ephemeral layer
     void AddToContext(string content, float priority = 0.5f);
     void CompactContext(int targetTokens);

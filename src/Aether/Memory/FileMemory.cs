@@ -9,7 +9,7 @@ public sealed class FileMemory : IMemorySystem
         _groupsRoot = groupsRoot;
     }
 
-    public async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct)
+    public async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
     {
         var parts = new List<string>();
 
@@ -18,6 +18,32 @@ public sealed class FileMemory : IMemorySystem
 
         return string.Join(Environment.NewLine + Environment.NewLine, parts);
     }
+
+    public void AddToContext(string content, float priority = 0.5f) { }
+    public void CompactContext(int targetTokens) { }
+
+    public IReadOnlyList<ContextEntry> GetContext() => Array.Empty<ContextEntry>();
+
+    public Task<string> CreateSessionAsync(string agentId, CancellationToken ct = default)
+        => Task.FromResult(Guid.NewGuid().ToString());
+
+    public Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<SearchResult>>(Array.Empty<SearchResult>());
+
+    public Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default)
+        => Task.FromResult<SessionSummary?>(null);
+
+    public Task<string> GetDurableMemoryAsync(CancellationToken ct = default)
+        => Task.FromResult(string.Empty);
+
+    public Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    public Task ForceConsolidationAsync(CancellationToken ct = default)
+        => Task.CompletedTask;
 
     private static async Task AddIfExistsAsync(List<string> parts, string path, string label, CancellationToken ct)
     {

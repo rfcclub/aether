@@ -43,6 +43,11 @@ public class SqliteMemorySystem : IMemorySystem, IDisposable
         _logger.LogInformation("Memory system initialized: {DbPath}", _dbPath);
     }
 
+    public Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
+    {
+        return Task.FromResult(string.Empty);
+    }
+
     // === EPHEMERAL LAYER ===
 
     public void AddToContext(string content, float priority = 0.5f)
@@ -165,7 +170,7 @@ public class SqliteMemorySystem : IMemorySystem, IDisposable
                 SessionId: reader.GetString(0),
                 Snippet: reader.GetString(1),
                 Score: (float)reader.GetDouble(2),
-                Timestamp: ts));
+                Timestamp: ts.DateTime));
         }
 
         return results;
@@ -193,7 +198,7 @@ public class SqliteMemorySystem : IMemorySystem, IDisposable
         return new SessionSummary(
             Id: reader.GetString(0),
             AgentId: reader.GetString(1),
-            StartedAt: DateTimeOffset.Parse(reader.GetString(2)),
+            StartedAt: DateTimeOffset.Parse(reader.GetString(2)).DateTime,
             Summary: null,
             MessageCount: reader.GetInt32(3));
     }

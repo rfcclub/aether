@@ -7,6 +7,8 @@ using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
+using Aether.Skills;
+using Microsoft.Extensions.Logging;
 
 var root = FindRepoRoot();
 
@@ -596,7 +598,7 @@ static async Task VerifyAetherSoulAsync(string root)
         var memory = new FileMemory(memoryRoot);
         var provider = new FakeProvider("ack");
         var tools = new DisabledToolExecutor();
-        var soul = new AetherSoul(provider, memory, tools, sessions);
+        var soul = new AetherSoul(provider, memory, tools, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()));
 
         var response = await soul.ProcessAsync("main", "hello", CancellationToken.None);
 
@@ -622,7 +624,7 @@ static async Task VerifyAetherSoulAsync(string root)
                 }),
             new LlmResponse("tool result final"));
         var toolExecutor = new CapturingToolExecutor(new ToolResult(true, "file contents"));
-        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions);
+        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()));
 
         var toolResponse = await toolSoul.ProcessAsync("tools", "inspect notes", CancellationToken.None);
 
@@ -723,6 +725,11 @@ internal sealed class FakeProvider : ILLMProvider
 {
     private readonly Queue<LlmResponse> _responses;
 
+    public string Name => "fake";
+    public string Model => "fake-model";
+    public bool SupportsStreaming => false;
+    public bool SupportsTools => true;
+
     public FakeProvider(string response)
         : this(new LlmResponse(response))
     {
@@ -747,6 +754,8 @@ internal sealed class FakeProvider : ILLMProvider
 
         return Task.FromResult(_responses.Dequeue());
     }
+
+    public Task<bool> HealthCheckAsync(CancellationToken ct) => Task.FromResult(true);
 }
 
 internal sealed class CapturingToolExecutor : IToolExecutor

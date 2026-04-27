@@ -1,14 +1,19 @@
+using Aether;
 using Aether.Agent;
+using Aether.Channels;
 using Aether.Data;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
+using Aether.Skills;
 using Aether.Tooling;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ToolExecutor = Aether.Agent.ToolExecutor;
+using IToolExecutor = Aether.Agent.IToolExecutor;
 
 if (args.Contains("--smoke", StringComparer.OrdinalIgnoreCase))
 {
@@ -48,8 +53,18 @@ builder.Services.AddSingleton(provider =>
 builder.Services.AddSingleton<IMessageQueue, ChannelMessageQueue>();
 builder.Services.AddSingleton<MessageRouter>();
 builder.Services.AddSingleton<ISessionManager, SessionManager>();
+builder.Services.AddSingleton<IMemorySystem>(provider =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    var groupsPath = configuration["groups:path"] ?? "groups";
+    return new FileMemory(groupsPath);
+});
 builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
 builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
+builder.Services.AddSingleton<ISkillRegistry, SkillRegistry>();
+builder.Services.AddSingleton<ISkillLoader, SkillParser>();
+builder.Services.AddSingleton<ISkillTrigger, SkillTrigger>();
+builder.Services.AddSingleton<ISkillEvolution, SkillEvolution>();
 builder.Services.AddSingleton<IHostedService, AetherInitializationService>();
 
 // LLM Providers
@@ -119,7 +134,35 @@ builder.Services.AddSingleton(provider =>
     return new ProviderRouter(providers, options, db, logger);
 });
 
-builder.Services.AddSingleton<AetherSoul>();
+builder.Services.AddSingleton<AetherSoul>(provider =>
+{
+    var llm = provider.GetRequiredService<ILLMProvider>();
+    var memory = provider.GetRequiredService<IMemorySystem>();
+    var tools = provider.GetRequiredService<IToolExecutor>();
+    var sessions = provider.GetRequiredService<ISessionManager>();
+    var skills = provider.GetRequiredService<ISkillRegistry>();
+    var skillTrigger = provider.GetRequiredService<ISkillTrigger>();
+    return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger);
+});
+
+// Channel — Telegram if enabled, no-op otherwise
+builder.Services.AddSingleton<IChannel>(provider =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    var telegramEnabled = configuration.GetValue("channels:telegram:enabled", false);
+    var botToken = configuration["channels:telegram:bot_token"] ?? "";
+
+    if (telegramEnabled && !string.IsNullOrWhiteSpace(botToken))
+    {
+        var logger = provider.GetRequiredService<ILogger<TelegramChannel>>();
+        return new TelegramChannel(botToken, logger);
+    }
+
+    return new NoOpChannel();
+});
+
+// Channel message processor
+builder.Services.AddHostedService<ChannelMessageProcessor>();
 
 Trace("before host build");
 using var host = builder.Build();
@@ -187,7 +230,9 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         var memory = new FileMemory(ConfigValue(configuration, "groups:path", "groups"));
         var sessions = new SessionManager(db);
         var toolExecutor = new ToolExecutor(configuration);
-        var soul = new AetherSoul(provider, memory, toolExecutor, sessions);
+        var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
+        var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
+        var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger);
 
         var response = await soul.ProcessAsync(group, prompt, cts.Token);
         Console.WriteLine(response.Content);

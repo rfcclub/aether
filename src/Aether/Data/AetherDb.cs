@@ -2,8 +2,9 @@ using Microsoft.Data.Sqlite;
 
 namespace Aether.Data;
 
-public sealed class AetherDb
+public sealed class AetherDb : IDisposable
 {
+    public void Dispose() { }
     private readonly string _connectionString;
     private readonly string _schemaPath;
 
@@ -55,7 +56,7 @@ public sealed class AetherDb
         return connection;
     }
 
-    public async Task<bool> TableExistsAsync(string tableName, CancellationToken ct)
+    public async Task<bool> TableExistsAsync(string tableName, CancellationToken ct = default)
     {
         await using var connection = await OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
@@ -66,7 +67,7 @@ public sealed class AetherDb
         return result is not null;
     }
 
-    public async Task UpsertGroupRouteAsync(GroupRoute route, CancellationToken ct)
+    public async Task UpsertGroupRouteAsync(GroupRoute route, CancellationToken ct = default)
     {
         await using var connection = await OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
@@ -90,7 +91,7 @@ public sealed class AetherDb
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<GroupRoute?> GetGroupRouteAsync(string jid, CancellationToken ct)
+    public async Task<GroupRoute?> GetGroupRouteAsync(string jid, CancellationToken ct = default)
     {
         await using var connection = await OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();

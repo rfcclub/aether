@@ -11,7 +11,7 @@ public sealed class SessionManager : ISessionManager
         _db = db;
     }
 
-    public async Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct)
+    public async Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
 
@@ -54,7 +54,7 @@ public sealed class SessionManager : ISessionManager
         return session;
     }
 
-    public async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct)
+    public async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
 
@@ -91,7 +91,7 @@ public sealed class SessionManager : ISessionManager
         await update.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct)
+    public async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
@@ -121,7 +121,7 @@ public sealed class SessionManager : ISessionManager
 
 public interface ISessionManager
 {
-    Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct);
-    Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct);
-    Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct);
+    Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default);
+    Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default);
+    Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default);
 }

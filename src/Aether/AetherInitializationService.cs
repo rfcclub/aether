@@ -1,5 +1,7 @@
 using Aether.Data;
 using Aether.Memory;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Aether;
 
