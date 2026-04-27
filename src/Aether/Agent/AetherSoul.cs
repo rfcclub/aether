@@ -3,6 +3,7 @@ using Aether.Memory;
 using Aether.Providers;
 using Aether.Sessions;
 using Aether.Skills;
+using Aether.Tooling;
 
 namespace Aether.Agent;
 
@@ -71,6 +72,19 @@ public sealed class AetherSoul
             foreach (var toolCall in response.ToolCalls)
             {
                 ct.ThrowIfCancellationRequested();
+
+                var toolDef = BuiltInTools.FirstOrDefault(t => t.Name == toolCall.Name);
+                if (toolDef is not null)
+                {
+                    var errors = ParameterValidator.Validate(toolCall, toolDef);
+                    if (errors.Count > 0)
+                    {
+                        messages.Add(LlmMessage.ToolResult(toolCall.Id, toolCall.Name,
+                            ParameterValidator.FormatErrors(errors)));
+                        continue;
+                    }
+                }
+
                 var result = await _tools.ExecuteAsync(
                     new ToolCall(toolCall.Name, toolCall.Arguments),
                     ct);
@@ -139,6 +153,16 @@ public sealed class AetherSoul
                   },
                   "required": ["path"]
                 }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" }
+                  },
+                  "required": ["path"],
+                  "additionalProperties": false
+                }
                 """),
         new LlmTool(
             Name: "glob",
@@ -151,6 +175,17 @@ public sealed class AetherSoul
                     "pattern": { "type": "string" }
                   },
                   "required": ["pattern"]
+                }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "root": { "type": "string" },
+                    "pattern": { "type": "string" }
+                  },
+                  "required": ["pattern"],
+                  "additionalProperties": false
                 }
                 """),
         new LlmTool(
@@ -166,6 +201,18 @@ public sealed class AetherSoul
                   },
                   "required": ["path", "pattern"]
                 }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "pattern": { "type": "string" },
+                    "context_lines": { "type": "string" }
+                  },
+                  "required": ["path", "pattern"],
+                  "additionalProperties": false
+                }
                 """),
         new LlmTool(
             Name: "bash",
@@ -178,6 +225,17 @@ public sealed class AetherSoul
                     "cwd": { "type": "string" }
                   },
                   "required": ["command"]
+                }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": { "type": "string" },
+                    "cwd": { "type": "string" }
+                  },
+                  "required": ["command"],
+                  "additionalProperties": false
                 }
                 """),
         new LlmTool(
@@ -192,6 +250,17 @@ public sealed class AetherSoul
                   },
                   "required": ["path", "content"]
                 }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                  },
+                  "required": ["path", "content"],
+                  "additionalProperties": false
+                }
                 """),
         new LlmTool(
             Name: "edit",
@@ -205,6 +274,18 @@ public sealed class AetherSoul
                     "new": { "type": "string" }
                   },
                   "required": ["path", "old", "new"]
+                }
+                """,
+            SchemaJson: """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "old": { "type": "string" },
+                    "new": { "type": "string" }
+                  },
+                  "required": ["path", "old", "new"],
+                  "additionalProperties": false
                 }
                 """)
     };

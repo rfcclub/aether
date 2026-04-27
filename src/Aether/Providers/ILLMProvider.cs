@@ -22,7 +22,8 @@ public sealed record LlmResponse(
 public sealed record LlmTool(
     string Name,
     string Description,
-    string ParametersJson);
+    string ParametersJson,
+    string? SchemaJson = null);
 
 public sealed record LlmToolCall(
     string Id,
