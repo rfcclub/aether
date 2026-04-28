@@ -92,3 +92,13 @@ CREATE TABLE IF NOT EXISTS task_runs (
     error TEXT,
     FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_states (
+    id TEXT PRIMARY KEY,
+    candidate_hash TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL DEFAULT 'PROPOSED',
+    source TEXT,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

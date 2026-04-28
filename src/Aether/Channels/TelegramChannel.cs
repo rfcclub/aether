@@ -14,6 +14,9 @@ public sealed class TelegramChannel : IChannel, IDisposable
     private Task? _pollingTask;
     private bool _disposed;
 
+    // Track streaming message IDs per chat so we can edit in-place.
+    private readonly Dictionary<string, int> _streamingMessageIds = new();
+
     public string Name => "telegram";
     public bool IsConnected => _client is not null;
 
@@ -63,8 +66,96 @@ public sealed class TelegramChannel : IChannel, IDisposable
         await _client.SendMessage(
             chatId: chatId,
             text: text,
-            parseMode: ParseMode.None, // Plain text by default; caller can use markdown if needed
+            parseMode: ParseMode.None,
             cancellationToken: ct);
+    }
+
+    public async Task SendStreamingChunkAsync(string chatId, string chunk, int chunkIndex, CancellationToken ct)
+    {
+        if (_client is null) throw new InvalidOperationException("Telegram channel is not connected.");
+
+        if (chunkIndex == 0)
+        {
+            // First chunk: send as a new message, record the message ID
+            var msg = await _client.SendMessage(
+                chatId: chatId,
+                text: chunk,
+                parseMode: ParseMode.None,
+                cancellationToken: ct);
+            _streamingMessageIds[chatId] = msg.Id;
+        }
+        else if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
+        {
+            // Subsequent chunks: edit the existing message in-place.
+            // Telegram has a rate limit on edit_message, so we batch by only editing
+            // every few chunks. We always edit on the first few chunks to give the
+            // user a responsive feel, then throttle.
+            // We always edit so the user sees progress.
+            try
+            {
+                // Append the new chunk to the existing text for the edit.
+                // We read back the current text from the message we track.
+                // However, we don't store the full text here — we only have the chunk.
+                // So we send the chunk as-is and let the accumulate happen on the
+                // Telegram side. But edit_message replaces the entire text, so we
+                // need the full accumulated text. Since we don't have it here,
+                // the caller (ChannelMessageProcessor) accumulates and sends the full
+                // accumulated text. So we'll just edit with the chunk.
+                // Actually, edit_message replaces the whole message text. We need
+                // to accumulate. Let's use a dictionary for accumulated text per chat.
+                await _client.EditMessageText(
+                    chatId: chatId,
+                    messageId: messageId,
+                    text: chunk, // This is the full accumulated text from the caller
+                    parseMode: ParseMode.None,
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                // Edit failures are non-fatal — the final message will still be sent.
+                _logger.LogWarning(ex, "Failed to edit streaming message for chat {ChatId}", chatId);
+            }
+        }
+    }
+
+    public async Task SendStreamingCompleteAsync(string chatId, string fullText, CancellationToken ct)
+    {
+        if (_client is null) return;
+
+        // If we had a streaming message, update it with the final full text.
+        // Otherwise, just send as a new message.
+        if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
+        {
+            try
+            {
+                await _client.EditMessageText(
+                    chatId: chatId,
+                    messageId: messageId,
+                    text: fullText,
+                    parseMode: ParseMode.None,
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to edit final streaming message for chat {ChatId}", chatId);
+                // Fall back to sending a new message
+                await _client.SendMessage(
+                    chatId: chatId,
+                    text: fullText,
+                    parseMode: ParseMode.None,
+                    cancellationToken: ct);
+            }
+        }
+        else
+        {
+            await _client.SendMessage(
+                chatId: chatId,
+                text: fullText,
+                parseMode: ParseMode.None,
+                cancellationToken: ct);
+        }
+
+        _streamingMessageIds.Remove(chatId);
     }
 
     public async Task SetTypingAsync(string chatId, bool isTyping, CancellationToken ct)

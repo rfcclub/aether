@@ -75,4 +75,36 @@ public class SkillEvolutionTests
         var records = await _evolution.GetRecordsAsync("nonexistent");
         Assert.Empty(records);
     }
+
+    [Fact]
+    public async Task GeneratePatchAsync_WritesFileWithCorrectFormat()
+    {
+        var patchesDir = Path.Combine(Path.GetTempPath(), "aether-test-patches");
+        Directory.CreateDirectory(patchesDir);
+
+        try
+        {
+            var evolution = new SkillEvolution(NullLogger<SkillEvolution>.Instance, patchesDir);
+            var candidate = new Aether.Memory.PromotionCandidate(
+                "Skill 'test-skill' flagged for recidivism: 3/10 unhelpful recent uses.",
+                0.8f, 3, "recidivism", DateTime.UtcNow);
+
+            await evolution.GeneratePatchAsync("test-skill", candidate);
+
+            var files = Directory.GetFiles(patchesDir, "skill-patch-test-skill-*.md");
+            Assert.Single(files);
+
+            var content = await File.ReadAllTextAsync(files[0]);
+            Assert.Contains("# Skill Patch: test-skill", content);
+            Assert.Contains("confidence: 0.80", content);
+            Assert.Contains("source: recidivism", content);
+            Assert.Contains("## Issue", content);
+            Assert.Contains("## Proposed Change", content);
+            Assert.Contains("state: PROPOSED", content);
+        }
+        finally
+        {
+            Directory.Delete(patchesDir, recursive: true);
+        }
+    }
 }

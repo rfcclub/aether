@@ -8,6 +8,8 @@ public interface ILLMProvider
     bool SupportsTools { get; }
 
     Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default);
+    IAsyncEnumerable<string> CompleteStreamingAsync(LlmRequest request, CancellationToken ct = default);
+    IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(LlmRequest request, CancellationToken ct = default);
     Task<bool> HealthCheckAsync(CancellationToken ct = default);
 }
 
@@ -29,6 +31,27 @@ public sealed record LlmToolCall(
     string Id,
     string Name,
     IReadOnlyDictionary<string, string> Arguments);
+
+/// <summary>
+/// Discriminated union for streaming events from the LLM.
+/// Either a text token or a completed response (with optional tool calls).
+/// The provider signals stream completion by yielding a Response event.
+/// </summary>
+public abstract record StreamEvent
+{
+    private StreamEvent() { }
+
+    /// <summary>
+    /// A single text token yielded during streaming.
+    /// </summary>
+    public sealed record TextToken(string Token) : StreamEvent;
+
+    /// <summary>
+    /// The complete response, yielded after all text tokens have been streamed.
+    /// May include tool calls that were accumulated during streaming.
+    /// </summary>
+    public sealed record Response(LlmResponse LlmResponse) : StreamEvent;
+}
 
 public sealed class LlmMessage
 {

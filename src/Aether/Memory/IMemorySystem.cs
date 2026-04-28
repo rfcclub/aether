@@ -33,6 +33,7 @@ public interface IMemorySystem
     Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default);
     Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default);
     Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default);
+    Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default);
 
     // Durable layer (MEMORY.md)
     Task<string> GetDurableMemoryAsync(CancellationToken ct = default);

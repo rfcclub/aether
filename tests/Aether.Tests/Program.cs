@@ -755,6 +755,23 @@ internal sealed class FakeProvider : ILLMProvider
         return Task.FromResult(_responses.Dequeue());
     }
 
+    public async IAsyncEnumerable<string> CompleteStreamingAsync(
+        LlmRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var response = await CompleteAsync(request, ct);
+        yield return response.Content;
+    }
+
+    public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(
+        LlmRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var response = await CompleteAsync(request, ct);
+        yield return new StreamEvent.TextToken(response.Content);
+        yield return new StreamEvent.Response(response);
+    }
+
     public Task<bool> HealthCheckAsync(CancellationToken ct) => Task.FromResult(true);
 }
 

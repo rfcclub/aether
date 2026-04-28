@@ -10,6 +10,7 @@ namespace Aether.Agent;
 public sealed class AetherSoul
 {
     private const int MaxToolIterations = 8;
+    private const int MaxContextTokens = 120000;
     private readonly ILLMProvider _llm;
     private readonly IMemorySystem _memory;
     private readonly IToolExecutor _tools;
@@ -50,6 +51,8 @@ public sealed class AetherSoul
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
         messages.Add(LlmMessage.User(prompt));
 
+        TruncateHistory(messages);
+
         await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", prompt, DateTimeOffset.UtcNow), ct);
 
         var response = await RunLlmToolLoopAsync(messages, ct);
@@ -58,11 +61,187 @@ public sealed class AetherSoul
         return new AgentResponse(response.Content, session.Id);
     }
 
-    private async Task<LlmResponse> RunLlmToolLoopAsync(List<LlmMessage> messages, CancellationToken ct)
+    /// <summary>
+    /// Process a prompt and stream text tokens back through the returned async enumerable.
+    /// Handles tool calls by buffering the streaming response (text tokens are yielded
+    /// via <see cref="CompleteStreamingEventsAsync"/>), executing any detected tool calls,
+    /// and continuing the loop until a final text-only response is received.
+    /// </summary>
+    public async IAsyncEnumerable<string> ProcessStreamingAsync(
+        string groupFolder,
+        string prompt,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
+        var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
+        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
+
+        var skillContext = _skillTrigger.DetectTrigger(prompt, _skills.List().ToList());
+
+        var messages = new List<LlmMessage>
+        {
+            LlmMessage.System(BuildSystemPrompt(memoryContext, skillContext))
+        };
+
+        messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
+        messages.Add(LlmMessage.User(prompt));
+
+        TruncateHistory(messages);
+
+        await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", prompt, DateTimeOffset.UtcNow), ct);
+
+        var fullContent = new StringBuilder();
+
         for (var iteration = 0; iteration < MaxToolIterations; iteration++)
         {
-            var response = await _llm.CompleteAsync(new LlmRequest(messages, BuiltInTools), ct);
+            // --- Streaming phase ---
+            // Events are buffered because C# does not allow yield return inside try+catch blocks.
+            var tokenBuffer = new List<string>();
+            IReadOnlyList<LlmToolCall>? toolCalls = null;
+            var sawToolCallOrFallback = false;
+            var isFallback = false;
+            var textContent = new StringBuilder();
+
+            var toolsToUse = BuiltInTools;
+
+            while (true)
+            {
+                tokenBuffer.Clear();
+                toolCalls = null;
+                sawToolCallOrFallback = false;
+                isFallback = false;
+                textContent.Clear();
+
+                try
+                {
+                    await foreach (var evt in _llm.CompleteStreamingEventsAsync(
+                        new LlmRequest(messages, toolsToUse), ct))
+                    {
+                        switch (evt)
+                        {
+                            case StreamEvent.TextToken tt:
+                                textContent.Append(tt.Token);
+                                fullContent.Append(tt.Token);
+                                tokenBuffer.Add(tt.Token);
+                                break;
+
+                            case StreamEvent.Response responseEvent:
+                                toolCalls = responseEvent.LlmResponse.ToolCalls;
+                                sawToolCallOrFallback = toolCalls is { Count: > 0 };
+                                break;
+                        }
+                    }
+                }
+                catch (InvalidOperationException ex) when (
+                    ex.Message.Contains("tool use") || ex.Message.Contains("tool"))
+                {
+                    // Model does not support tools -- retry without them
+                    if (toolsToUse is not null)
+                    {
+                        toolsToUse = null;
+                        sawToolCallOrFallback = true;
+                        isFallback = true;
+                        continue; // retry with tools disabled
+                    }
+
+                    throw;
+                }
+
+                break; // success -- exit the retry loop
+            }
+
+            // Yield all buffered tokens now that we are outside the try/catch scope
+            foreach (var token in tokenBuffer)
+            {
+                yield return token;
+            }
+
+            if (isFallback || !sawToolCallOrFallback)
+            {
+                break; // No tool calls -- we are done
+            }
+
+            // --- Tool execution phase ---
+            messages.Add(LlmMessage.AssistantToolCalls(textContent.ToString(), toolCalls!));
+
+            foreach (var toolCall in toolCalls!)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var toolDef = BuiltInTools.FirstOrDefault(t => t.Name == toolCall.Name);
+                if (toolDef is not null)
+                {
+                    var errors = ParameterValidator.Validate(toolCall, toolDef);
+                    if (errors.Count > 0)
+                    {
+                        messages.Add(LlmMessage.ToolResult(toolCall.Id, toolCall.Name,
+                            ParameterValidator.FormatErrors(errors)));
+                        continue;
+                    }
+                }
+
+                var result = await _tools.ExecuteAsync(
+                    new ToolCall(toolCall.Name, toolCall.Arguments),
+                    ct);
+                messages.Add(LlmMessage.ToolResult(toolCall.Id, toolCall.Name, FormatToolResult(result)));
+            }
+            // Continue loop to stream the LLM's response to tool results
+        }
+
+        // Save final accumulated response to session history
+        await _sessions.AppendMessageAsync(session.Id,
+            new SessionMessage("assistant", fullContent.ToString(), DateTimeOffset.UtcNow), ct);
+    }
+
+    private static void TruncateHistory(List<LlmMessage> messages)
+    {
+        // Keep system message (index 0) and last user message. Remove oldest history first.
+        while (messages.Count > 2 && EstimateTokens(messages) > MaxContextTokens)
+        {
+            messages.RemoveAt(1);
+        }
+    }
+
+    private static int EstimateTokens(IReadOnlyList<LlmMessage> messages)
+    {
+        var chars = 0;
+        foreach (var message in messages)
+        {
+            chars += message.Content?.Length ?? 0;
+            if (message.ToolCalls is not null)
+            {
+                foreach (var tc in message.ToolCalls)
+                {
+                    chars += tc.Name.Length + tc.Id.Length;
+                    foreach (var (k, v) in tc.Arguments)
+                        chars += k.Length + v.Length;
+                }
+            }
+        }
+        return chars / 4;
+    }
+
+    private async Task<LlmResponse> RunLlmToolLoopAsync(List<LlmMessage> messages, CancellationToken ct)
+    {
+        var tools = BuiltInTools;
+        for (var iteration = 0; iteration < MaxToolIterations; iteration++)
+        {
+            LlmResponse response;
+            try
+            {
+                response = await _llm.CompleteAsync(new LlmRequest(messages, tools), ct);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("tool use") || ex.Message.Contains("tool"))
+            {
+                // Model doesn't support tools — retry without them
+                if (tools is not null)
+                {
+                    tools = null;
+                    response = await _llm.CompleteAsync(new LlmRequest(messages, null), ct);
+                }
+                else throw;
+            }
+
             if (response.ToolCalls is not { Count: > 0 })
             {
                 return response;

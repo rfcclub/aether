@@ -112,6 +112,76 @@ public class ProviderRouter : ILLMProvider
         yield return fullResponse.Content;
     }
 
+    public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(
+        LlmRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var complexity = EstimateComplexity(request.Messages);
+        var needsBetterModel = ShouldEscalateToBetterModel(request.Messages, complexity);
+
+        // Try primary group first (buffer results outside try-catch because yields
+        // cannot live inside try blocks with catch clauses in C#)
+        var events = new List<StreamEvent>();
+        var primarySucceeded = false;
+
+        try
+        {
+            _logger.LogInformation("Trying primary group (fireworks) for streaming (complexity {Complexity})", complexity);
+            var endpoint = SelectEndpoint("fireworks");
+            if (endpoint is not null)
+            {
+                await foreach (var evt in endpoint.CompleteStreamingEventsAsync(request, ct))
+                {
+                    events.Add(evt);
+                }
+                primarySucceeded = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Primary streaming group failed");
+            RecordFailure("fireworks");
+        }
+
+        if (primarySucceeded)
+        {
+            foreach (var evt in events) yield return evt;
+            yield break;
+        }
+
+        if (needsBetterModel)
+        {
+            events.Clear();
+            var fallbackSucceeded = false;
+            try
+            {
+                _logger.LogInformation("Escalating to fallback (openrouter) for streaming");
+                var endpoint = SelectEndpoint("openrouter");
+                if (endpoint is not null)
+                {
+                    await foreach (var evt in endpoint.CompleteStreamingEventsAsync(request, ct))
+                    {
+                        events.Add(evt);
+                    }
+                    fallbackSucceeded = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fallback streaming group also failed");
+                RecordFailure("openrouter");
+            }
+
+            if (fallbackSucceeded)
+            {
+                foreach (var evt in events) yield return evt;
+                yield break;
+            }
+        }
+
+        throw new InvalidOperationException("All provider groups failed for streaming");
+    }
+
     public async Task<bool> HealthCheckAsync(CancellationToken ct = default)
     {
         foreach (var p in _providers)

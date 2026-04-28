@@ -203,6 +203,38 @@ public class SqliteMemorySystem : IMemorySystem, IDisposable
             MessageCount: reader.GetInt32(3));
     }
 
+    public async Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
+    {
+        EnsureConnection();
+
+        var sinceStr = since.ToString("O");
+
+        await using var cmd = _connection!.CreateCommand();
+        cmd.CommandText = """
+            SELECT s.id, s.group_folder, s.created_at,
+                   (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as msg_count
+            FROM sessions s
+            WHERE s.last_activity >= $since
+            ORDER BY s.last_activity DESC
+            LIMIT 50
+            """;
+        cmd.Parameters.AddWithValue("$since", sinceStr);
+
+        var results = new List<SessionSummary>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            results.Add(new SessionSummary(
+                Id: reader.GetString(0),
+                AgentId: reader.GetString(1),
+                StartedAt: DateTimeOffset.Parse(reader.GetString(2)).DateTime,
+                Summary: null,
+                MessageCount: reader.GetInt32(3)));
+        }
+
+        return results;
+    }
+
     // === DURABLE LAYER (MEMORY.md) ===
 
     public async Task<string> GetDurableMemoryAsync(CancellationToken ct = default)

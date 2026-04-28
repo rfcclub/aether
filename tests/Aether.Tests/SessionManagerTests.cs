@@ -89,6 +89,35 @@ public class SessionManagerTests : IDisposable
         Assert.Empty(history);
     }
 
+    [Fact]
+    public async Task GetRecentSessions_ReturnsSessionsOrderedByActivity()
+    {
+        var a = await _sessions.GetOrCreateSessionAsync("alpha");
+        await Task.Delay(10);
+        var b = await _sessions.GetOrCreateSessionAsync("beta");
+        await Task.Delay(10);
+        var c = await _sessions.GetOrCreateSessionAsync("gamma");
+
+        var recent = await _sessions.GetRecentSessionsAsync(limit: 3);
+
+        Assert.Equal(3, recent.Count);
+        Assert.Equal("gamma", recent[0].GroupFolder);
+        Assert.Equal("beta", recent[1].GroupFolder);
+        Assert.Equal("alpha", recent[2].GroupFolder);
+    }
+
+    [Fact]
+    public async Task GetRecentSessions_RespectsLimit()
+    {
+        await _sessions.GetOrCreateSessionAsync("a");
+        await _sessions.GetOrCreateSessionAsync("b");
+        await _sessions.GetOrCreateSessionAsync("c");
+
+        var recent = await _sessions.GetRecentSessionsAsync(limit: 2);
+
+        Assert.Equal(2, recent.Count);
+    }
+
     private static string FindSchemaPath()
     {
         var candidates = new[]

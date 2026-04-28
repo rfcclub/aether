@@ -117,6 +117,32 @@ public sealed class SessionManager : ISessionManager
 
         return messages;
     }
+
+    public async Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
+    {
+        await using var connection = await _db.OpenConnectionAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, group_folder, created_at, last_activity
+            FROM sessions
+            ORDER BY last_activity DESC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$limit", limit);
+
+        var sessions = new List<Session>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            sessions.Add(new Session(
+                Id: reader.GetString(0),
+                GroupFolder: reader.GetString(1),
+                CreatedAt: DateTimeOffset.Parse(reader.GetString(2)),
+                LastActivity: DateTimeOffset.Parse(reader.GetString(3))));
+        }
+
+        return sessions;
+    }
 }
 
 public interface ISessionManager
@@ -124,4 +150,5 @@ public interface ISessionManager
     Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default);
     Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default);
     Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default);
+    Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default);
 }

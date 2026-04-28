@@ -8,6 +8,7 @@ public interface ISkillEvolution
     Task RecordUsageAsync(string skillName, string userMessage, bool helped, CancellationToken ct = default);
     Task<IReadOnlyList<SkillEvolutionRecord>> GetRecordsAsync(string skillName, int limit = 20, CancellationToken ct = default);
     Task<IReadOnlyList<PromotionCandidate>> GetRecidivismCandidatesAsync(CancellationToken ct = default);
+    Task GeneratePatchAsync(string skillName, PromotionCandidate candidate, CancellationToken ct = default);
 }
 
 public record SkillEvolutionRecord(
@@ -23,14 +24,16 @@ public class SkillEvolution : ISkillEvolution
     private readonly List<SkillEvolutionRecord> _records = new();
     private readonly object _lock = new();
     private readonly ILogger<SkillEvolution> _logger;
+    private readonly string _patchesPath;
 
     // Recidivism: skill marked unhelpful 3+ times
     private const int RecidivismThreshold = 3;
     private const float MinConfidenceForPromotion = 0.7f;
 
-    public SkillEvolution(ILogger<SkillEvolution> logger)
+    public SkillEvolution(ILogger<SkillEvolution> logger, string patchesPath = "patches")
     {
         _logger = logger;
+        _patchesPath = patchesPath;
     }
 
     public Task RecordUsageAsync(string skillName, string userMessage, bool helped, CancellationToken ct = default)
@@ -69,6 +72,35 @@ public class SkillEvolution : ISkillEvolution
                 .ToList();
         }
         return Task.FromResult<IReadOnlyList<SkillEvolutionRecord>>(result);
+    }
+
+    public async Task GeneratePatchAsync(string skillName, PromotionCandidate candidate, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(_patchesPath);
+
+        var safeName = skillName.Replace('/', '-').Replace('\\', '-');
+        var dateStr = candidate.CreatedAt.ToString("yyyy-MM-dd");
+        var fileName = $"skill-patch-{safeName}-{dateStr}.md";
+        var filePath = Path.Combine(_patchesPath, fileName);
+
+        var patch = $"""
+            # Skill Patch: {skillName}
+            date: {candidate.CreatedAt:O}
+            confidence: {candidate.Confidence:F2}
+            evidence_count: {candidate.EvidenceCount}
+            source: {candidate.Source}
+            state: PROPOSED
+
+            ## Issue
+            {candidate.Content}
+
+            ## Proposed Change
+            <!-- Human reviewer: edit the SKILL.md based on the issue above, then mark state as APPLIED -->
+
+            """;
+
+        await File.WriteAllTextAsync(filePath, patch, ct);
+        _logger.LogInformation("Generated skill patch: {Path}", filePath);
     }
 
     public Task<IReadOnlyList<PromotionCandidate>> GetRecidivismCandidatesAsync(CancellationToken ct = default)

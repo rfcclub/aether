@@ -36,6 +36,9 @@ public sealed class FileMemory : IMemorySystem
     public Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default)
         => Task.FromResult<SessionSummary?>(null);
 
+    public Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<SessionSummary>>(Array.Empty<SessionSummary>());
+
     public Task<string> GetDurableMemoryAsync(CancellationToken ct = default)
         => Task.FromResult(string.Empty);
 

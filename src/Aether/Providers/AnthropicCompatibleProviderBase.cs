@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 
 namespace Aether.Providers;
@@ -103,6 +105,181 @@ public abstract class AnthropicCompatibleProviderBase : ILLMProvider
         }
 
         return new LlmResponse(content, toolCalls);
+    }
+
+    public virtual async IAsyncEnumerable<string> CompleteStreamingAsync(
+        LlmRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        // Fallback: non-streaming. Subclasses override with real SSE streaming.
+        var response = await CompleteAsync(request, ct);
+        yield return response.Content;
+    }
+
+    /// <summary>
+    /// Event-based streaming that yields text tokens and a final Response event
+    /// (with accumulated tool calls). Parses Anthropic's SSE stream format
+    /// (event: content_block_start / content_block_delta / content_block_stop / message_stop).
+    /// </summary>
+    public virtual async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(
+        LlmRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, GetEndpoint());
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
+        httpRequest.Headers.Add("x-api-key", GetApiKey());
+        httpRequest.Headers.Add("anthropic-version", GetAnthropicVersion());
+
+        var body = new Dictionary<string, object?>
+        {
+            ["model"] = Model,
+            ["messages"] = request.Messages.Select(MapMessage).ToArray(),
+            ["max_tokens"] = GetMaxTokens(),
+            ["stream"] = true
+        };
+
+        if (request.Tools is { Count: > 0 })
+        {
+            body["tools"] = request.Tools.Select(MapTool).ToArray();
+            body["tool_choice"] = new { type = "auto" };
+        }
+
+        httpRequest.Content = JsonContent.Create(body, options: JsonOptions);
+
+        using var response = await Client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"{Name} SSE request failed with HTTP {(int)response.StatusCode}. Response: {errorBody}");
+        }
+
+        await using var responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(responseStream);
+
+        var fullContent = new StringBuilder();
+        var pendingToolCallId = "";
+        var pendingToolCallName = "";
+        var pendingToolInputBuilder = new StringBuilder();
+        var toolCalls = new List<LlmToolCall>();
+
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct)) is not null)
+        {
+            if (line.Length == 0) continue;
+
+            // Anthropic SSE: "event: <type>" then "data: <json>"
+            if (!line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var data = line.AsSpan(6);
+            var dataStr = data.ToString();
+
+            using var chunk = JsonDocument.Parse(dataStr);
+            var root = chunk.RootElement;
+
+            var type = root.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : "";
+
+            switch (type)
+            {
+                case "content_block_delta":
+                {
+                    var delta = root.GetProperty("delta");
+                    var deltaType = delta.TryGetProperty("type", out var dtEl) ? dtEl.GetString() : "";
+
+                    if (deltaType == "text_delta")
+                    {
+                        var token = delta.GetProperty("text").GetString() ?? "";
+                        if (token.Length > 0)
+                        {
+                            fullContent.Append(token);
+                            yield return new StreamEvent.TextToken(token);
+                        }
+                    }
+                    else if (deltaType == "input_json_delta")
+                    {
+                        var partialJson = delta.GetProperty("partial_json").GetString() ?? "";
+                        pendingToolInputBuilder.Append(partialJson);
+                    }
+                    break;
+                }
+
+                case "content_block_start":
+                {
+                    var block = root.GetProperty("content_block");
+                    var blockType = block.TryGetProperty("type", out var btEl) ? btEl.GetString() : "";
+
+                    if (blockType == "tool_use")
+                    {
+                        pendingToolCallId = block.GetProperty("id").GetString() ?? "";
+                        pendingToolCallName = block.GetProperty("name").GetString() ?? "";
+                        pendingToolInputBuilder.Clear();
+                    }
+                    else if (blockType == "text")
+                    {
+                        var text = block.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+                        if (text.Length > 0)
+                        {
+                            fullContent.Append(text);
+                            yield return new StreamEvent.TextToken(text);
+                        }
+                    }
+                    break;
+                }
+
+                case "content_block_stop":
+                {
+                    if (pendingToolCallId.Length > 0)
+                    {
+                        var argsJson = pendingToolInputBuilder.ToString();
+                        var arguments = string.IsNullOrEmpty(argsJson)
+                            ? new Dictionary<string, string>()
+                            : JsonSerializer.Deserialize<Dictionary<string, string>>(argsJson, JsonOptions)
+                              ?? new Dictionary<string, string>();
+
+                        toolCalls.Add(new LlmToolCall(pendingToolCallId, pendingToolCallName, arguments));
+
+                        pendingToolCallId = "";
+                        pendingToolCallName = "";
+                        pendingToolInputBuilder.Clear();
+                    }
+                    break;
+                }
+
+                case "message_stop":
+                {
+                    var finalResponse = new LlmResponse(
+                        fullContent.ToString(),
+                        toolCalls.Count > 0 ? toolCalls : null);
+                    yield return new StreamEvent.Response(finalResponse);
+                    yield break;
+                }
+
+                case "message_start":
+                case "ping":
+                case "error":
+                default:
+                    break;
+            }
+        }
+
+        // Stream ended without message_stop -- emit what we have
+        if (pendingToolCallId.Length > 0)
+        {
+            var argsJson = pendingToolInputBuilder.ToString();
+            var arguments = string.IsNullOrEmpty(argsJson)
+                ? new Dictionary<string, string>()
+                : JsonSerializer.Deserialize<Dictionary<string, string>>(argsJson, JsonOptions)
+                  ?? new Dictionary<string, string>();
+            toolCalls.Add(new LlmToolCall(pendingToolCallId, pendingToolCallName, arguments));
+        }
+
+        var fallbackResponse = new LlmResponse(
+            fullContent.ToString(),
+            toolCalls.Count > 0 ? toolCalls : null);
+        yield return new StreamEvent.Response(fallbackResponse);
     }
 
     public virtual async Task<bool> HealthCheckAsync(CancellationToken ct)

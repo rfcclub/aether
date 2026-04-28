@@ -1,4 +1,4 @@
-using System.Threading.Channels;
+using System.Text;
 using Aether.Agent;
 using Aether.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +9,12 @@ namespace Aether.Channels;
 
 public sealed class ChannelMessageProcessor : BackgroundService
 {
+    /// <summary>
+    /// Maximum number of streaming chunks to send to the channel individually.
+    /// After this threshold, chunks are batched to avoid rate limits / excessive edits.
+    /// </summary>
+    private const int MaxStreamingEdits = 50;
+
     private readonly IChannel _channel;
     private readonly MessageRouter _router;
     private readonly IServiceProvider _services;
@@ -72,10 +78,34 @@ public sealed class ChannelMessageProcessor : BackgroundService
 
             using var scope = _services.CreateScope();
             var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();
-            var response = await soul.ProcessAsync(routed.Value.GroupFolder, routed.Value.Prompt, ct);
+
+            // Stream the response through the channel, accumulating for the final save
+            var fullResponse = new StringBuilder();
+            var chunkIndex = 0;
+            var editsRemaining = MaxStreamingEdits;
+
+            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.GroupFolder, routed.Value.Prompt, ct))
+            {
+                fullResponse.Append(chunk);
+
+                // Only push to channel for the first N chunks to avoid rate limits.
+                // After that, just accumulate silently.
+                if (editsRemaining > 0)
+                {
+                    await _channel.SendStreamingChunkAsync(
+                        message.ChatId,
+                        fullResponse.ToString(), // send accumulated text so edits show full progress
+                        chunkIndex,
+                        ct);
+                    chunkIndex++;
+                    editsRemaining--;
+                }
+            }
 
             await _channel.SetTypingAsync(message.ChatId, false, ct);
-            await _channel.SendMessageAsync(message.ChatId, response.Content, ct);
+
+            // Signal the stream is complete with the full accumulated text
+            await _channel.SendStreamingCompleteAsync(message.ChatId, fullResponse.ToString(), ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
