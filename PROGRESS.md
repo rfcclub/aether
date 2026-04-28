@@ -1,133 +1,253 @@
 # Aether Progress
 
-> Last Updated: 2026-04-22
+> Last Updated: 2026-04-27
 
 ## Current Phase
 
-Phase 1: Core Rewrite.
+Phase 1: Core Rewrite — implementation complete. Phase 2: Hardening and channel integration in progress.
 
 ## Completed
 
-### Track A Scaffold Foundation
+### Provider System
 
 Status: Completed
 
-- Created the .NET 9 solution and app project structure.
-- Added the architecture folders for channels, routing, data, agent, providers, memory, sessions, and scheduler.
-- Added the initial generic host setup in `src/Aether/Program.cs`.
-- Added `src/Aether/appsettings.json` with assistant, channel, LLM, sandbox, and scheduler sections.
-- Added `src/Aether/Data/Schema.sql` with the Phase 1 tables from the architecture.
-- Added a dependency-free smoke test project for scaffold verification.
+- Added `ILLMProvider.cs` — unified interface (chat, stream, tools)
+- Added `OpenRouterProvider.cs`, `FireworksProvider.cs` — direct `HttpClient` implementations
+- Added `AnthropicCompatibleProviderBase.cs`, `OpenAiCompatibleProviderBase.cs` — reusable base classes
+- Added `GenericHttpProvider.cs` — generic HTTP provider with streaming support
+- Added `ProviderRouter.cs` — multi-provider routing with fallback chain
+- Added `ProviderHealthMonitor.cs` — health tracking and circuit breaker per provider
 
-### Data, Queue, And Router Foundation
-
-Status: Completed
-
-- Added `Data/AetherDb.cs` with SQLite connection management and idempotent schema migration.
-- Added group route registration and lookup on top of the `groups` table.
-- Added smoke coverage for migration idempotency and Phase 1 table creation.
-- Added `Channels/InboundMessage.cs` and `Channels/IChannel.cs` as shared channel contracts.
-- Added `Routing/IMessageQueue.cs` and `Routing/ChannelMessageQueue.cs` using `System.Threading.Channels`.
-- Added `Routing/RoutedMessage.cs` and `Routing/MessageRouter.cs` for trigger normalization, group lookup, and enqueueing.
-- Wired `AetherDb`, `IMessageQueue`, and `MessageRouter` into host DI.
-
-### Track B Foundation
+### Tool Executor (Sandboxed)
 
 Status: Completed
 
-- Added `Providers/ILLMProvider.cs` with request, message, and response contracts.
-- Added `Providers/OpenRouterProvider.cs` with direct `HttpClient` chat-completions support.
-- Added `Sessions/Session.cs` and `Sessions/SessionManager.cs` backed by SQLite `sessions` and `messages`.
-- Added `Memory/IMemorySystem.cs` and `Memory/FileMemory.cs` for global and group `CLAUDE.md` loading.
-- Added `Agent/IToolExecutor.cs` and `Agent/DisabledToolExecutor.cs` as the tool boundary before sandbox implementation.
-- Added `Agent/AetherSoul.cs` for the minimal core loop: load memory, load history, call LLM, save user/assistant messages.
-- Added host DI wiring for provider, session manager, file memory, disabled tool executor, and `AetherSoul`.
-- Added local `--prompt` / `--group` harness for future no-Telegram testing with a configured LLM provider.
-- Added smoke coverage for OpenRouter request/response shape, session persistence, file memory loading, and the AetherSoul loop.
-- Fixed the local prompt harness so it bypasses generic host startup when running one-off prompts under Windows `dotnet.exe` from WSL.
-- Added `--model`, `--database-path`, and `--api-key-file` prompt-harness overrides for reliable real-provider testing without exposing API keys in command lines.
-- Verified a real OpenRouter call with `minimax/minimax-m2.5:free`.
+- Added `Agent/ToolExecutor.cs` — sandboxed execution with allowed-path validation
+- Added `Tooling/ToolExecutor.cs` — separate Tooling namespace implementation
+- Added `ToolRegistry.cs` — dynamic tool registration
+- Built-in tools: `read`, `glob`, `grep`, `bash`, `write`, `edit`
+- Timeout handling, process-tree cleanup, output truncation
+- Allowed-path validation for filesystem tools
 
-### Tool Executor Safe-Read Slice
+### AetherSoul Tool Loop
 
 Status: Completed
 
-- Added `Agent/ToolExecutor.cs` with `SandboxOptions` bound from the existing `sandbox` config.
-- Replaced `DisabledToolExecutor` in host DI and the local prompt harness with `ToolExecutor`.
-- Added safe managed built-in tools for `read`, `glob`, and `grep`.
-- Added allowed-path validation for filesystem inspection tools.
-- Kept `bash`, `write`, and `edit` explicitly disabled until the sandbox/mutating-tool slice is implemented.
-- Added smoke coverage for allowed reads, rejected outside-path reads, recursive glob, recursive grep, disabled future tools, and unknown-tool errors.
+- Added `Agent/AetherSoul.cs` — minimal core loop: load memory → load history → call LLM → save messages
+- Tool definitions for all built-in tools exposed to provider
+- Continues provider calls when assistant tool calls returned
+- Executes tools through `IToolExecutor`, appends tool-result messages
+- Preserves assistant tool-call messages for valid tool-result conversation shape
 
-### Tool Executor Bash Slice
+### Memory System
 
-Status: Completed
+Status: Completed (skeleton + full implementation)
 
-- Added sandboxed `bash` execution through `ToolExecutor`.
-- Enforced allowed working directories.
-- Added timeout handling and process-tree cleanup.
-- Added output capture and truncation.
-- Added smoke coverage for success, denied cwd, non-zero exit, timeout, and truncation.
+- Added `IMemorySystem.cs` — interface specification
+- Added `SqliteMemorySystem.cs` — full implementation with FTS5 search
+- Added `FileMemory.cs` — global and group `CLAUDE.md` loading
+- Three-layer design: Ephemeral, Working (FTS5), Durable
+- Tracking tables for promotion candidates
+- Bounds checking with force consolidation
 
-### Tool Executor Mutating-Tool Slice
-
-Status: Completed
-
-- Added allowed-path `write` support.
-- Added allowed-path text replacement `edit` support.
-- Added smoke coverage for file creation, rejected outside writes, successful edits, and missing-text edit failures.
-
-### Provider Tool-Call Contract Slice
+### Skill System
 
 Status: Completed
 
-- Extended provider contracts with tool definitions, tool result messages, and assistant tool calls.
-- Updated OpenRouter request serialization for OpenAI-compatible tools.
-- Updated OpenRouter response parsing for assistant tool calls.
-- Added smoke coverage for tool definitions, tool result messages, and parsed tool calls.
+- Added `Skills/SkillInterfaces.cs` — ISkillRegistry, ISkillLoader, ISkillTrigger, SkillDefinition, SkillContext
+- Added `Skills/SkillParser.cs` — SKILL.md parser (frontmatter YAML + body)
+- Added `Skills/SkillRegistry.cs` — skill registration with keyword-match auto-detection
+- Added `Skills/SkillTrigger.cs` — explicit (/skill-name) and auto (keyword overlap) trigger detection
+- Added `Skills/SkillEvolution.cs` — usage tracking, recidivism detection, PromotionCandidate output
+- Integrated skill context injection into AetherSoul BuildSystemPrompt
+- Skill system wired into DI in Program.cs
 
-### AetherSoul Tool-Loop Slice
+### Session Manager
 
 Status: Completed
 
-- Added built-in tool definitions for `read`, `glob`, `grep`, `bash`, `write`, and `edit`.
-- Taught `AetherSoul` to continue provider calls when assistant tool calls are returned.
-- Executes requested tools through `IToolExecutor` and appends tool-result messages.
-- Preserves assistant tool-call messages so OpenRouter receives a valid tool-result conversation shape.
-- Added smoke coverage for tool execution, provider continuation, tool definitions, and tool-result messages.
+- Added `Sessions/Session.cs` and `Sessions/SessionManager.cs`
+- SQLite-backed `sessions` and `messages` tables
+- Session history persistence and loading
 
-## In Progress
+### Data Layer
 
-No active implementation task is in progress.
+Status: Completed
 
-## Next Steps
+- Added `Data/AetherDb.cs` — SQLite connection management, idempotent schema migration
+- Added FTS5 virtual table for working memory search
+- Tracking tables: `sessions`, `messages`, `promotion_candidates`
+- `AetherInitializationService.cs` — host initialization
 
-Track B next:
+### Provider Tool-Call Contract
 
-1. Add token-budgeted session history trimming before full compaction.
-2. Persist or summarize tool turns in session history if real-provider use shows the next request needs more than final assistant text.
-3. Add more direct OpenRouter real-provider smoke around tool calls with `--api-key-file`.
-4. Harden sandbox backends beyond the current process-backed implementation.
+Status: Completed
 
-Track A later:
+- Extended provider contracts with tool definitions, tool result messages, assistant tool calls
+- OpenRouter request serialization for OpenAI-compatible tools
+- Response parsing for assistant tool calls
 
-1. Implement `Channels/Telegram/TelegramChannel.cs` using `Telegram.Bot`.
-2. Add Telegram channel tests around inbound message normalization without hitting the network.
-3. Add group route bootstrap/config loading so Telegram chat IDs can be registered into SQLite.
+### Telegram Channel
+
+Status: Completed
+
+- Added `Channels/TelegramChannel.cs` — IChannel implementation using Telegram.Bot
+- Message polling loop with auto-reconnect
+- Converts Telegram messages to InboundMessage, fires OnMessage event
+- Supports SendMessageAsync, SetTypingAsync, OwnsChatId
+- Added `Channels/NoOpChannel.cs` — no-op channel for when Telegram is disabled
+- Added `Channels/ChannelMessageProcessor.cs` — BackgroundService that bridges channel → router → AetherSoul → channel
+
+### Test Suite
+
+Status: Completed
+
+- Converted test project to xUnit with 13 test classes
+- Tests: LlmMessage, ChannelMessageQueue, SkillParser, SkillRegistry, SkillTrigger, SkillEvolution, ProviderRouter, SessionManager, AetherDb, FileMemory, OpenRouterProvider, AetherSoul, MessageRouter, ToolRegistry
+- Original smoke test preserved in Program.cs
 
 ## Verification
 
-- Completed: `'/mnt/c/Program Files/dotnet/dotnet.exe' run --project tests/Aether.Tests/Aether.Tests.csproj`
-  - Result: `Aether Track B foundation smoke tests passed.`
-- Completed: `'/mnt/c/Program Files/dotnet/dotnet.exe' build Aether.sln`
-  - Result: Build succeeded with 0 warnings and 0 errors.
-- Completed: `'/mnt/c/Program Files/dotnet/dotnet.exe' run --project src/Aether/Aether.csproj -- --smoke`
-  - Result: Process exited with code 0.
-- Completed: `dotnet run --project tests/Aether.Tests/Aether.Tests.csproj`
-  - Result: `Aether Track B foundation smoke tests passed.`
-- Completed: `dotnet build Aether.sln`
-  - Result: Build succeeded with 0 warnings and 0 errors.
-- Completed: `timeout 10s dotnet run --project src/Aether/Aether.csproj -- --smoke`
-  - Result: Process exited with code 0.
-- Completed: real OpenRouter prompt through built DLL using `--model minimax/minimax-m2.5:free`, Windows-local temp SQLite DB, and `--api-key-file`
-  - Result: `Hello! Nice to meet you.`
+- 21 commits from baseline (commit `ea20857` through `02e100d`)
+- Latest commit: `ea20857 feat: add provider base classes and generic HTTP provider`
+- Working tree clean on `master` branch
+- OpenSpec specs archived for all 8 changes:
+  - `2026-04-27-aether-full-project` (+33 requirements)
+  - `2026-04-27-provider-base-classes` (+9)
+  - `2026-04-27-llm-provider-extensions` (+9)
+  - `2026-04-27-llm-tool-call-loop` (+8)
+  - `2026-04-27-tool-executor-sandbox` (+5)
+  - `2026-04-27-session-history-trimming` (+4)
+  - `2026-04-27-telegram-channel` (+7)
+  - `2026-04-27-skill-system` (+11)
+- Total specs added: +86 requirements across 22 spec files
+
+## Notes
+
+- `PLAN.md` references old team names (Miriam/Erza/2B) — plan is historical
+- `OPEN_SPEC.md` reflects current architecture accurately
+- Track A (infrastructure/channel) and Track B (agent/provider) completed as parallel implementation
+
+### JSON Schema Validation
+
+Status: Completed
+
+- Added `NJsonSchema` v11.0.0 package
+- Added `SchemaJson` property to `LlmTool` record
+- Created `Tooling/ParameterValidator.cs` — static validator with compiled schema cache
+- Added JSON Schema for all 6 built-in tools with `additionalProperties: false`
+- Wired validation into `AetherSoul.RunLlmToolLoopAsync` — validates before execution
+- Validation errors formatted with path + kind, returned as tool result for LLM self-correction
+- 11 tests in `ParameterValidatorTests.cs`
+
+### AIAgent Core Refinements
+
+Status: Completed
+
+- **Token-aware truncation**: `MaxContextTokens` (120k), char/4 estimation, removes oldest history first
+- **Streaming support**: `CompleteStreamingAsync` added to `ILLMProvider` interface, implemented in all providers, `ProcessStreamingAsync` on `AetherSoul`
+- **Session improvements**: `GetRecentSessionsAsync` on `ISessionManager`/`SessionManager`, ordered by last activity
+
+### TUI Project
+
+Status: Completed
+
+- Added `src/Aether.Tui/` — Terminal.Gui v1.19.0 console app
+- Full chat UI: group list, chat history, input bar, Send button
+- DI container with same service configuration as main Program.cs
+- Thread-safe chat updates via `Application.MainLoop.Invoke()`
+- Keyboard: Enter sends, Ctrl+Q quits
+- 3 projects build: Aether, Aether.Tui, Aether.Tests
+
+### Self-Improvement Workflow
+
+Status: Completed
+
+- Added `SelfImprovement/` directory with 6 new files
+- `CandidateState.cs` — PROPOSED/APPLIED/VERIFIED/FAILED enum
+- `DailyReviewHostedService.cs` — BackgroundService with midnight UTC polling
+- `SelfImprovementService.cs` — 5-phase pipeline: reflection, promotion, recidivism, benchmark, surfacing
+- `BenchmarkGate.cs` — process-based `dotnet test` runner with configurable timeout
+- `PipelineTracker.cs` — SQLite-backed candidate state persistence via AetherDb
+- `IPipelineTracker.cs`, `IBenchmarkGate.cs`, `ISelfImprovementService.cs` — interfaces
+- Added `pipeline_states` table to Schema.sql with UNIQUE candidate_hash
+- Added `GetRecentSessionsAsync` to `IMemorySystem` and both implementations
+- Added `GeneratePatchAsync` to `ISkillEvolution` with structured markdown patch output
+- Wired all 5 self-improvement services into DI in Program.cs
+- Created `patches/` directory with `.gitkeep`
+- 16 new tests across 4 test files (PipelineTracker, BenchmarkGate, SelfImprovementService, Memory)
+- 112 total tests pass, 0 fail
+
+### Streaming Support
+
+Status: Completed
+
+- Added `SendStreamingChunkAsync` and `SendStreamingCompleteAsync` to `IChannel` (default no-op for backward compat)
+- Added `StreamEvent` discriminated union (TextToken | Response) and `CompleteStreamingEventsAsync` to `ILLMProvider`
+- `TelegramChannel` streaming: first chunk sends new message, subsequent chunks edit in-place via `EditMessageText`
+- `ChannelMessageProcessor` switched from `ProcessAsync` to `ProcessStreamingAsync`, capped at 50 streaming edits
+- `AetherSoul.ProcessStreamingAsync`: full tool-call loop with streaming, token buffering outside try-catch, tool validation + execution in stream
+- `OpenAiCompatibleProviderBase`: real SSE parsing with `ResponseHeadersRead`, `data: [...]` line parsing, tool-call delta accumulation
+- `AnthropicCompatibleProviderBase`: real Anthropic SSE format (content_block_start/delta/stop, message_start/stop), text_delta + input_json_delta
+- `ProviderRouter`: streaming passthrough with fallback, event buffering for yield-in-try-catch workaround
+- 4 new streaming tests in AetherSoulTests.cs
+
+### WebSocket Channel
+
+Status: Completed
+
+- Added `WebSocketChannel.cs` — IChannel implementation with HttpListener + WebSocket upgrade on `/ws`
+- Added `WebSocketChannelService.cs` — BackgroundService for listener lifecycle
+- JSON protocol: `{"type":"message","text":"..."}`, typing indicators, error messages
+- Configuration: `channels:websocket:port` (default 5099), `channels:websocket:enabled`
+- Multi-client support with connection tracking, cleanup on disconnect
+- Wired into DI in Program.cs alongside Telegram channel
+
+### TUI Enhancements
+
+Status: Completed
+
+- F5 group cycling through available groups, group name in status bar
+- PgUp/PgDn scrollback with line indicator (L1-20/120), auto-scroll toggle
+- Ctrl+W word wrap toggle with status bar indicator
+- Status bar: Group | Wrap | Scroll | Quit | Switch | Wrap Toggle
+- Build fixes: yield/try/catch in AetherSoul, variable shadowing in OpenAiCompatibleProviderBase
+
+### Tool Hot-Reload
+
+Status: Completed
+
+- Added `ToolHotReloadService.cs` — BackgroundService with FileSystemWatcher on `tools/` directory
+- 2-second debounce timer prevents duplicate registration from rapid file events
+- Periodic sweep timer (5s) catches deletions missed by FileSystemWatcher on WSL/network shares
+- Parses `.json` tool definitions and registers hot-reloaded tools at runtime
+- Invalid JSON logged and skipped — no crash, existing tools unaffected
+- Configurable `tools/` path via `tooling:hot_reload_path` in appsettings.json (default: `tools`)
+- `tools/.gitkeep` placeholder file for git tracking
+- 9 new tests in `ToolHotReloadServiceTests.cs` — all pass
+
+## In Progress
+
+No active implementation task.
+
+## Next Steps
+
+### High Priority
+
+1. ~~**Skill System**~~ ✅ Done
+2. ~~**Gateway / Telegram**~~ ✅ Done
+3. ~~**JSON Schema validation**~~ ✅ Done
+
+### Medium Priority
+
+4. ~~**AIAgent Core**~~ ✅ Done
+5. ~~**Self-Improvement Workflow**~~ ✅ Done
+6. ~~**Streaming support**~~ ✅ Done
+7. ~~**WebSocket channel**~~ ✅ Done
+8. ~~**TUI enhancements**~~ ✅ Done
+
+### Lower Priority
+
+9. **Multi-Agent** — decision pending (profile isolation vs gateway routing)
+10. ~~**Hot-reload**~~ ✅ Done — FileSystemWatcher for tool definitions, 2s debounce, sweep fallback

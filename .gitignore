@@ -9,4 +9,6 @@ obj/
 .vs/
 store/*.db
 store/*.db-*
+patches/*
+!patches/.gitkeep
 .claude/settings.local.json
