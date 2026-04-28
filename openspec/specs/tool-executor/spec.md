@@ -1,5 +1,8 @@
-## ADDED Requirements
+# tool-executor Specification
 
+## Purpose
+TBD - created by archiving change tool-executor-sandbox. Update Purpose after archive.
+## Requirements
 ### Requirement: Sandbox Execution
 
 The system MUST execute `bash` tool calls inside a `bwrap` sandbox on Linux, or a restricted `Process` on non-Linux platforms.
@@ -61,7 +64,9 @@ Large `bash` outputs MUST be truncated to prevent context bloat.
 - **THEN** the output is truncated and a suffix `\n[Output truncated at 64KB]` is appended
 
 ### Requirement: Unknown Tool Handling
+The tool executor SHALL return a failure result when executed with an unrecognized tool name.
 
 #### Scenario: unknown tool name
 - **WHEN** `ExecuteAsync` is called with an unrecognized `Name`
 - **THEN** `ToolResult(false, "", "Unknown tool: <name>")` is returned
+
