@@ -9,6 +9,9 @@ obj/
 .vs/
 store/*.db
 store/*.db-*
+
+# Agent instances (personalities are not framework)
+agents/*
 patches/*
 !patches/.gitkeep
 .claude/settings.local.json
