@@ -8,7 +8,9 @@ using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
 using Aether.Skills;
+using Aether.Agents;
 using Microsoft.Extensions.Logging;
+using Aether.Tests;
 
 var root = FindRepoRoot();
 
@@ -598,7 +600,7 @@ static async Task VerifyAetherSoulAsync(string root)
         var memory = new FileMemory(memoryRoot);
         var provider = new FakeProvider("ack");
         var tools = new DisabledToolExecutor();
-        var soul = new AetherSoul(provider, memory, tools, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()));
+        var soul = new AetherSoul(provider, memory, tools, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()), TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "hello", CancellationToken.None);
 
@@ -624,7 +626,7 @@ static async Task VerifyAetherSoulAsync(string root)
                 }),
             new LlmResponse("tool result final"));
         var toolExecutor = new CapturingToolExecutor(new ToolResult(true, "file contents"));
-        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()));
+        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()), TestAgentProfile.NoOp());
 
         var toolResponse = await toolSoul.ProcessAsync("tools", "inspect notes", CancellationToken.None);
 

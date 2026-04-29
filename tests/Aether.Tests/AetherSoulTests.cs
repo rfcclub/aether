@@ -15,7 +15,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
         return (soul, provider, tools, sessions);
     }
 
@@ -70,7 +70,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "read file");
 
@@ -88,7 +88,7 @@ public class AetherSoulTests
         skills.Register(new SkillDefinition("pdf", "process PDF documents", "", Array.Empty<string>(), false, "PDF skill body"));
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
         var memory = new FakeMemorySystem();
-        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), new FakeSessionManager(), skills, trigger);
+        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), new FakeSessionManager(), skills, trigger, TestAgentProfile.NoOp());
 
         await soul.ProcessAsync("main", "merge these PDF files please");
 
@@ -109,7 +109,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "read a file");
 
@@ -133,7 +133,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         // Valid tool calls for each built-in tool — all should execute (no validation errors)
         var validCalls = new Dictionary<string, Dictionary<string, string>>
@@ -172,7 +172,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "say hi"))
@@ -196,7 +196,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         // First streaming call returns a tool call. The second streaming call
         // (for tool result response) needs to be text-only.
@@ -209,7 +209,7 @@ public class AetherSoulTests
             // Second turn: final text response
             new LlmResponse("file read successfully"));
 
-        var soul2 = new AetherSoul(multiProvider, memory, tools, sessions, skills, trigger);
+        var soul2 = new AetherSoul(multiProvider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul2.ProcessStreamingAsync("main", "read f.txt"))
@@ -232,7 +232,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "hello"))
@@ -263,7 +263,7 @@ public class AetherSoulTests
         var sessions = new FakeSessionManager();
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "read a file"))

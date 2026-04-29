@@ -1,3 +1,4 @@
+using Aether.Agents;
 using System.Net;
 using Aether.Providers;
 using Aether.Agent;
@@ -337,5 +338,16 @@ internal sealed class FakeHttpHandler : HttpMessageHandler
         LastRequest = request;
         LastBody = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
         return new HttpResponseMessage(_statusCode) { Content = new StringContent(_responseJson) };
+    }
+}
+
+internal static class TestAgentProfile
+{
+    public static Agents.IAgentProfile NoOp(string name = "test-agent")
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"aether-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "SOUL.md"), "Aether");
+        return new Agents.AgentProfile(name, dir, new Agents.AgentConfig { StartupFiles = new() { "SOUL.md" } });
     }
 }
