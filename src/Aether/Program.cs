@@ -1,5 +1,6 @@
 using Aether;
 using Aether.Agent;
+using Aether.Agents;
 using Aether.Channels;
 using Aether.Data;
 using Aether.Memory;
@@ -102,7 +103,8 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         var toolExecutor = new ToolExecutor(configuration);
         var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
         var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
-        var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger);
+        var profile = new AgentProfile("aether", ".", new AgentConfig { StartupFiles = new() });
+        var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
 
         var response = await soul.ProcessAsync(group, prompt, cts.Token);
         Console.WriteLine(response.Content);
@@ -227,7 +229,8 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
     var toolExecutor = new ToolExecutor(configuration);
     var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
     var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
-    var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger);
+    var profile = new AgentProfile("aether", ".", new AgentConfig { StartupFiles = new() });
+    var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
 
     Console.WriteLine("╔══════════════════════════════════════╗");
     Console.WriteLine("║         Aether — Onboard REPL       ║");
@@ -453,6 +456,80 @@ static async Task RunServeAsync(bool traceStartup)
         return new ProviderRouter(providers, options, db, logger);
     });
 
+    // Agent Profile System
+    builder.Services.AddSingleton<AgentConfig>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var agentName = configuration["agent:name"] ?? "maria";
+        var agentsRoot = configuration["agent:root"] ?? "agents";
+        var agentDir = Path.Combine(agentsRoot, agentName);
+
+        return new AgentConfig
+        {
+            StartupFiles = (configuration["agent:startup_files"] ?? "SOUL.md,USER.md")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList(),
+            LongTermMemoryFile = configuration["agent:long_term_memory"] ?? "MEMORY.md",
+            HeartbeatFile = configuration["agent:heartbeat_file"] ?? "HEARTBEAT.md",
+            DailyMemoryDirectory = configuration["agent:daily_memory_dir"] ?? "memory",
+            TaskInboxFile = configuration["agent:task_inbox"] ?? "TASK_INBOX.md",
+            TaskReportFile = configuration["agent:task_report"] ?? "TASK_REPORT.md"
+        };
+    });
+
+    builder.Services.AddSingleton<IAgentProfile>(provider =>
+    {
+        var config = provider.GetRequiredService<AgentConfig>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var agentName = configuration["agent:name"] ?? "maria";
+        var agentsRoot = configuration["agent:root"] ?? "agents";
+        var agentDir = Path.Combine(agentsRoot, agentName);
+
+        return new AgentProfile(agentName, agentDir, config);
+    });
+
+    builder.Services.AddSingleton<AgentMemoryBridge>(provider =>
+    {
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        var config = provider.GetRequiredService<AgentConfig>();
+        return new AgentMemoryBridge(profile.AgentDirectory, config);
+    });
+
+    builder.Services.AddHostedService<AgentHeartbeatService>();
+
+    // FEOFALLS Cognitive Architecture
+    builder.Services.AddSingleton<FeofallsConfig>(provider =>
+    {
+        var config = provider.GetRequiredService<AgentConfig>();
+        return config.Feofalls ?? new FeofallsConfig();
+    });
+
+    builder.Services.AddSingleton<IBootContract>(provider =>
+    {
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
+        return new FeofallsBootContract(profile.AgentDirectory, feofallsConfig);
+    });
+
+    builder.Services.AddSingleton<EpisodicLogger>(provider =>
+    {
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
+        return new EpisodicLogger(profile.AgentDirectory, feofallsConfig);
+    });
+
+    builder.Services.AddSingleton<LifecycleStateMachine>(provider =>
+    {
+        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
+        return new LifecycleStateMachine(feofallsConfig);
+    });
+
+    builder.Services.AddSingleton<WriteValidator>(provider =>
+    {
+        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
+        return new WriteValidator(feofallsConfig);
+    });
+
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ILLMProvider>();
@@ -461,7 +538,9 @@ static async Task RunServeAsync(bool traceStartup)
         var sessions = provider.GetRequiredService<ISessionManager>();
         var skills = provider.GetRequiredService<ISkillRegistry>();
         var skillTrigger = provider.GetRequiredService<ISkillTrigger>();
-        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger);
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        var bootContract = provider.GetRequiredService<IBootContract>();
+        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

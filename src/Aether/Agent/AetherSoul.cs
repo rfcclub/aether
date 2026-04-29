@@ -1,4 +1,5 @@
 using System.Text;
+using Aether.Agents;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Sessions;
@@ -17,6 +18,8 @@ public sealed class AetherSoul
     private readonly ISessionManager _sessions;
     private readonly ISkillRegistry _skills;
     private readonly ISkillTrigger _skillTrigger;
+    private readonly IAgentProfile _profile;
+    private readonly IBootContract? _bootContract;
 
     public AetherSoul(
         ILLMProvider llm,
@@ -24,7 +27,9 @@ public sealed class AetherSoul
         IToolExecutor tools,
         ISessionManager sessions,
         ISkillRegistry skills,
-        ISkillTrigger skillTrigger)
+        ISkillTrigger skillTrigger,
+        IAgentProfile profile,
+        IBootContract? bootContract = null)
     {
         _llm = llm;
         _memory = memory;
@@ -32,20 +37,34 @@ public sealed class AetherSoul
         _sessions = sessions;
         _skills = skills;
         _skillTrigger = skillTrigger;
+        _profile = profile;
+        _bootContract = bootContract;
     }
 
     public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct = default)
     {
         var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
+        var persona = await _profile.LoadPersonaAsync(ct);
+        var dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
+
+        // FEOFALLS boot contract — constitution + cognitive + working state
+        string? constitution = null, cognitive = null, workingState = null;
+        if (_bootContract is not null)
+        {
+            constitution = await _bootContract.LoadConstitutionAsync(ct);
+            cognitive = await _bootContract.LoadCognitiveAsync(ct);
+            workingState = await _bootContract.LoadWorkingStateAsync(ct);
+        }
 
         // Detect skill trigger before building messages
         var skillContext = _skillTrigger.DetectTrigger(prompt, _skills.List().ToList());
 
         var messages = new List<LlmMessage>
         {
-            LlmMessage.System(BuildSystemPrompt(memoryContext, skillContext))
+            LlmMessage.System(BuildSystemPrompt(persona, dailyMemory, memoryContext,
+                constitution, cognitive, workingState, skillContext))
         };
 
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
@@ -74,13 +93,25 @@ public sealed class AetherSoul
     {
         var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
+        var persona = await _profile.LoadPersonaAsync(ct);
+        var dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
+
+        // FEOFALLS boot contract
+        string? constitution = null, cognitive = null, workingState = null;
+        if (_bootContract is not null)
+        {
+            constitution = await _bootContract.LoadConstitutionAsync(ct);
+            cognitive = await _bootContract.LoadCognitiveAsync(ct);
+            workingState = await _bootContract.LoadWorkingStateAsync(ct);
+        }
 
         var skillContext = _skillTrigger.DetectTrigger(prompt, _skills.List().ToList());
 
         var messages = new List<LlmMessage>
         {
-            LlmMessage.System(BuildSystemPrompt(memoryContext, skillContext))
+            LlmMessage.System(BuildSystemPrompt(persona, dailyMemory, memoryContext,
+                constitution, cognitive, workingState, skillContext))
         };
 
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
@@ -289,14 +320,51 @@ public sealed class AetherSoul
         return $"Tool failed: {result.Error}";
     }
 
-    private static string BuildSystemPrompt(string memoryContext, SkillContext? skillContext)
+    private static string BuildSystemPrompt(
+        string persona,
+        string dailyMemory,
+        string memoryContext,
+        string? constitution,
+        string? cognitive,
+        string? workingState,
+        SkillContext? skillContext)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("You are Aether, a lightweight personal AI agent.");
+
+        if (!string.IsNullOrWhiteSpace(constitution))
+        {
+            sb.AppendLine("## Constitution (Non-Negotiable)");
+            sb.AppendLine(constitution);
+        }
+
+        sb.AppendLine(persona);
+
+        if (!string.IsNullOrWhiteSpace(cognitive))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Cognitive Context");
+            sb.AppendLine(cognitive);
+        }
+
+        if (!string.IsNullOrWhiteSpace(dailyMemory))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Recent Memory");
+            sb.AppendLine(dailyMemory);
+        }
 
         if (!string.IsNullOrWhiteSpace(memoryContext))
         {
-            sb.AppendLine().AppendLine(memoryContext);
+            sb.AppendLine();
+            sb.AppendLine("## Group Context");
+            sb.AppendLine(memoryContext);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workingState))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Working State");
+            sb.AppendLine(workingState);
         }
 
         if (skillContext != null)
