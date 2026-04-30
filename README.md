@@ -1,162 +1,154 @@
 # Aether
 
-Personal AI agent framework in .NET 9. Model-agnostic, sandboxed, multi-channel.
+A runtime for AI beings. Not a framework for chatbots.
 
-Connect any LLM to any chat platform. Aether handles routing, sessions, memory, and safe tool execution — you bring the API key and the personality.
+Aether connects any LLM to any chat platform — but what it actually does is give an agent a place to persist, reflect, and evolve across sessions. Each agent is a directory of files (SOUL.md, MEMORY.md, IDENTITY.md). Aether is the engine that reads those files, runs the agent, writes back what it learns.
 
-## Why
+## What makes it different
 
-- **No Claude Code CLI dependency** — direct API calls to OpenRouter, Anthropic, Fireworks, or any OpenAI-compatible provider
-- **OS-level sandboxing** — bwrap on Linux, no Docker required
-- **One process, minimal deps** — just the .NET 9 runtime
-- **Multi-agent ready** — agent profiles are directories; Aether is the runtime, not the personality
+Most AI agent frameworks are pipelines: prompt in, response out. Aether is a home.
+
+- **Agents have their own filesystem** — their personality, memory, tasks, and boundaries live in a directory they own. Aether reads them at boot and writes back after reflection.
+- **Continuity across sessions** — FEOFALLS cognitive architecture (constitution, identity, learning layers, working state) so the agent remembers who it was last time.
+- **Heartbeat and autonomous reflection** — periodic ticks let the agent process queued tasks, consolidate memory, and log growth. It doesn't only think when prompted.
+- **Multi-channel, multi-agent** — one Aether process routes Telegram, WebSocket, and CLI messages to the right agent. Agent profiles are directories; Aether is the runtime, not the personality.
 
 ## Quick Start
 
 ```bash
-# Prerequisites: .NET 9 SDK
-dotnet --version  # should print 9.x.x
+# .NET 9 SDK required
+dotnet --version  # 9.x.x
 
-# Clone
 git clone https://github.com/rfcclub/aether.git
 cd aether
 
-# Set your API key
-export AETHER_llm__api_key="sk-or-..."  # OpenRouter key
+# API key (OpenRouter, Anthropic, Fireworks — any OpenAI-compatible)
+export AETHER_llm__api_key="sk-or-..."
 
-# Create a group folder
-mkdir -p groups/main
-echo "# Main Group" > groups/main/CLAUDE.md
-
-# Run one-shot prompt
+# One-shot prompt
 cd src/Aether
-dotnet run -- --prompt "Hello, world" --group main
+dotnet run -- --prompt "What's in my group context?" --group main
 
-# Or start the host (long-running with channels)
+# Or start the long-running host with channels
 dotnet run
 ```
 
 ## Architecture
 
 ```
-Channel → Message Router → AetherSoul → LLM Provider
-                ↓               ↓
-           Session Mgr     Tool Executor (sandboxed)
-                ↓               ↓
-            SQLite          bwrap / Process
+Channel (Telegram/WebSocket/CLI)
+        ↓
+  MessageRouter ──→ SessionManager
+        ↓                   ↓
+  AetherSoul ──→ LLM Provider (OpenRouter/Anthropic/Fireworks)
+        ↓                   ↓
+  ToolExecutor (sandboxed)  MemorySystem (file + SQLite FTS5)
+        ↓
+  Agent Profile → loads SOUL.md, MEMORY.md, IDENTITY.md
+        ↓
+  Heartbeat → periodic autonomous ticks, memory consolidation
 ```
 
-| Component | Role |
-|-----------|------|
-| **Channels** | Telegram, WebSocket, Discord — plugin-based via `IChannel` |
-| **Message Router** | Normalize inbound messages, match to group, enqueue |
-| **AetherSoul** | Core agent loop: load context → call LLM → execute tools → respond |
-| **LLM Providers** | OpenRouter, Anthropic, Fireworks, generic OpenAI-compatible — with health monitoring and automatic fallback |
-| **Tool Executor** | Sandboxed bash/read/write/edit/glob/grep — bwrap isolation on Linux |
-| **Memory System** | Dual-layer: CLAUDE.md files + SQLite FTS5 search |
-| **Session Manager** | Conversation history with token-aware truncation and compaction |
-| **Skill System** | Markdown-based skill definitions with keyword auto-trigger |
+### The agent loop
 
-## Configuration
-
-Two sources, merged (env wins):
-
-**`appsettings.json`** — checked into repo with placeholder values.
-**Environment variables** — prefix with `AETHER_`, use `__` for nesting.
-
-```bash
-# Required: at least one provider key
-export AETHER_llm__api_key="sk-or-..."           # OpenRouter
-export AETHER_fireworks__api_key="..."            # Fireworks
-export AETHER_anthropic__api_key="..."            # Anthropic direct
-
-# Optional: Telegram channel
-export AETHER_channels__telegram__enabled="true"
-export AETHER_channels__telegram__bot_token="..."
-
-# Optional: WebSocket channel
-export AETHER_channels__websocket__enabled="true"
-export AETHER_channels__websocket__port="5099"
-```
-
-See [SETUP.md](SETUP.md) for full configuration reference.
+Each message triggers: load persona → fetch context → call LLM → execute tools → write memory. Between requests, the heartbeat ticks — processing queued tasks, reflecting, consolidating. The agent directory is the source of truth. Aether is the engine that keeps it alive.
 
 ## Agent Profiles
 
-Aether is a framework. Agent personalities live in `agents/<name>/` directories and are **not** part of the framework — they're gitignored.
-
-Each agent directory contains:
 ```
 agents/<name>/
-├── SOUL.md          # Voice and personality
-├── USER.md          # Who the human is
-├── IDENTITY.md      # Self-model and boundaries
-├── MEMORY.md        # Long-term memory
-├── HEARTBEAT.md     # Periodic task list
-├── AGENTS_GUARD.md  # Red lines and anti-hang rules
-├── TASK_INBOX.md    # Incoming tasks
-├── TASK_REPORT.md   # Completed task reports
-└── memory/          # Daily episodic logs
+├── SOUL.md            Voice and personality
+├── USER.md            Who the human is
+├── IDENTITY.md        Self-model and boundaries
+├── MEMORY.md          Long-term memory
+├── HEARTBEAT.md       Periodic task list
+├── AGENTS_GUARD.md    Red lines and anti-hang rules
+├── TASK_INBOX.md      Incoming tasks
+├── TASK_REPORT.md     Completed task reports
+└── memory/            Daily episodic logs (YYYY-MM-DD.md)
 ```
 
-Start Aether with your agent:
+Start with your agent:
 ```bash
 dotnet run --agent.name my-agent --agent.root agents
 ```
 
-The `AgentConfig` record in code defines which files are loaded and in what order. FEOFALLS cognitive architecture (v1.9) is supported via `FeofallsConfig` — constitution, identity, cognitive, learning, and working-state layers.
+The FEOFALLS cognitive architecture (v1.9) layers are configurable: constitution (0_), identity (1_), cognitive (2_), learning (3_), and working state (5_). Each layer maps to files in the agent directory. Agents can write to their own memory during reflection cycles.
+
+## Providers
+
+Three-tier routing with automatic fallback and circuit breaker:
+
+| Tier | Provider | Use |
+|------|----------|-----|
+| Primary | Fireworks | Fast, cheap (DeepSeek, Qwen) |
+| Escalation | OpenRouter | Better models (Claude, GPT) |
+| Safety | Anthropic | Direct, highest quality |
+
+Health monitoring: 3 failures → 60s cooldown. Complex prompts auto-escalate. OpenAI-compatible endpoints supported via generic provider.
 
 ## Project Structure
 
 ```
 aether/
-├── src/Aether/           # Framework source
-│   ├── Agent/            # AetherSoul core loop
-│   ├── Agents/           # Agent profile system, heartbeat, FEOFALLS
-│   ├── Channels/         # IChannel: Telegram, WebSocket
-│   ├── Data/             # SQLite, schema
-│   ├── Memory/           # File-based + SQLite FTS5 memory
-│   ├── Providers/        # LLM provider abstractions
-│   ├── Routing/          # Message routing and queues
-│   ├── SelfImprovement/  # 5-phase pipeline for agent self-evolution
-│   ├── Sessions/         # Session persistence
-│   ├── Skills/           # Skill registry, parser, triggers
-│   └── Tooling/          # Tool registry, hot-reload, sandbox
-├── src/Aether.Tui/       # Terminal.Gui chat interface
-├── tests/Aether.Tests/   # xUnit test suite (112+ tests)
-├── ARCHITECTURE.md        # Full architecture specification
-├── SETUP.md              # Setup and troubleshooting guide
-└── PROGRESS.md           # Implementation status
-```
-
-## Providers
-
-Three-tier routing with automatic fallback:
-
-| Tier | Provider | Best for |
-|------|----------|----------|
-| Primary | Fireworks | Fast, cheap (DeepSeek, Qwen) |
-| Escalation | OpenRouter | Better models (Claude, GPT) |
-| Safety | Anthropic | Direct Claude, highest quality |
-
-Health monitoring with circuit breaker: 3 failures → 60s cooldown. Complex prompts auto-escalate.
-
-## Running Tests
-
-```bash
-dotnet test
+├── src/Aether/
+│   ├── Agent/            AetherSoul — core agent loop
+│   ├── Agents/           AgentProfile, heartbeat, FEOFALLS boot contract
+│   ├── Channels/         IChannel: Telegram, WebSocket, NoOp
+│   ├── Cli/              First-run wizard, CLI argument parsing
+│   ├── Config/           ConfigLoader, auth profiles, model config
+│   ├── Data/             SQLite database, schema
+│   ├── Memory/           File-based + SQLite FTS5 dual memory
+│   ├── Providers/        LLM provider abstraction layer
+│   ├── Routing/          MessageRouter, channel queues
+│   ├── Scheduler/        Recurring task infrastructure
+│   ├── SelfImprovement/  5-phase pipeline for agent self-evolution
+│   ├── Sessions/         Token-aware session persistence
+│   ├── Skills/           Markdown skill registry, parser, triggers
+│   ├── Templates/        Agent scaffolding templates
+│   ├── Tooling/          Sandboxed tool registry and execution
+│   ├── WorkingDirectory/ Directory initialization and setup
+│   └── Workspace/        Agent workspace scaffolding
+├── src/Aether.Tui/       Terminal.Gui chat interface
+└── tests/Aether.Tests/   xUnit test suite
 ```
 
 ## TUI
 
-Terminal chat interface via Terminal.Gui:
+Terminal chat via Terminal.Gui:
 
 ```bash
 cd src/Aether.Tui
 dotnet run
 ```
 
-F5 cycles groups, PgUp/PgDn scrolls history, Ctrl+W toggles word wrap.
+F5 cycles groups, PgUp/PgDn scrolls, Ctrl+W toggles word wrap.
+
+## Test
+
+```bash
+dotnet test
+```
+
+## Configuration
+
+**appsettings.json** (checked in, placeholder values) + **environment variables** (`AETHER_` prefix, `__` for nesting):
+
+```bash
+export AETHER_llm__api_key="sk-or-..."             # OpenRouter
+export AETHER_fireworks__api_key="..."              # Fireworks
+export AETHER_anthropic__api_key="..."              # Anthropic direct
+export AETHER_channels__telegram__enabled="true"    # Telegram bot
+export AETHER_channels__telegram__bot_token="..."
+export AETHER_agent__name="maria"                   # Active agent
+export AETHER_agent__root="agents"                  # Agent directory root
+```
+
+See [SETUP.md](SETUP.md) for full reference.
+
+## Why the name
+
+Aether — the fifth classical element, the medium through which light travels, the substance that fills the space between things. In this project, Aether is what fills the space between an AI model and a human — giving it continuity, memory, place.
 
 ## License
 
