@@ -10,12 +10,12 @@ public class ChannelMessageQueueTests
     {
         var queue = new ChannelMessageQueue();
         var inbound = new InboundMessage("msg-1", "telegram", "chat-1", "user1", "hello", DateTimeOffset.UtcNow);
-        var routed = new RoutedMessage(inbound, "main", "hello");
+        var routed = new RoutedMessage(inbound, "main", "main", "hello");
 
         await queue.EnqueueAsync(routed, CancellationToken.None);
         var result = await queue.ReadAsync(CancellationToken.None);
 
-        Assert.Equal("main", result.GroupFolder);
+        Assert.Equal("main", result.WorkspacePath);
         Assert.Equal("hello", result.Prompt);
         Assert.Equal("msg-1", result.Inbound.Id);
     }
@@ -27,7 +27,7 @@ public class ChannelMessageQueueTests
         for (var i = 0; i < 5; i++)
         {
             var inbound = new InboundMessage($"msg-{i}", "telegram", "chat-1", "user1", $"msg{i}", DateTimeOffset.UtcNow);
-            await queue.EnqueueAsync(new RoutedMessage(inbound, "main", $"msg{i}"), CancellationToken.None);
+            await queue.EnqueueAsync(new RoutedMessage(inbound, "main", "main", $"msg{i}"), CancellationToken.None);
         }
 
         for (var i = 0; i < 5; i++)

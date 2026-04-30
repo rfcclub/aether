@@ -1,5 +1,6 @@
 using Aether;
 using Aether.Agent;
+using Aether.Agents;
 using Aether.Data;
 using Aether.Memory;
 using Aether.Providers;
@@ -441,6 +442,31 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         return new OpenRouterProvider(client, new OpenRouterOptions(apiKey, model, baseUrl));
     });
 
+    services.AddSingleton<AgentConfig>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        return new AgentConfig
+        {
+            StartupFiles = (configuration["agent:startup_files"] ?? "SOUL.md,USER.md")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList(),
+            LongTermMemoryFile = configuration["agent:long_term_memory"] ?? "MEMORY.md",
+            HeartbeatFile = configuration["agent:heartbeat_file"] ?? "HEARTBEAT.md",
+            DailyMemoryDirectory = configuration["agent:daily_memory_dir"] ?? "memory",
+            TaskInboxFile = configuration["agent:task_inbox"] ?? "TASK_INBOX.md",
+            TaskReportFile = configuration["agent:task_report"] ?? "TASK_REPORT.md"
+        };
+    });
+
+    services.AddSingleton<IAgentProfile>(provider =>
+    {
+        var config = provider.GetRequiredService<AgentConfig>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var agentName = configuration["agent:name"] ?? "aether";
+        var agentsRoot = configuration["agent:root"] ?? ".";
+        return new AgentProfile(agentName, agentsRoot, config);
+    });
+
     services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ILLMProvider>();
@@ -449,7 +475,8 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         var sessions = provider.GetRequiredService<ISessionManager>();
         var skills = provider.GetRequiredService<ISkillRegistry>();
         var skillTrigger = provider.GetRequiredService<ISkillTrigger>();
-        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger);
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile);
     });
 
     services.AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance);

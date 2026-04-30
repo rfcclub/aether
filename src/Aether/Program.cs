@@ -1,12 +1,17 @@
+using System.CommandLine;
 using Aether;
 using Aether.Agent;
 using Aether.Agents;
 using Aether.Channels;
+using Aether.Cli;
+using Aether.Config;
 using Aether.Data;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Aether.SelfImprovement;
+using Aether.WorkingDirectory;
+using Aether.Workspace;
 using Aether.Sessions;
 using Aether.Skills;
 using Aether.Tooling;
@@ -31,6 +36,24 @@ if (args.Contains("--debug-args", StringComparer.OrdinalIgnoreCase))
 var traceStartup = args.Contains("--trace-startup", StringComparer.OrdinalIgnoreCase);
 var prompt = GetOption(args, "--prompt");
 
+// CLI dispatch: route to agent management commands before harness/serve/tui
+if (args.FirstOrDefault() == "agent")
+{
+    await RunCliAsync(args);
+    return;
+}
+
+// First-run wizard: create ~/.aether/config.json if missing
+var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+var aetherDir = aetherHome ?? Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+var wizard = new FirstRunWizard(aetherDir,
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<FirstRunWizard>.Instance);
+if (wizard.IsFirstRun())
+{
+    await wizard.RunNonInteractiveAsync();
+}
+
 if (args.FirstOrDefault() == "tui")
 {
     await LaunchTuiAsync(args.Skip(1).ToArray());
@@ -51,6 +74,22 @@ if (prompt is not null)
 
 // Default: onboard REPL
 await RunOnboardReplAsync(args, traceStartup);
+
+static async Task RunCliAsync(string[] args)
+{
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+    var aetherDir = aetherHome ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+
+    var scaffolder = new AgentWorkspaceScaffolder(
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentWorkspaceScaffolder>.Instance);
+    var authProfiles = new AgentAuthProfiles(aetherDir,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentAuthProfiles>.Instance);
+    var cli = new AetherCli(aetherDir, scaffolder, authProfiles,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<AetherCli>.Instance);
+
+    Environment.ExitCode = await cli.BuildRootCommand().InvokeAsync(args);
+}
 
 static async Task RunPromptHarnessAsync(string[] args, string prompt, bool traceStartup)
 {
@@ -359,6 +398,46 @@ static async Task RunServeAsync(bool traceStartup)
         var patchesPath = configuration["self_improvement:patches_path"] ?? "patches";
         return new SkillEvolution(logger, patchesPath);
     });
+    // Working directory: creates ~/.aether/ on first run before anything else
+    builder.Services.AddSingleton(provider =>
+    {
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+        var aetherDir = aetherHome ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var logger = provider.GetRequiredService<ILogger<WorkingDirectoryInitializer>>();
+        return new WorkingDirectoryInitializer(aetherDir, logger);
+    });
+    builder.Services.AddSingleton<IHostedService>(provider =>
+        provider.GetRequiredService<WorkingDirectoryInitializer>());
+
+    // Configuration hierarchy
+    builder.Services.AddSingleton<AgentAuthProfiles>(provider =>
+    {
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+        var aetherDir = aetherHome ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var logger = provider.GetRequiredService<ILogger<AgentAuthProfiles>>();
+        return new AgentAuthProfiles(aetherDir, logger);
+    });
+
+    builder.Services.AddSingleton<ConfigLoader>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+        var aetherDir = aetherHome ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var logger = provider.GetRequiredService<ILogger<ConfigLoader>>();
+        var authProfiles = provider.GetRequiredService<AgentAuthProfiles>();
+        return new ConfigLoader(configuration, aetherDir, logger, authProfiles);
+    });
+
+    // Agent workspace scaffolding
+    builder.Services.AddSingleton<AgentWorkspaceScaffolder>(provider =>
+    {
+        var logger = provider.GetRequiredService<ILogger<AgentWorkspaceScaffolder>>();
+        return new AgentWorkspaceScaffolder(logger);
+    });
+
     builder.Services.AddSingleton<IHostedService, AetherInitializationService>();
 
     // Tool hot-reload: watches tools/*.json for changes at runtime.

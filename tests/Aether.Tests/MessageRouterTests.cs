@@ -27,7 +27,7 @@ public class MessageRouterTests : IDisposable
         var result = await router.RouteAsync(inbound);
 
         Assert.NotNull(result);
-        Assert.Equal("main", result!.Value.GroupFolder);
+        Assert.Equal("main", result!.Value.WorkspacePath);
         Assert.Equal("hello world", result.Value.Prompt);
     }
 
@@ -95,7 +95,7 @@ public class MessageRouterTests : IDisposable
 
         var dequeued = await queue.ReadAsync(CancellationToken.None);
         Assert.Equal("hello", dequeued.Prompt);
-        Assert.Equal("main", dequeued.GroupFolder);
+        Assert.Equal("main", dequeued.WorkspacePath);
     }
 
     private static string FindSchemaPath()

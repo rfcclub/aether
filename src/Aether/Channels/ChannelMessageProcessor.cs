@@ -84,7 +84,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             var chunkIndex = 0;
             var editsRemaining = MaxStreamingEdits;
 
-            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.GroupFolder, routed.Value.Prompt, ct))
+            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, routed.Value.Prompt, ct))
             {
                 fullResponse.Append(chunk);
 

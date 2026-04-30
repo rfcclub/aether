@@ -1,40 +1,40 @@
 ## 1. Project Setup and Dependencies
 
-- [ ] 1.1 Add `System.CommandLine` NuGet package to `src/Aether/Aether.csproj` for CLI parsing
-- [ ] 1.2 Add `Spectre.Console` NuGet package to `src/Aether/Aether.csproj` for interactive wizard prompts
-- [ ] 1.3 Create new namespace directories: `src/Aether/Cli/`, `src/Aether/Config/`, `src/Aether/WorkingDirectory/`, `src/Aether/Workspace/`
-- [ ] 1.4 Create `src/Aether/Templates/` directory for workspace scaffold template content
+- [x] 1.1 Add `System.CommandLine` NuGet package to `src/Aether/Aether.csproj` for CLI parsing
+- [x] 1.2 Add `Spectre.Console` NuGet package to `src/Aether/Aether.csproj` for interactive wizard prompts
+- [x] 1.3 Create new namespace directories: `src/Aether/Cli/`, `src/Aether/Config/`, `src/Aether/WorkingDirectory/`, `src/Aether/Workspace/`
+- [x] 1.4 Create `src/Aether/Templates/` directory for workspace scaffold template content
 
 ## 2. Working Directory Initialization
 
-- [ ] 2.1 Create `WorkingDirectory/WorkingDirectoryInitializer.cs` implementing `IHostedService`
-- [ ] 2.2 Implement `InitializeAsync()` that checks for `~/.aether/` (or `$AETHER_HOME`), creates full directory tree if missing
-- [ ] 2.3 Implement directory tree creation: `identity/`, `agents/`, `workspaces/`, `store/`, `cron/`, `logs/`, `backups/`
-- [ ] 2.4 Create `identity/device.json` with UUID v4 device ID, ISO 8601 timestamp, and Aether version on first run
-- [ ] 2.5 Implement idempotency — no overwrite of existing files or directories
-- [ ] 2.6 Register `WorkingDirectoryInitializer` in DI before `AetherInitializationService`
-- [ ] 2.7 Update `AetherInitializationService` to accept `WorkingDirectoryInitializer` dependency or ensure ordering via host configuration
+- [x] 2.1 Create `WorkingDirectory/WorkingDirectoryInitializer.cs` implementing `IHostedService`
+- [x] 2.2 Implement `InitializeAsync()` that checks for `~/.aether/` (or `$AETHER_HOME`), creates full directory tree if missing
+- [x] 2.3 Implement directory tree creation: `identity/`, `agents/`, `workspaces/`, `store/`, `cron/`, `logs/`, `backups/`
+- [x] 2.4 Create `identity/device.json` with UUID v4 device ID, ISO 8601 timestamp, and Aether version on first run
+- [x] 2.5 Implement idempotency — no overwrite of existing files or directories
+- [x] 2.6 Register `WorkingDirectoryInitializer` in DI before `AetherInitializationService`
+- [x] 2.7 Update `AetherInitializationService` to accept `WorkingDirectoryInitializer` dependency or ensure ordering via host configuration
 
 ## 3. Configuration Hierarchy
 
-- [ ] 3.1 Create `Config/AetherAppConfig.cs` — top-level config record: `Providers`, `AgentDefaults`, `ChannelDefaults`, `Sandbox`, `Agents` dict
-- [ ] 3.2 Create `Config/AgentEntryConfig.cs` — per-agent config: `Name`, `Workspace`, `Model` (with `Primary` and `Fallbacks`), `Bindings`, `HeartbeatInterval`, `Enabled`, `DisplayName`, `Emoji`
-- [ ] 3.3 Create `Config/AgentModelConfig.cs` — `Primary` (string), `Fallbacks` (string[]), `Overrides` (dictionary)
-- [ ] 3.4 Create `Config/ConfigLoader.cs` — singleton service with `LoadAsync()` that merges 5 layers
-- [ ] 3.5 Implement Layer 1: Load `appsettings.json` from assembly directory
-- [ ] 3.6 Implement Layer 2: Merge `~/.aether/config.json` on top
-- [ ] 3.7 Implement Layer 3: Merge `<workspace>/.aether.json` on top (when agent specified)
-- [ ] 3.8 Implement Layer 4: Overlay `AETHER_*` environment variables with `__` nesting separator and single-underscore fallback
-- [ ] 3.9 Implement Layer 5: Overlay CLI flags (`--model`, `--agent.name`, etc.)
-- [ ] 3.10 Implement config validation: warn if no API key, throw if no provider configured
-- [ ] 3.11 Implement `GetAgentConfig(string name)` returning `AgentEntryConfig?`
-- [ ] 3.12 Register `ConfigLoader` as singleton in DI (wraps `IConfiguration`)
-- [ ] 3.13 Write `~/.aether/config.json` with `meta.lastTouchedVersion`, `wizard.lastRunAt` on first creation
+- [x] 3.1 Create `Config/AetherAppConfig.cs` — top-level config record: `Providers`, `AgentDefaults`, `ChannelDefaults`, `Sandbox`, `Agents` dict
+- [x] 3.2 Create `Config/AgentEntryConfig.cs` — per-agent config: `Name`, `Workspace`, `Model` (with `Primary` and `Fallbacks`), `Bindings`, `HeartbeatInterval`, `Enabled`, `DisplayName`, `Emoji`
+- [x] 3.3 Create `Config/AgentModelConfig.cs` — `Primary` (string), `Fallbacks` (string[]), `Overrides` (dictionary)
+- [x] 3.4 Create `Config/ConfigLoader.cs` — singleton service with `LoadAsync()` that merges 5 layers
+- [x] 3.5 Implement Layer 1: Load `appsettings.json` from assembly directory
+- [x] 3.6 Implement Layer 2: Merge `~/.aether/config.json` on top
+- [x] 3.7 Implement Layer 3: Merge `<workspace>/.aether.json` on top (when agent specified)
+- [x] 3.8 Implement Layer 4: Overlay `AETHER_*` environment variables with `__` nesting separator and single-underscore fallback
+- [x] 3.9 Implement Layer 5: Overlay CLI flags (`--model`, `--agent.name`, etc.)
+- [x] 3.10 Implement config validation: warn if no API key, throw if no provider configured
+- [x] 3.11 Implement `GetAgentConfig(string name)` returning `AgentEntryConfig?`
+- [x] 3.12 Register `ConfigLoader` as singleton in DI (wraps `IConfiguration`)
+- [x] 3.13 Write `~/.aether/config.json` with `meta.lastTouchedVersion`, `wizard.lastRunAt` on first creation
 
 ## 4. Agent Workspace Scaffolding
 
-- [ ] 4.1 Create `Workspace/AgentWorkspaceScaffolder.cs` with `ScaffoldAsync(string name, string workspacePath, bool interactive)`
-- [ ] 4.2 Create template content for each scaffolded file in `Templates/` directory or as embedded string constants:
+- [x] 4.1 Create `Workspace/AgentWorkspaceScaffolder.cs` with `ScaffoldAsync(string name, string workspacePath, bool interactive)`
+- [x] 4.2 Create template content for each scaffolded file in `Templates/` directory or as embedded string constants:
   - `SOUL.md` template: Tone, Address, Rules, Memory sections
   - `USER.md` template: Name, What to call them, Timezone, Notes sections
   - `IDENTITY.md` template: Name, Creature, Vibe, Emoji, Exposure Classification, Conflict Engine stubs
@@ -46,47 +46,47 @@
   - `TASK_INBOX.md` template: Empty with header
   - `TASK_REPORT.md` template: Empty with header
   - `.aether.json` template: `{ "model": { "primary": null, "fallbacks": [] }, "heartbeat": { "intervalMinutes": 60 } }`
-- [ ] 4.3 Create `memory/` subdirectory inside workspace
-- [ ] 4.4 Implement interactive prompt for model selection during scaffolding (when not `--non-interactive`)
-- [ ] 4.5 Implement file existence check — never overwrite existing workspace files
-- [ ] 4.6 Register `AgentWorkspaceScaffolder` as singleton in DI
+- [x] 4.3 Create `memory/` subdirectory inside workspace
+- [x] 4.4 Implement interactive prompt for model selection during scaffolding (when not `--non-interactive`)
+- [x] 4.5 Implement file existence check — never overwrite existing workspace files
+- [x] 4.6 Register `AgentWorkspaceScaffolder` as singleton in DI
 
 ## 5. Per-Agent Auth Profiles
 
-- [ ] 5.1 Create `Config/AgentAuthProfiles.cs` — reads/writes `auth-state.json`, `auth-profiles.json`, `models.json`
-- [ ] 5.2 Implement `CreateAuthDirectoryAsync(string agentName)` — creates `~/.aether/agents/<name>/agent/` with three JSON files
-- [ ] 5.3 Implement `auth-state.json`: `{ "activeProvider": null, "activeModel": null }` default
-- [ ] 5.4 Implement `auth-profiles.json`: provider-to-credentials mapping with `mode`, `apiKey`, `email`
-- [ ] 5.5 Implement `models.json`: `primary`, `fallbacks[]`, `overrides{}` for per-model parameter tuning
-- [ ] 5.6 Implement `LoadAuthProfilesAsync(string agentName)` returning typed `AgentAuthConfig`
-- [ ] 5.7 Implement Linux `chmod 700` on `~/.aether/agents/<name>/agent/` directory (Windows: no-op)
-- [ ] 5.8 Integrate auth profile loading into `ConfigLoader` — agent auth overrides global provider config
+- [x] 5.1 Create `Config/AgentAuthProfiles.cs` — reads/writes `auth-state.json`, `auth-profiles.json`, `models.json`
+- [x] 5.2 Implement `CreateAuthDirectoryAsync(string agentName)` — creates `~/.aether/agents/<name>/agent/` with three JSON files
+- [x] 5.3 Implement `auth-state.json`: `{ "activeProvider": null, "activeModel": null }` default
+- [x] 5.4 Implement `auth-profiles.json`: provider-to-credentials mapping with `mode`, `apiKey`, `email`
+- [x] 5.5 Implement `models.json`: `primary`, `fallbacks[]`, `overrides{}` for per-model parameter tuning
+- [x] 5.6 Implement `LoadAuthProfilesAsync(string agentName)` returning typed `AgentAuthConfig`
+- [x] 5.7 Implement Linux `chmod 700` on `~/.aether/agents/<name>/agent/` directory (Windows: no-op)
+- [x] 5.8 Integrate auth profile loading into `ConfigLoader` — agent auth overrides global provider config
 
 ## 6. CLI Command System
 
-- [ ] 6.1 Create `Cli/AetherCli.cs` — `System.CommandLine` root command setup with subcommands
-- [ ] 6.2 Modify `Program.cs` entry point: detect if first arg matches a CLI command, dispatch to `AetherCli`, else proceed to harness/serve/tui
-- [ ] 6.3 Implement `aether agent add <name>` command with flags: `--workspace`, `--model`, `--non-interactive`
-- [ ] 6.4 Implement `aether agent list` command with `--json` flag for machine-readable output
-- [ ] 6.5 Implement `aether agent delete <name>` command with flags: `--prune-workspace`, `--force`
-- [ ] 6.6 Implement `aether agent set-identity <name>` command with flags: `--display-name`, `--emoji`, `--avatar`
-- [ ] 6.7 Implement `aether agent bind <name> --channel <type:chatId>` command
-- [ ] 6.8 Implement `aether agent unbind <name> --channel <type:chatId>` command
-- [ ] 6.9 Implement `aether agent bind <name>` (no `--channel` flag) to list current bindings
-- [ ] 6.10 Wire CLI commands to `ConfigLoader`, `AgentWorkspaceScaffolder`, and `AgentAuthProfiles` via DI
+- [x] 6.1 Create `Cli/AetherCli.cs` — `System.CommandLine` root command setup with subcommands
+- [x] 6.2 Modify `Program.cs` entry point: detect if first arg matches a CLI command, dispatch to `AetherCli`, else proceed to harness/serve/tui
+- [x] 6.3 Implement `aether agent add <name>` command with flags: `--workspace`, `--model`, `--non-interactive`
+- [x] 6.4 Implement `aether agent list` command with `--json` flag for machine-readable output
+- [x] 6.5 Implement `aether agent delete <name>` command with flags: `--prune-workspace`, `--force`
+- [x] 6.6 Implement `aether agent set-identity <name>` command with flags: `--display-name`, `--emoji`, `--avatar`
+- [x] 6.7 Implement `aether agent bind <name> --channel <type:chatId>` command
+- [x] 6.8 Implement `aether agent unbind <name> --channel <type:chatId>` command
+- [x] 6.9 Implement `aether agent bind <name>` (no `--channel` flag) to list current bindings
+- [x] 6.10 Wire CLI commands to `ConfigLoader`, `AgentWorkspaceScaffolder`, and `AgentAuthProfiles` via DI
 
 ## 7. First-Run Wizard
 
-- [ ] 7.1 Create `Cli/FirstRunWizard.cs` using `Spectre.Console` for interactive prompts
-- [ ] 7.2 Implement first-run detection: check `~/.aether/config.json` existence after working directory init
-- [ ] 7.3 Implement `--non-interactive` mode: create minimal `config.json` with framework defaults, skip all prompts
+- [x] 7.1 Create `Cli/FirstRunWizard.cs` using `Spectre.Console` for interactive prompts
+- [x] 7.2 Implement first-run detection: check `~/.aether/config.json` existence after working directory init
+- [x] 7.3 Implement `--non-interactive` mode: create minimal `config.json` with framework defaults, skip all prompts
 - [ ] 7.4 Implement provider selection prompt (OpenRouter / Anthropic / Fireworks / Other)
 - [ ] 7.5 Implement API key prompt (masked input with `Spectre.Console`)
 - [ ] 7.6 Implement agent name prompt with default value "default"
 - [ ] 7.7 Implement optional Telegram setup prompt (y/n → bot token input)
-- [ ] 7.8 Write `config.json` with wizard metadata: `wizard.lastRunAt`, `wizard.lastRunVersion`, `wizard.lastRunCommand`
+- [x] 7.8 Write `config.json` with wizard metadata: `wizard.lastRunAt`, `wizard.lastRunVersion`, `wizard.lastRunCommand`
 - [ ] 7.9 Print completion summary message with next-step instructions
-- [ ] 7.10 Integrate wizard into `Program.cs`: runs before harness/serve/tui if `config.json` missing
+- [x] 7.10 Integrate wizard into `Program.cs`: runs before harness/serve/tui if `config.json` missing
 
 ## 8. Channel Binding Resolution
 

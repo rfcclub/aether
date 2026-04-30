@@ -125,12 +125,12 @@ static async Task VerifyMessageQueueAsync()
         SenderId: "thoor",
         Text: "hello",
         Timestamp: DateTimeOffset.UnixEpoch);
-    var routed = new RoutedMessage(inbound, "main", "hello");
+    var routed = new RoutedMessage(inbound, "main", "main", "hello");
 
     await queue.EnqueueAsync(routed, CancellationToken.None);
     var dequeued = await queue.ReadAsync(CancellationToken.None);
 
-    Require(dequeued.GroupFolder == "main", "ChannelMessageQueue must preserve group folder.");
+    Require(dequeued.WorkspacePath == "main", "ChannelMessageQueue must preserve group folder.");
     Require(dequeued.Prompt == "hello", "ChannelMessageQueue must preserve prompt.");
 }
 
@@ -158,7 +158,7 @@ static async Task VerifyMessageRouterAsync(string root)
         var routed = await router.RouteAsync(inbound, CancellationToken.None);
         Require(routed is not null, "MessageRouter must route registered groups.");
         var routedMessage = routed.GetValueOrDefault();
-        Require(routedMessage.GroupFolder == "main", "MessageRouter must preserve group folder.");
+        Require(routedMessage.WorkspacePath == "main", "MessageRouter must preserve group folder.");
         Require(routedMessage.Prompt == "status", "MessageRouter must trim trigger words from prompts.");
 
         var dequeued = await queue.ReadAsync(CancellationToken.None);

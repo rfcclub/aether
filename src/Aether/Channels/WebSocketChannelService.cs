@@ -80,7 +80,7 @@ public sealed class WebSocketChannelService : BackgroundService
 
             using var scope = _services.CreateScope();
             var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();
-            var response = await soul.ProcessAsync(routed.Value.GroupFolder, routed.Value.Prompt, ct);
+            var response = await soul.ProcessAsync(routed.Value.WorkspacePath, routed.Value.Prompt, ct);
 
             await _channel.SetTypingAsync(message.ChatId, false, ct);
             await _channel.SendMessageAsync(message.ChatId, response.Content, ct);
