@@ -1,22 +1,27 @@
 using Aether.Agents;
+using Aether.Config;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aether.Tests;
 
 public sealed class AgentProfileTests : IDisposable
 {
+    private readonly string _tempDir;
     private readonly string _agentDir;
 
     public AgentProfileTests()
     {
-        _agentDir = Path.Combine(Path.GetTempPath(), $"aether-test-agent-{Guid.NewGuid()}");
+        _tempDir = Path.Combine(Path.GetTempPath(), $"aether-test-profile-{Guid.NewGuid()}");
+        _agentDir = Path.Combine(_tempDir, "agent");
         Directory.CreateDirectory(_agentDir);
         Directory.CreateDirectory(Path.Combine(_agentDir, "memory"));
     }
 
     public void Dispose()
     {
-        if (Directory.Exists(_agentDir))
-            Directory.Delete(_agentDir, recursive: true);
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, recursive: true);
     }
 
     [Fact]
@@ -80,5 +85,111 @@ public sealed class AgentProfileTests : IDisposable
         var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
 
         Assert.Equal("maria", profile.Name);
+    }
+
+    // ── FromConfigLoader tests ──
+
+    private static string SerializeConfig(Dictionary<string, object?> config)
+    {
+        return System.Text.Json.JsonSerializer.Serialize(config,
+            new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+    }
+
+    [Fact]
+    public async Task FromConfigLoader_resolves_workspace_from_config()
+    {
+        var aetherDir = Path.Combine(_tempDir, ".aether");
+        var workspaceDir = Path.Combine(aetherDir, "workspaces", "testagent");
+        Directory.CreateDirectory(workspaceDir);
+        File.WriteAllText(Path.Combine(workspaceDir, "SOUL.md"), "config-workspace soul");
+
+        var config = new Dictionary<string, object?>
+        {
+            ["agents"] = new Dictionary<string, object?>
+            {
+                ["testagent"] = new Dictionary<string, object?>
+                {
+                    ["name"] = "testagent",
+                    ["workspace"] = workspaceDir,
+                    ["enabled"] = true
+                }
+            }
+        };
+        Directory.CreateDirectory(aetherDir);
+        File.WriteAllText(Path.Combine(aetherDir, "config.json"), SerializeConfig(config));
+
+        var configuration = new ConfigurationBuilder().Build();
+        var configLoader = new ConfigLoader(configuration, aetherDir, NullLogger<ConfigLoader>.Instance);
+        await configLoader.LoadAsync();
+
+        var profile = AgentProfile.FromConfigLoader("testagent", configLoader, new AgentConfig());
+
+        Assert.Equal(workspaceDir, profile.AgentDirectory);
+    }
+
+    [Fact]
+    public async Task FromConfigLoader_falls_back_to_legacy_path()
+    {
+        var aetherDir = Path.Combine(_tempDir, ".aether");
+        Directory.CreateDirectory(aetherDir);
+        var config = new Dictionary<string, object?>
+        {
+            ["agents"] = new Dictionary<string, object?>
+            {
+                ["testagent"] = new Dictionary<string, object?>
+                {
+                    ["name"] = "testagent",
+                    ["workspace"] = "/nonexistent/workspace",
+                    ["enabled"] = true
+                }
+            }
+        };
+        File.WriteAllText(Path.Combine(aetherDir, "config.json"), SerializeConfig(config));
+
+        var legacyDir = Path.Combine(Environment.CurrentDirectory, "agents", "testagent");
+        Directory.CreateDirectory(legacyDir);
+        File.WriteAllText(Path.Combine(legacyDir, "SOUL.md"), "legacy soul");
+        try
+        {
+            var configuration = new ConfigurationBuilder().Build();
+            var configLoader = new ConfigLoader(configuration, aetherDir, NullLogger<ConfigLoader>.Instance);
+            await configLoader.LoadAsync();
+
+            var profile = AgentProfile.FromConfigLoader("testagent", configLoader, new AgentConfig());
+
+            Assert.Equal(legacyDir, profile.AgentDirectory);
+        }
+        finally
+        {
+            if (Directory.Exists(legacyDir))
+                Directory.Delete(legacyDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FromConfigLoader_throws_when_neither_path_exists()
+    {
+        var aetherDir = Path.Combine(_tempDir, ".aether");
+        Directory.CreateDirectory(aetherDir);
+        var config = new Dictionary<string, object?>
+        {
+            ["agents"] = new Dictionary<string, object?>
+            {
+                ["testagent"] = new Dictionary<string, object?>
+                {
+                    ["name"] = "testagent",
+                    ["workspace"] = "/nonexistent/workspace",
+                    ["enabled"] = true
+                }
+            }
+        };
+        File.WriteAllText(Path.Combine(aetherDir, "config.json"), SerializeConfig(config));
+
+        var configuration = new ConfigurationBuilder().Build();
+        var configLoader = new ConfigLoader(configuration, aetherDir, NullLogger<ConfigLoader>.Instance);
+        await configLoader.LoadAsync();
+
+        Assert.Throws<DirectoryNotFoundException>(() =>
+            AgentProfile.FromConfigLoader("testagent", configLoader, new AgentConfig()));
     }
 }

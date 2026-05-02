@@ -1,3 +1,7 @@
+using Aether.Config;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace Aether.Agents;
 
 public sealed class AgentProfile : IAgentProfile
@@ -12,6 +16,36 @@ public sealed class AgentProfile : IAgentProfile
         Name = name;
         AgentDirectory = agentDirectory;
         _config = config;
+    }
+
+    public static AgentProfile FromConfigLoader(
+        string name,
+        ConfigLoader configLoader,
+        AgentConfig config,
+        ILogger? logger = null)
+    {
+        logger ??= NullLogger.Instance;
+
+        // Try ~/.aether/workspaces/<name>/ first
+        var agentConfig = configLoader.GetAgentConfig(name);
+        var newPath = agentConfig?.Workspace;
+        if (!string.IsNullOrEmpty(newPath) && Directory.Exists(newPath))
+        {
+            return new AgentProfile(name, newPath, config);
+        }
+
+        // Fallback: <cwd>/agents/<name>/ (legacy layout)
+        var legacyPath = Path.Combine(Environment.CurrentDirectory, "agents", name);
+        if (Directory.Exists(legacyPath))
+        {
+            logger.LogWarning("Agent '{Name}' using legacy path {Path}. Migrate to ~/.aether/workspaces/{Name}/",
+                name, legacyPath, name);
+            return new AgentProfile(name, legacyPath, config);
+        }
+
+        throw new DirectoryNotFoundException(
+            $"Agent directory not found for '{name}'. " +
+            $"Tried: {newPath ?? "<no workspace in config>"} and {legacyPath}");
     }
 
     public async Task<string> LoadPersonaAsync(CancellationToken ct = default)

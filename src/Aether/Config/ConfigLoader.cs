@@ -8,11 +8,19 @@ public sealed class ConfigLoader
 {
     private readonly IConfiguration _configuration;
     private readonly string _aetherDir;
+    public string AetherDir => _aetherDir;
     private readonly ILogger<ConfigLoader> _logger;
     private readonly AgentAuthProfiles? _authProfiles;
 
     private AetherAppConfig? _cachedConfig;
     private Dictionary<string, AgentEntryConfig>? _cachedAgents;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        ReadCommentHandling = JsonCommentHandling.Skip
+    };
 
     public ConfigLoader(IConfiguration configuration, string aetherDir, ILogger<ConfigLoader> logger, AgentAuthProfiles? authProfiles = null)
     {
@@ -30,51 +38,57 @@ public sealed class ConfigLoader
         if (_cachedConfig is not null && agentName is null && cliOverrides is null)
             return _cachedConfig;
 
-        var providers = new ProviderSection();
-        var channelDefaults = new ChannelSection();
-        var sandbox = new SandboxSection();
+        // Layer 1: Global defaults from appsettings.json → providers map
+        var providers = LoadProvidersFromAppSettings();
 
-        // Layer 1: Framework defaults from appsettings.json (via IConfiguration)
-        providers = ApplyFrameworkDefaults(providers);
+        // Layer 2: ~/.aether/config.json — global providers + agents registry
+        var (globalProviders, agents, meta, wizard) = await LoadGlobalConfigAsync(ct);
+        providers = MergeProviders(providers, globalProviders);
 
-        // Layer 2: Global user config ~/.aether/config.json
-        providers = await ApplyGlobalConfigAsync(providers, ct);
+        // Layer 3: Per-agent {workspace}/.aether.json — agent spec config
+        var agentSpecs = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
+        var specConfigs = new Dictionary<string, AgentSpecConfig>(StringComparer.OrdinalIgnoreCase);
 
-        // Layer 3: Agent-specific <workspace>/.aether.json
-        if (agentName is not null)
-            providers = await ApplyAgentConfigAsync(providers, agentName, ct);
+        foreach (var (name, entry) in agents)
+        {
+            var spec = await LoadAgentSpecAsync(entry, ct);
 
-        // Layer 3.5: Per-agent auth profiles override global provider config
-        if (agentName is not null && _authProfiles is not null)
-            providers = await ApplyAuthProfilesAsync(providers, agentName, ct);
+            // Merge global providers into agent spec (agent overrides global)
+            spec = MergeSpecProviders(spec, providers);
 
-        // Layer 4: Environment variables
-        providers = ApplyEnvOverrides(providers);
+            if (agentName is not null && string.Equals(name, agentName, StringComparison.OrdinalIgnoreCase))
+            {
+                // Layer 3.5: Auth profiles
+                if (_authProfiles is not null)
+                    spec = await ApplyAuthProfilesAsync(spec, agentName, ct);
 
-        // Layer 5: CLI flags
-        if (cliOverrides is not null)
-            providers = ApplyCliOverrides(providers, cliOverrides);
+                // Layer 4: Env overrides
+                spec = ApplyEnvOverrides(spec);
 
-        // Resolve meta and wizard from global config
-        var meta = new MetaSection();
-        var wizard = new WizardSection();
-        (meta, wizard) = await LoadMetaAsync(ct);
+                // Layer 5: CLI overrides
+                if (cliOverrides is not null)
+                    spec = ApplyCliOverrides(spec, cliOverrides);
+            }
 
-        // Resolve agents
-        var agents = await ResolveAgentsAsync(ct);
+            specConfigs[name] = spec;
+            agentSpecs[name] = entry with { Spec = spec };
+        }
 
         var config = new AetherAppConfig
         {
             Providers = providers,
-            ChannelDefaults = channelDefaults,
-            Sandbox = sandbox,
-            Agents = agents,
+            Agents = agentSpecs,
+            AgentSpecs = specConfigs,
             Meta = meta,
             Wizard = wizard
         };
 
         if (agentName is null && cliOverrides is null)
+        {
             _cachedConfig = config;
+            _cachedAgents = agentSpecs;
+        }
+
         return config;
     }
 
@@ -84,226 +98,109 @@ public sealed class ConfigLoader
         return _cachedAgents.TryGetValue(name, out var entry) ? entry : null;
     }
 
-    private ProviderSection ApplyFrameworkDefaults(ProviderSection providers)
+    public AgentSpecConfig? GetAgentSpec(string name)
     {
-        return providers with
-        {
-            OpenRouter = providers.OpenRouter with
-            {
-                ApiKey = _configuration["llm:api_key"] ?? "",
-                Model = _configuration["llm:model"] ?? "",
-                BaseUrl = _configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1",
-                TimeoutSeconds = int.TryParse(_configuration["llm:timeout_seconds"], out var t) ? t : 90
-            },
-            Anthropic = providers.Anthropic with
-            {
-                ApiKey = _configuration["anthropic:api_key"] ?? "",
-                Model = _configuration["anthropic:model"] ?? "claude-3-5-sonnet-20241022"
-            },
-            Fireworks = providers.Fireworks with
-            {
-                ApiKey = _configuration["fireworks:api_key"] ?? "",
-                Model = _configuration["fireworks:model"] ?? "accounts/fireworks/models/deepseek-v3-0324"
-            }
-        };
+        if (_cachedConfig?.AgentSpecs is null) return null;
+        return _cachedConfig.AgentSpecs.TryGetValue(name, out var spec) ? spec : null;
     }
 
-    private async Task<ProviderSection> ApplyGlobalConfigAsync(ProviderSection providers, CancellationToken ct)
+    // ── Layer 1: appsettings.json ──
+
+    private Dictionary<string, SpecProviderEntry> LoadProvidersFromAppSettings()
     {
-        var configPath = Path.Combine(_aetherDir, "config.json");
-        if (!File.Exists(configPath)) return providers;
+        var providers = new Dictionary<string, SpecProviderEntry>(StringComparer.OrdinalIgnoreCase);
 
-        try
+        // Map legacy appsettings keys → spec provider entries
+        var section = _configuration.GetSection("providers");
+        foreach (var child in section.GetChildren())
         {
-            var json = await File.ReadAllTextAsync(configPath, ct);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("llm", out var llm))
+            var entry = new SpecProviderEntry
             {
-                if (llm.TryGetProperty("api_key", out var ak))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { ApiKey = ak.GetString() ?? "" } };
-                if (llm.TryGetProperty("model", out var m))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { Model = m.GetString() ?? "" } };
-                if (llm.TryGetProperty("base_url", out var bu))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { BaseUrl = bu.GetString() ?? "" } };
-                if (llm.TryGetProperty("timeout_seconds", out var ts) && ts.TryGetInt32(out var tsv))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { TimeoutSeconds = tsv } };
-            }
-
-            if (root.TryGetProperty("anthropic", out var anthro))
-            {
-                if (anthro.TryGetProperty("api_key", out var ak))
-                    providers = providers with { Anthropic = providers.Anthropic with { ApiKey = ak.GetString() ?? "" } };
-            }
-
-            if (root.TryGetProperty("fireworks", out var fw))
-            {
-                if (fw.TryGetProperty("api_key", out var ak))
-                    providers = providers with { Fireworks = providers.Fireworks with { ApiKey = ak.GetString() ?? "" } };
-            }
+                Type = child.GetValue<string>("type") ?? "openai",
+                Model = child.GetValue<string>("model") ?? "",
+                ApiKey = child.GetValue<string>("api_key"),
+                BaseUrl = child.GetValue<string>("base_url"),
+                MaxTokens = child.GetValue<int?>("max_tokens") ?? 4096,
+                Temperature = child.GetValue<double?>("temperature") ?? 0.7,
+                TimeoutSeconds = child.GetValue<int?>("timeout_seconds") ?? 120
+            };
+            if (!string.IsNullOrEmpty(entry.Model) || !string.IsNullOrEmpty(entry.ApiKey))
+                providers[child.Key] = entry;
         }
-        catch (Exception ex)
+
+        // Fallback: read legacy flat keys (llm, anthropic, fireworks)
+        if (providers.Count == 0)
         {
-            _logger.LogWarning(ex, "Failed to load ~/.aether/config.json");
+            TryAddLegacyProvider(providers, "openrouter", "llm", "openai", "https://openrouter.ai/api/v1");
+            TryAddLegacyProvider(providers, "anthropic", "anthropic", "anthropic", "https://api.anthropic.com");
+            TryAddLegacyProvider(providers, "fireworks", "fireworks", "openai", "https://api.fireworks.ai/inference/v1");
         }
 
         return providers;
     }
 
-    private async Task<ProviderSection> ApplyAgentConfigAsync(ProviderSection providers, string agentName, CancellationToken ct)
+    private void TryAddLegacyProvider(Dictionary<string, SpecProviderEntry> providers,
+        string name, string key, string type, string defaultBaseUrl)
     {
-        var configPath = Path.Combine(_aetherDir, "config.json");
-        string? workspacePath = null;
-        if (File.Exists(configPath))
+        var model = _configuration[$"{key}:model"];
+        var apiKey = _configuration[$"{key}:api_key"];
+        var baseUrl = _configuration[$"{key}:base_url"] ?? defaultBaseUrl;
+        var timeout = _configuration.GetValue<int?>($"{key}:timeout_seconds") ?? (_configuration.GetValue<int?>($"{key}:timeoutSeconds"));
+
+        if (!string.IsNullOrEmpty(model) || !string.IsNullOrEmpty(apiKey))
         {
-            try
+            providers[name] = new SpecProviderEntry
             {
-                var json = await File.ReadAllTextAsync(configPath, ct);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("agents", out var agents) &&
-                    agents.TryGetProperty(agentName, out var agent) &&
-                    agent.TryGetProperty("workspace", out var ws))
-                {
-                    workspacePath = ws.GetString();
-                }
-            }
-            catch { }
+                Type = type,
+                Model = model ?? "",
+                ApiKey = apiKey,
+                BaseUrl = baseUrl,
+                TimeoutSeconds = timeout ?? 120
+            };
         }
-
-        if (workspacePath is null)
-            workspacePath = Path.Combine(_aetherDir, "workspaces", agentName);
-
-        var agentConfigPath = Path.Combine(workspacePath, ".aether.json");
-        if (!File.Exists(agentConfigPath)) return providers;
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(agentConfigPath, ct);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("llm", out var llm))
-            {
-                if (llm.TryGetProperty("api_key", out var ak))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { ApiKey = ak.GetString() ?? "" } };
-                if (llm.TryGetProperty("model", out var m))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { Model = m.GetString() ?? "" } };
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load agent config for {Agent}", agentName);
-        }
-
-        return providers;
     }
 
-    private async Task<ProviderSection> ApplyAuthProfilesAsync(ProviderSection providers, string agentName, CancellationToken ct)
+    // ── Layer 2: ~/.aether/config.json ──
+
+    private async Task<(Dictionary<string, SpecProviderEntry> providers,
+        Dictionary<string, AgentEntryConfig> agents,
+        MetaSection meta, WizardSection wizard)> LoadGlobalConfigAsync(CancellationToken ct)
     {
-        try
-        {
-            var auth = await _authProfiles!.LoadAuthProfilesAsync(agentName, ct);
-
-            if (!string.IsNullOrEmpty(auth.State.ActiveModel))
-                providers = providers with { OpenRouter = providers.OpenRouter with { Model = auth.State.ActiveModel } };
-
-            if (auth.State.ActiveProvider is not null && auth.Profiles.TryGetValue(auth.State.ActiveProvider, out var profile))
-            {
-                if (!string.IsNullOrEmpty(profile.ApiKey))
-                    providers = providers with { OpenRouter = providers.OpenRouter with { ApiKey = profile.ApiKey } };
-            }
-
-            if (!string.IsNullOrEmpty(auth.Model.Primary))
-                providers = providers with { OpenRouter = providers.OpenRouter with { Model = auth.Model.Primary } };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load auth profiles for {Agent}", agentName);
-        }
-
-        return providers;
-    }
-
-    private static ProviderSection ApplyEnvOverrides(ProviderSection providers)
-    {
-        // Only check actual environment variables, not IConfiguration
-        // (IConfiguration includes appsettings.json values)
-        var envApiKey = Environment.GetEnvironmentVariable("AETHER_llm__api_key")
-                        ?? Environment.GetEnvironmentVariable("AETHER_llm_api_key");
-        if (!string.IsNullOrEmpty(envApiKey))
-            providers = providers with { OpenRouter = providers.OpenRouter with { ApiKey = envApiKey } };
-
-        var envModel = Environment.GetEnvironmentVariable("AETHER_llm__model")
-                       ?? Environment.GetEnvironmentVariable("AETHER_llm_model");
-        if (!string.IsNullOrEmpty(envModel))
-            providers = providers with { OpenRouter = providers.OpenRouter with { Model = envModel } };
-
-        var envTimeout = Environment.GetEnvironmentVariable("AETHER_llm__timeout_seconds")
-                         ?? Environment.GetEnvironmentVariable("AETHER_llm_timeout_seconds");
-        if (int.TryParse(envTimeout, out var t))
-            providers = providers with { OpenRouter = providers.OpenRouter with { TimeoutSeconds = t } };
-
-        return providers;
-    }
-
-    private static ProviderSection ApplyCliOverrides(ProviderSection providers, Dictionary<string, string> cliOverrides)
-    {
-        if (cliOverrides.TryGetValue("llm:model", out var model))
-            providers = providers with { OpenRouter = providers.OpenRouter with { Model = model } };
-        if (cliOverrides.TryGetValue("llm:api_key", out var key))
-            providers = providers with { OpenRouter = providers.OpenRouter with { ApiKey = key } };
-        return providers;
-    }
-
-    private async Task<(MetaSection, WizardSection)> LoadMetaAsync(CancellationToken ct)
-    {
+        var providers = new Dictionary<string, SpecProviderEntry>(StringComparer.OrdinalIgnoreCase);
+        var agents = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
         var meta = new MetaSection();
         var wizard = new WizardSection();
-        var configPath = Path.Combine(_aetherDir, "config.json");
-        if (!File.Exists(configPath)) return (meta, wizard);
+
+        var path = Path.Combine(_aetherDir, "config.json");
+        if (!File.Exists(path))
+            return (providers, agents, meta, wizard);
 
         try
         {
-            var json = await File.ReadAllTextAsync(configPath, ct);
+            var json = await File.ReadAllTextAsync(path, ct);
             using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
 
-            if (doc.RootElement.TryGetProperty("meta", out var metaEl))
+            // Providers — new spec format: "providers": { "name": { "type":..., "model":... } }
+            if (root.TryGetProperty("providers", out var providersEl))
             {
-                meta = meta with { LastTouchedVersion = metaEl.TryGetProperty("lastTouchedVersion", out var ltv) ? ltv.GetString() : null };
-            }
-
-            if (doc.RootElement.TryGetProperty("wizard", out var wizardEl))
-            {
-                wizard = new WizardSection
+                foreach (var prop in providersEl.EnumerateObject())
                 {
-                    LastRunAt = wizardEl.TryGetProperty("lastRunAt", out var lra) ? lra.GetString() : null,
-                    LastRunVersion = wizardEl.TryGetProperty("lastRunVersion", out var lrv) ? lrv.GetString() : null,
-                    LastRunCommand = wizardEl.TryGetProperty("lastRunCommand", out var lrc) ? lrc.GetString() : null
-                };
+                    var entry = JsonSerializer.Deserialize<SpecProviderEntry>(prop.Value.GetRawText(), JsonOptions);
+                    if (entry is not null)
+                        providers[prop.Name] = entry;
+                }
             }
-        }
-        catch { }
+            // Legacy format: "llm": { "api_key":..., "model":... }
+            if (root.TryGetProperty("llm", out var llm))
+                providers["openrouter"] = ParseLegacyProvider(llm, "openai", "https://openrouter.ai/api/v1");
+            if (root.TryGetProperty("anthropic", out var anthro))
+                providers["anthropic"] = ParseLegacyProvider(anthro, "anthropic", "https://api.anthropic.com");
+            if (root.TryGetProperty("fireworks", out var fw))
+                providers["fireworks"] = ParseLegacyProvider(fw, "openai", "https://api.fireworks.ai/inference/v1");
 
-        return (meta, wizard);
-    }
-
-    private async Task<Dictionary<string, AgentEntryConfig>> ResolveAgentsAsync(CancellationToken ct)
-    {
-        var configPath = Path.Combine(_aetherDir, "config.json");
-        if (!File.Exists(configPath))
-        {
-            _cachedAgents = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
-            return _cachedAgents;
-        }
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(configPath, ct);
-            using var doc = JsonDocument.Parse(json);
-            var agents = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
-
-            if (doc.RootElement.TryGetProperty("agents", out var agentsEl))
+            // Agents
+            if (root.TryGetProperty("agents", out var agentsEl))
             {
                 foreach (var prop in agentsEl.EnumerateObject())
                 {
@@ -313,16 +210,253 @@ public sealed class ConfigLoader
                 }
             }
 
-            _cachedAgents = agents;
-            return agents;
+            // Legacy gateway.agents.<name>.source → convert to bindings
+            if (root.TryGetProperty("gateway", out var gatewayEl) &&
+                gatewayEl.TryGetProperty("agents", out var gwAgents))
+            {
+                foreach (var prop in gwAgents.EnumerateObject())
+                {
+                    if (!agents.TryGetValue(prop.Name, out var existing)) continue;
+                    if (prop.Value.TryGetProperty("source", out var src))
+                    {
+                        var source = src.GetString();
+                        if (!string.IsNullOrEmpty(source) && !existing.Bindings.Contains(source))
+                        {
+                            var updatedBindings = new List<string>(existing.Bindings) { source };
+                            agents[prop.Name] = existing with { Bindings = updatedBindings };
+                        }
+                    }
+                }
+            }
+
+            // Meta
+            if (root.TryGetProperty("meta", out var metaEl))
+                meta = JsonSerializer.Deserialize<MetaSection>(metaEl.GetRawText(), JsonOptions) ?? meta;
+
+            // Wizard
+            if (root.TryGetProperty("wizard", out var wizardEl))
+                wizard = JsonSerializer.Deserialize<WizardSection>(wizardEl.GetRawText(), JsonOptions) ?? wizard;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to resolve agents from config.json");
-            _cachedAgents = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
-            return _cachedAgents;
+            _logger.LogWarning(ex, "Failed to load ~/.aether/config.json");
         }
+
+        return (providers, agents, meta, wizard);
     }
+
+    private static SpecProviderEntry ParseLegacyProvider(JsonElement el, string type, string defaultBaseUrl)
+    {
+        return new SpecProviderEntry
+        {
+            Type = type,
+            Model = el.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
+            ApiKey = el.TryGetProperty("api_key", out var ak) ? ak.GetString() : null,
+            BaseUrl = el.TryGetProperty("base_url", out var bu) ? bu.GetString() : defaultBaseUrl,
+            TimeoutSeconds = el.TryGetProperty("timeout_seconds", out var ts) && ts.TryGetInt32(out var tsv) ? tsv : 120,
+            MaxTokens = el.TryGetProperty("max_tokens", out var mt) && mt.TryGetInt32(out var mtv) ? mtv : 4096,
+            Temperature = el.TryGetProperty("temperature", out var temp) && temp.TryGetDouble(out var tempv) ? tempv : 0.7
+        };
+    }
+
+    // ── Layer 3: Agent spec config ──
+
+    private async Task<AgentSpecConfig> LoadAgentSpecAsync(AgentEntryConfig entry, CancellationToken ct)
+    {
+        var spec = new AgentSpecConfig
+        {
+            Agent = new SpecAgentSection
+            {
+                Name = entry.Name,
+                DisplayName = entry.DisplayName,
+                Emoji = entry.Emoji
+            },
+            Storage = new SpecStorageSection { Home = entry.Workspace }
+        };
+
+        var workspace = entry.Workspace;
+        if (string.IsNullOrEmpty(workspace))
+            workspace = Path.Combine(_aetherDir, "workspaces", entry.Name);
+
+        var path = Path.Combine(workspace, ".aether.json");
+        if (!File.Exists(path))
+            return spec;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(path, ct);
+            var loaded = JsonSerializer.Deserialize<AgentSpecConfig>(json, JsonOptions);
+            if (loaded is not null)
+                spec = loaded;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load agent spec for {Agent} from {Path}", entry.Name, path);
+        }
+
+        return spec;
+    }
+
+    // ── Merge ──
+
+    private static Dictionary<string, SpecProviderEntry> MergeProviders(
+        Dictionary<string, SpecProviderEntry> base_,
+        Dictionary<string, SpecProviderEntry> overrides)
+    {
+        var merged = new Dictionary<string, SpecProviderEntry>(base_, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in overrides)
+        {
+            if (merged.TryGetValue(key, out var existing))
+                merged[key] = MergeProviderFields(existing, value);
+            else
+                merged[key] = value;
+        }
+        return merged;
+    }
+
+    private static SpecProviderEntry MergeProviderFields(SpecProviderEntry base_, SpecProviderEntry overrides)
+    {
+        return new SpecProviderEntry
+        {
+            Type = overrides.Type,
+            Model = !string.IsNullOrEmpty(overrides.Model) ? overrides.Model : base_.Model,
+            ApiKey = overrides.ApiKey ?? base_.ApiKey,
+            BaseUrl = overrides.BaseUrl ?? base_.BaseUrl,
+            MaxTokens = overrides.MaxTokens,
+            Temperature = overrides.Temperature,
+            TimeoutSeconds = overrides.TimeoutSeconds
+        };
+    }
+
+    private static AgentSpecConfig MergeSpecProviders(AgentSpecConfig spec, Dictionary<string, SpecProviderEntry> globalProviders)
+    {
+        if (spec.Providers.Count == 0 && globalProviders.Count > 0)
+            return spec with { Providers = new Dictionary<string, SpecProviderEntry>(globalProviders, StringComparer.OrdinalIgnoreCase) };
+
+        // Agent providers override global by name
+        var merged = new Dictionary<string, SpecProviderEntry>(globalProviders, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in spec.Providers)
+            merged[key] = value;
+        return spec with { Providers = merged };
+    }
+
+    // ── Layer 3.5: Auth profiles ──
+
+    private async Task<AgentSpecConfig> ApplyAuthProfilesAsync(AgentSpecConfig spec, string agentName, CancellationToken ct)
+    {
+        try
+        {
+            var auth = await _authProfiles!.LoadAuthProfilesAsync(agentName, ct);
+
+            if (auth.State.ActiveProvider is not null &&
+                auth.Profiles.TryGetValue(auth.State.ActiveProvider, out var profile) &&
+                !string.IsNullOrEmpty(profile.ApiKey))
+            {
+                var providers = new Dictionary<string, SpecProviderEntry>(spec.Providers, StringComparer.OrdinalIgnoreCase);
+                var providerName = auth.State.ActiveProvider;
+                if (providers.TryGetValue(providerName, out var existing))
+                    providers[providerName] = existing with { ApiKey = profile.ApiKey };
+                else
+                    providers[providerName] = new SpecProviderEntry { Type = "openai", Model = "", ApiKey = profile.ApiKey };
+                spec = spec with { Providers = providers };
+            }
+
+            if (!string.IsNullOrEmpty(auth.Model.Primary))
+            {
+                var providers = new Dictionary<string, SpecProviderEntry>(spec.Providers, StringComparer.OrdinalIgnoreCase);
+                var providerName = auth.State.ActiveProvider ?? "openrouter";
+                if (providers.TryGetValue(providerName, out var existing))
+                    providers[providerName] = existing with { Model = auth.Model.Primary };
+                spec = spec with { Providers = providers };
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to apply auth profiles for {Agent}", agentName);
+        }
+
+        return spec;
+    }
+
+    // ── Layer 4: Env overrides ──
+
+    private static AgentSpecConfig ApplyEnvOverrides(AgentSpecConfig spec)
+    {
+        var providers = new Dictionary<string, SpecProviderEntry>(spec.Providers, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (name, entry) in providers.ToList())
+        {
+            var prefix = $"AETHER_PROVIDERS_{name.ToUpperInvariant()}";
+            var envModel = Environment.GetEnvironmentVariable($"{prefix}_MODEL");
+            var envKey = Environment.GetEnvironmentVariable($"{prefix}_API_KEY");
+            var envUrl = Environment.GetEnvironmentVariable($"{prefix}_BASE_URL");
+            var envTimeout = Environment.GetEnvironmentVariable($"{prefix}_TIMEOUT");
+
+            var updated = entry;
+            if (!string.IsNullOrEmpty(envModel)) updated = updated with { Model = envModel };
+            if (!string.IsNullOrEmpty(envKey)) updated = updated with { ApiKey = envKey };
+            if (!string.IsNullOrEmpty(envUrl)) updated = updated with { BaseUrl = envUrl };
+            if (int.TryParse(envTimeout, out var t)) updated = updated with { TimeoutSeconds = t };
+            providers[name] = updated;
+        }
+
+        // Also support legacy env vars for backward compat
+        var legacyKey = Environment.GetEnvironmentVariable("AETHER_llm__api_key")
+                        ?? Environment.GetEnvironmentVariable("AETHER_llm_api_key");
+        var legacyModel = Environment.GetEnvironmentVariable("AETHER_llm__model")
+                          ?? Environment.GetEnvironmentVariable("AETHER_llm_model");
+
+        if (!string.IsNullOrEmpty(legacyKey) || !string.IsNullOrEmpty(legacyModel))
+        {
+            if (providers.TryGetValue("openrouter", out var or))
+            {
+                if (!string.IsNullOrEmpty(legacyKey)) or = or with { ApiKey = legacyKey };
+                if (!string.IsNullOrEmpty(legacyModel)) or = or with { Model = legacyModel };
+                providers["openrouter"] = or;
+            }
+        }
+
+        return spec with { Providers = providers };
+    }
+
+    // ── Layer 5: CLI overrides ──
+
+    private static AgentSpecConfig ApplyCliOverrides(AgentSpecConfig spec, Dictionary<string, string> cliOverrides)
+    {
+        var providers = new Dictionary<string, SpecProviderEntry>(spec.Providers, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (key, value) in cliOverrides)
+        {
+            // Format: "provider:name:field" e.g. "provider:openrouter:model"
+            if (key.StartsWith("provider:") && key.Count(c => c == ':') >= 2)
+            {
+                var parts = key.Split(':', 3);
+                var providerName = parts[1];
+                var field = parts[2];
+
+                if (providers.TryGetValue(providerName, out var entry))
+                {
+                    entry = field switch
+                    {
+                        "model" => entry with { Model = value },
+                        "api_key" => entry with { ApiKey = value },
+                        "base_url" => entry with { BaseUrl = value },
+                        _ => entry
+                    };
+                    providers[providerName] = entry;
+                }
+            }
+            // Legacy "llm:model" mapping
+            else if (key == "llm:model" && providers.TryGetValue("openrouter", out var or))
+                providers["openrouter"] = or with { Model = value };
+            else if (key == "llm:api_key" && providers.TryGetValue("openrouter", out var or2))
+                providers["openrouter"] = or2 with { ApiKey = value };
+        }
+
+        return spec with { Providers = providers };
+    }
+
+    // ── Agent parsing ──
 
     private static AgentEntryConfig? ParseAgentEntry(string name, JsonElement el)
     {
@@ -337,6 +471,8 @@ public sealed class ConfigLoader
                 entry = entry with { DisplayName = dn.GetString() };
             if (el.TryGetProperty("emoji", out var em))
                 entry = entry with { Emoji = em.GetString() };
+            if (el.TryGetProperty("heartbeatIntervalMinutes", out var hi) && hi.TryGetInt32(out var hiv))
+                entry = entry with { HeartbeatIntervalMinutes = hiv };
             if (el.TryGetProperty("bindings", out var bindings) && bindings.ValueKind == JsonValueKind.Array)
                 entry = entry with { Bindings = bindings.EnumerateArray().Select(b => b.GetString() ?? "").ToList() };
             if (el.TryGetProperty("model", out var model))

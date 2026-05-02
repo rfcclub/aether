@@ -1,8 +1,11 @@
 using System.CommandLine;
 using System.Text.Json;
+using Aether.Agents;
+using Aether.Channels;
 using Aether.Config;
 using Aether.Workspace;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aether.Cli;
 
@@ -36,6 +39,8 @@ public sealed class AetherCli
         var root = new RootCommand("Aether — agent framework CLI");
 
         root.AddCommand(BuildAgentCommand());
+        root.AddCommand(BuildAccessCommand());
+        root.AddCommand(BuildIntegrityCommand());
 
         return root;
     }
@@ -290,6 +295,233 @@ public sealed class AetherCli
         });
 
         return cmd;
+    }
+
+    private Command BuildAccessCommand()
+    {
+        var access = new Command("access", "Manage channel access control");
+
+        access.AddCommand(BuildAccessPairCommand());
+        access.AddCommand(BuildAccessPolicyCommand());
+
+        return access;
+    }
+
+    private Command BuildAccessPairCommand()
+    {
+        var codeArg = new Argument<string>("code", "Pairing code from the bot");
+        var channelOpt = new Option<string>("--channel", () => "telegram", "Channel name");
+
+        var cmd = new Command("pair", "Approve a pairing request") { codeArg, channelOpt };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var code = context.ParseResult.GetValueForArgument(codeArg);
+            var channel = context.ParseResult.GetValueForOption(channelOpt);
+
+            var access = new ChannelAccess(channel!, _aetherDir, NullLogger<ChannelAccess>.Instance);
+            await access.LoadAsync(context.GetCancellationToken());
+
+            if (await access.ApprovePairingAsync(code, context.GetCancellationToken()))
+                context.Console.WriteLine($"Pairing approved. Sender added to {channel} allowlist.");
+            else
+            {
+                context.Console.WriteLine("Invalid or expired pairing code.");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private Command BuildAccessPolicyCommand()
+    {
+        var policyArg = new Argument<string>("policy", "Access policy: open, pairing, or allowlist");
+        var channelOpt = new Option<string>("--channel", () => "telegram", "Channel name");
+
+        var cmd = new Command("policy", "Set access policy") { policyArg, channelOpt };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var policy = context.ParseResult.GetValueForArgument(policyArg);
+            var channel = context.ParseResult.GetValueForOption(channelOpt);
+
+            if (policy is not "open" and not "pairing" and not "allowlist")
+            {
+                context.Console.WriteLine("Policy must be: open, pairing, or allowlist.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            var access = new ChannelAccess(channel!, _aetherDir, NullLogger<ChannelAccess>.Instance);
+            await access.LoadAsync(context.GetCancellationToken());
+            await access.SetModeAsync(policy, context.GetCancellationToken());
+
+            context.Console.WriteLine($"Access policy for {channel} set to: {policy}");
+        });
+
+        return cmd;
+    }
+
+    private Command BuildIntegrityCommand()
+    {
+        var integrity = new Command("integrity", "Manage cryptographic identity and signing");
+
+        integrity.AddCommand(BuildIntegrityInitCommand());
+        integrity.AddCommand(BuildIntegritySignCommand());
+        integrity.AddCommand(BuildIntegrityVerifyCommand());
+
+        return integrity;
+    }
+
+    private Command BuildIntegrityInitCommand()
+    {
+        var agentOpt = new Option<string>("--agent", () => "maria", "Agent name");
+
+        var cmd = new Command("init", "Generate keypair and sign boot files") { agentOpt };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var agentName = context.ParseResult.GetValueForOption(agentOpt);
+            var agentDir = ResolveAgentDir(agentName!);
+            if (agentDir is null) { context.ExitCode = 1; return; }
+
+            var signer = new IntegritySigner(agentDir, NullLogger<IntegritySigner>.Instance);
+            var publicKey = await signer.InitializeAsync(context.GetCancellationToken());
+            context.Console.WriteLine($"Keypair generated for '{agentName}'.");
+
+            var agentConfig = AgentConfigForDir(agentDir);
+            var feofallsConfig = agentConfig.Feofalls ?? new FeofallsConfig();
+            await signer.SignBootFilesAsync(feofallsConfig, context.GetCancellationToken());
+            context.Console.WriteLine($"Boot files signed. Integrity directory: {Path.Combine(agentDir, "_INTEGRITY")}");
+        });
+
+        return cmd;
+    }
+
+    private Command BuildIntegritySignCommand()
+    {
+        var fileArg = new Argument<string>("file", "File path relative to agent directory");
+        var agentOpt = new Option<string>("--agent", () => "maria", "Agent name");
+
+        var cmd = new Command("sign", "Sign a file") { fileArg, agentOpt };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var file = context.ParseResult.GetValueForArgument(fileArg);
+            var agentName = context.ParseResult.GetValueForOption(agentOpt);
+            var agentDir = ResolveAgentDir(agentName!);
+            if (agentDir is null) { context.ExitCode = 1; return; }
+
+            var signer = new IntegritySigner(agentDir, NullLogger<IntegritySigner>.Instance);
+            var result = await signer.SignAsync(file, context.GetCancellationToken());
+
+            if (result.Status == IntegrityStatus.Valid)
+                context.Console.WriteLine($"Signed: {file}");
+            else
+            {
+                context.Console.WriteLine($"Failed: {result.Error}");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private Command BuildIntegrityVerifyCommand()
+    {
+        var fileArg = new Argument<string?>("file", "File to verify (omit for all)");
+        var agentOpt = new Option<string>("--agent", () => "maria", "Agent name");
+
+        var cmd = new Command("verify", "Verify file signatures") { fileArg, agentOpt };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var file = context.ParseResult.GetValueForArgument(fileArg);
+            var agentName = context.ParseResult.GetValueForOption(agentOpt);
+            var agentDir = ResolveAgentDir(agentName!);
+            if (agentDir is null) { context.ExitCode = 1; return; }
+
+            var signer = new IntegritySigner(agentDir, NullLogger<IntegritySigner>.Instance);
+
+            if (file is not null)
+            {
+                var result = await signer.VerifyAsync(file, context.GetCancellationToken());
+                context.Console.WriteLine(result.Status switch
+                {
+                    IntegrityStatus.Valid => $"✓ {file} — valid",
+                    IntegrityStatus.Unsigned => $"○ {file} — unsigned",
+                    IntegrityStatus.Invalid => $"✗ {file} — INVALID: {result.Error}",
+                    IntegrityStatus.KeyMissing => "✗ No public key found. Run 'aether integrity init' first.",
+                    _ => "?"
+                });
+                if (result.Status is IntegrityStatus.Invalid or IntegrityStatus.KeyMissing)
+                    context.ExitCode = 1;
+            }
+            else
+            {
+                var failures = await signer.VerifyAllAsync(context.GetCancellationToken());
+                if (failures.Count == 0)
+                    context.Console.WriteLine("All signed files verified.");
+                else
+                {
+                    foreach (var (f, r) in failures)
+                        context.Console.WriteLine($"✗ {f} — {r.Error}");
+                    context.ExitCode = 1;
+                }
+            }
+        });
+
+        return cmd;
+    }
+
+    private string? ResolveAgentDir(string agentName)
+    {
+        // Check config.json workspace path first
+        var configPath = Path.Combine(_aetherDir, "config.json");
+        if (File.Exists(configPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("agents", out var agents) &&
+                    agents.TryGetProperty(agentName, out var entry) &&
+                    entry.TryGetProperty("workspace", out var ws))
+                {
+                    var workspacePath = ws.GetString();
+                    if (workspacePath is not null && Directory.Exists(workspacePath))
+                        return workspacePath;
+                }
+            }
+            catch { /* fall through to candidates */ }
+        }
+
+        // Try common locations
+        var candidates = new[]
+        {
+            Path.Combine(_aetherDir, "workspaces", agentName)           // .aether/workspaces/<name>
+        };
+
+        foreach (var dir in candidates)
+        {
+            if (Directory.Exists(dir)) return dir;
+        }
+
+        System.Console.Error.WriteLine($"Agent directory not found for '{agentName}'. Tried config workspace + {string.Join(", ", candidates)}");
+        return null;
+    }
+
+    private static AgentConfig AgentConfigForDir(string agentDir)
+    {
+        return new AgentConfig
+        {
+            Feofalls = new FeofallsConfig
+            {
+                ConstitutionFiles = new() { "AGENTS_GUARD.md" },
+                IdentityFiles = new() { "SOUL.md", "USER.md", "IDENTITY.md" }
+            }
+        };
     }
 
     private async Task ListBindingsAsync(string agentName, System.CommandLine.Invocation.InvocationContext context)

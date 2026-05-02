@@ -10,4 +10,10 @@ public sealed record AgentEntryConfig
     public bool Enabled { get; init; } = true;
     public string? DisplayName { get; init; }
     public string? Emoji { get; init; }
+
+    /// <summary>
+    /// Resolved spec config for this agent (loaded from {workspace}/.aether.json).
+    /// Null until LoadAsync with agentName is called.
+    /// </summary>
+    public AgentSpecConfig? Spec { get; init; }
 }

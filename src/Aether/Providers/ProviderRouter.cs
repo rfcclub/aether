@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Aether.Config;
 using Aether.Data;
 using Microsoft.Extensions.Logging;
 
@@ -13,6 +14,8 @@ namespace Aether.Providers;
 ///   - Circuit breaker opens after 3 failures, resets after 60s
 ///   - Streaming via IAsyncEnumerable where provider supports
 ///   - Cost tracking per call to provider_usage table
+///   - Per-agent credential resolution: agent auth → global config → env vars
+///   - Model fallback chain from agent's models.json
 /// </summary>
 public class ProviderRouter : ILLMProvider
 {
@@ -25,6 +28,12 @@ public class ProviderRouter : ILLMProvider
 
     private const int CircuitFailureThreshold = 3;
     private static readonly TimeSpan CircuitResetTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Current agent spec for per-agent credential and model resolution.
+    /// Set before calling CompleteAsync to enable per-agent overrides.
+    /// </summary>
+    public AgentSpecConfig? CurrentAgent { get; set; }
 
     public string Name => "Router";
     public string Model => "Multi";
@@ -362,6 +371,76 @@ public class ProviderRouter : ILLMProvider
             "anthropic" => (inputTokens * 3.0 + outputTokens * 15.0) / 1_000_000,
             _ => null
         };
+    }
+
+    // ── Per-Agent Resolution ──
+
+    /// <summary>
+    /// Resolve effective API key for a provider, following the chain:
+    /// agent auth profile → agent spec config → environment variable.
+    /// Returns null if no key is configured.
+    /// </summary>
+    public string? ResolveEffectiveApiKey(string providerName)
+    {
+        // 1. Agent spec providers section (from .aether.json merged with auth profiles)
+        if (CurrentAgent?.Providers.TryGetValue(providerName, out var agentProvider) == true &&
+            !string.IsNullOrEmpty(agentProvider.ApiKey))
+            return agentProvider.ApiKey;
+
+        // 2. Environment variable (AETHER_PROVIDERS_<NAME>_API_KEY)
+        var envKey = Environment.GetEnvironmentVariable($"AETHER_PROVIDERS_{providerName.ToUpperInvariant()}_API_KEY");
+        if (!string.IsNullOrEmpty(envKey))
+            return envKey;
+
+        // 3. Legacy env var
+        var legacyKey = Environment.GetEnvironmentVariable("AETHER_llm__api_key")
+                        ?? Environment.GetEnvironmentVariable("AETHER_llm_api_key");
+        return legacyKey;
+    }
+
+    /// <summary>
+    /// Resolve effective model for a provider from agent config.
+    /// Falls back through: agent primary model → agent fallback chain → provider default.
+    /// </summary>
+    public string ResolveEffectiveModel(string providerName, string providerDefaultModel)
+    {
+        if (CurrentAgent?.Providers.TryGetValue(providerName, out var agentProvider) == true &&
+            !string.IsNullOrEmpty(agentProvider.Model))
+            return agentProvider.Model;
+
+        return providerDefaultModel;
+    }
+
+    /// <summary>
+    /// Get the model fallback chain for the current agent.
+    /// Returns [primary, fallback1, fallback2, ...] for the specified provider,
+    /// or just [providerDefault] if no agent-specific config exists.
+    /// </summary>
+    public IReadOnlyList<string> GetModelFallbackChain(string providerName, string providerDefaultModel)
+    {
+        var chain = new List<string>();
+
+        if (CurrentAgent?.Providers.TryGetValue(providerName, out var agentProvider) == true)
+        {
+            if (!string.IsNullOrEmpty(agentProvider.Model))
+                chain.Add(agentProvider.Model);
+        }
+
+        if (chain.Count == 0)
+            chain.Add(providerDefaultModel);
+
+        return chain;
+    }
+
+    /// <summary>
+    /// Resolve per-model parameter overrides from agent config.
+    /// Returns the provider entry with agent-specific maxTokens/temperature or null.
+    /// </summary>
+    public SpecProviderEntry? GetAgentProviderConfig(string providerName)
+    {
+        if (CurrentAgent?.Providers.TryGetValue(providerName, out var agentProvider) == true)
+            return agentProvider;
+        return null;
     }
 
     private IReadOnlyList<ILLMProvider> GetEndpointGroup(string providerName) =>

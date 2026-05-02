@@ -87,7 +87,7 @@ public sealed class MessageRouter
         _bindingCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var agents = _configLoader!.LoadAsync().Result.Agents;
 
-        string? firstEnabled = null;
+        string? firstCatchAll = null;
         string? defaultAgent = null;
 
         foreach (var (name, entry) in agents)
@@ -95,18 +95,19 @@ public sealed class MessageRouter
             if (!entry.Enabled)
                 continue;
 
-            firstEnabled ??= name;
+            var isCatchAll = entry.Bindings.Count == 0;
 
-            if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
-                defaultAgent = name;
-
-            if (entry.Bindings is not null)
+            if (isCatchAll)
             {
-                foreach (var binding in entry.Bindings)
-                {
-                    if (!string.IsNullOrEmpty(binding))
-                        _bindingCache[binding] = name;
-                }
+                firstCatchAll ??= name;
+                if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
+                    defaultAgent = name;
+            }
+
+            foreach (var binding in entry.Bindings)
+            {
+                if (!string.IsNullOrEmpty(binding))
+                    _bindingCache[binding] = name;
             }
         }
 
@@ -115,31 +116,39 @@ public sealed class MessageRouter
         if (_bindingCache.TryGetValue(routeKey, out var matched))
             return matched;
 
-        return defaultAgent ?? firstEnabled;
+        return defaultAgent ?? firstCatchAll;
     }
 
     private string? ResolveFallback()
     {
         var agents = _configLoader!.LoadAsync().Result.Agents;
 
+        string? firstCatchAll = null;
+        string? defaultAgent = null;
+
         foreach (var (name, entry) in agents)
         {
             if (!entry.Enabled) continue;
+            if (entry.Bindings.Count > 0) continue;
+
+            firstCatchAll ??= name;
             if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
-                return name;
+                defaultAgent = name;
         }
 
-        foreach (var (name, entry) in agents)
-        {
-            if (entry.Enabled) return name;
-        }
-
-        return null;
+        return defaultAgent ?? firstCatchAll;
     }
 
     private void InvalidateCacheIfNeeded()
     {
-        // Cache invalidation is checked per-request — simple approach for now
+        var configPath = Path.Combine(_configLoader!.AetherDir, "config.json");
+        if (!File.Exists(configPath)) return;
+
+        var lastWrite = File.GetLastWriteTimeUtc(configPath);
+        if (lastWrite > _lastConfigRead)
+        {
+            _bindingCache = null;
+        }
     }
 
     private static string? NormalizePrompt(string text, GroupRoute route)

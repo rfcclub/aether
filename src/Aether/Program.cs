@@ -36,22 +36,27 @@ if (args.Contains("--debug-args", StringComparer.OrdinalIgnoreCase))
 var traceStartup = args.Contains("--trace-startup", StringComparer.OrdinalIgnoreCase);
 var prompt = GetOption(args, "--prompt");
 
-// CLI dispatch: route to agent management commands before harness/serve/tui
-if (args.FirstOrDefault() == "agent")
+// CLI dispatch: route management commands before harness/serve/tui
+if (args.FirstOrDefault() is "agent" or "integrity" or "access")
 {
     await RunCliAsync(args);
     return;
 }
 
 // First-run wizard: create ~/.aether/config.json if missing
-var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
-var aetherDir = aetherHome ?? Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
-var wizard = new FirstRunWizard(aetherDir,
-    Microsoft.Extensions.Logging.Abstractions.NullLogger<FirstRunWizard>.Instance);
-if (wizard.IsFirstRun())
+// Skip in harness mode — it doesn't need ~/.aether/
+if (args.FirstOrDefault() is not "serve" && prompt is null)
 {
-    await wizard.RunNonInteractiveAsync();
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+    var aetherDir = aetherHome ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var wizard = new FirstRunWizard(aetherDir,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<FirstRunWizard>.Instance);
+    if (wizard.IsFirstRun())
+    {
+        var interactive = !args.Contains("--non-interactive", StringComparer.OrdinalIgnoreCase);
+        await wizard.RunAsync(interactive);
+    }
 }
 
 if (args.FirstOrDefault() == "tui")
@@ -142,7 +147,7 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         var toolExecutor = new ToolExecutor(configuration);
         var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
         var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
-        var profile = new AgentProfile("aether", ".", new AgentConfig { StartupFiles = new() });
+        var profile = ResolveAgentProfile("aether", configuration);
         var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
 
         var response = await soul.ProcessAsync(group, prompt, cts.Token);
@@ -209,6 +214,35 @@ static string ReadApiKey(string[] args, IConfiguration configuration)
     return ConfigValue(configuration, "llm:api_key", "");
 }
 
+static AgentProfile ResolveAgentProfile(string name, IConfiguration configuration)
+{
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+    var aetherDir = aetherHome ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+
+    var config = new AgentConfig { StartupFiles = new() };
+
+    // Try ConfigLoader-backed resolution if ~/.aether/ exists
+    if (Directory.Exists(aetherDir))
+    {
+        try
+        {
+            var authProfiles = new AgentAuthProfiles(aetherDir,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentAuthProfiles>.Instance);
+            var configLoader = new ConfigLoader(configuration, aetherDir,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance, authProfiles);
+            return AgentProfile.FromConfigLoader(name, configLoader, config);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Fall through to current-directory fallback
+        }
+    }
+
+    // Fallback: use current directory (repo-relative, no ~/.aether/ needed)
+    return new AgentProfile(name, ".", config);
+}
+
 static string? GetOption(string[] args, string name)
 {
     for (var i = 0; i < args.Length; i++)
@@ -268,7 +302,7 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
     var toolExecutor = new ToolExecutor(configuration);
     var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
     var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
-    var profile = new AgentProfile("aether", ".", new AgentConfig { StartupFiles = new() });
+    var profile = ResolveAgentProfile("aether", configuration);
     var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
 
     Console.WriteLine("╔══════════════════════════════════════╗");
@@ -473,22 +507,29 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddHostedService<DailyReviewHostedService>();
 
+    // Provider registration — reads both legacy flat keys and new spec-style "providers" section.
     builder.Services.AddHttpClient<ILLMProvider, OpenRouterProvider>((provider, client) =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1";
+        var baseUrl = configuration["providers:openrouter:base_url"]
+                      ?? configuration["llm:base_url"]
+                      ?? "https://openrouter.ai/api/v1";
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     });
     builder.Services.AddHttpClient<ILLMProvider, FireworksProvider>((provider, client) =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1";
+        var baseUrl = configuration["providers:fireworks:base_url"]
+                      ?? configuration["fireworks:base_url"]
+                      ?? "https://api.fireworks.ai/inference/v1";
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     });
     builder.Services.AddHttpClient<ILLMProvider, AnthropicProvider>((provider, client) =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["anthropic:base_url"] ?? "https://api.anthropic.com";
+        var baseUrl = configuration["providers:anthropic:base_url"]
+                      ?? configuration["anthropic:base_url"]
+                      ?? "https://api.anthropic.com";
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     });
 
@@ -496,25 +537,25 @@ static async Task RunServeAsync(bool traceStartup)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         return new OpenRouterOptions(
-            ApiKey: configuration["llm:api_key"] ?? "",
-            Model: configuration["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free",
-            BaseUrl: configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1");
+            ApiKey: configuration["providers:openrouter:api_key"] ?? configuration["llm:api_key"] ?? "",
+            Model: configuration["providers:openrouter:model"] ?? configuration["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free",
+            BaseUrl: configuration["providers:openrouter:base_url"] ?? configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1");
     });
     builder.Services.AddSingleton(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         return new FireworksOptions(
-            ApiKey: configuration["fireworks:api_key"] ?? "",
-            Model: configuration["fireworks:model"] ?? "accounts/fireworks/models/deepseek-v3-0324",
-            BaseUrl: configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1");
+            ApiKey: configuration["providers:fireworks:api_key"] ?? configuration["fireworks:api_key"] ?? "",
+            Model: configuration["providers:fireworks:model"] ?? configuration["fireworks:model"] ?? "accounts/fireworks/models/deepseek-v3-0324",
+            BaseUrl: configuration["providers:fireworks:base_url"] ?? configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1");
     });
     builder.Services.AddSingleton(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         return new AnthropicOptions(
-            ApiKey: configuration["anthropic:api_key"] ?? "",
-            Model: configuration["anthropic:model"] ?? "claude-3-5-sonnet-20241022",
-            BaseUrl: configuration["anthropic:base_url"] ?? "https://api.anthropic.com");
+            ApiKey: configuration["providers:anthropic:api_key"] ?? configuration["anthropic:api_key"] ?? "",
+            Model: configuration["providers:anthropic:model"] ?? configuration["anthropic:model"] ?? "claude-3-5-sonnet-20241022",
+            BaseUrl: configuration["providers:anthropic:base_url"] ?? configuration["anthropic:base_url"] ?? "https://api.anthropic.com");
     });
 
     builder.Services.AddSingleton<ProviderHealthMonitor>();
@@ -559,12 +600,12 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<IAgentProfile>(provider =>
     {
         var config = provider.GetRequiredService<AgentConfig>();
+        var configLoader = provider.GetRequiredService<ConfigLoader>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var agentName = configuration["agent:name"] ?? "maria";
-        var agentsRoot = configuration["agent:root"] ?? "agents";
-        var agentDir = Path.Combine(agentsRoot, agentName);
-
-        return new AgentProfile(agentName, agentDir, config);
+        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+        var logger = loggerFactory.CreateLogger<AgentProfile>();
+        return AgentProfile.FromConfigLoader(agentName, configLoader, config, logger);
     });
 
     builder.Services.AddSingleton<AgentMemoryBridge>(provider =>
@@ -588,6 +629,13 @@ static async Task RunServeAsync(bool traceStartup)
         var profile = provider.GetRequiredService<IAgentProfile>();
         var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
         return new FeofallsBootContract(profile.AgentDirectory, feofallsConfig);
+    });
+
+    builder.Services.AddSingleton<IntegritySigner>(provider =>
+    {
+        var profile = provider.GetRequiredService<IAgentProfile>();
+        var logger = provider.GetRequiredService<ILogger<IntegritySigner>>();
+        return new IntegritySigner(profile.AgentDirectory, logger);
     });
 
     builder.Services.AddSingleton<EpisodicLogger>(provider =>
@@ -648,6 +696,15 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddHostedService<WebSocketChannelService>();
 
+    builder.Services.AddSingleton<ChannelAccess>(provider =>
+    {
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
+        var aetherDir = aetherHome ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var logger = provider.GetRequiredService<ILogger<ChannelAccess>>();
+        return new ChannelAccess("telegram", aetherDir, logger);
+    });
+
     builder.Services.AddHostedService<ChannelMessageProcessor>();
 
     Trace("before host build");
@@ -656,6 +713,40 @@ static async Task RunServeAsync(bool traceStartup)
 
     var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Aether");
     logger.LogInformation("Aether host initialized.");
+
+    // Initialize cryptographic identity and sign boot files
+    // Set AETHER_SKIP_INTEGRITY=1 to skip (e.g., first boot before data is copied)
+    if (Environment.GetEnvironmentVariable("AETHER_SKIP_INTEGRITY") == "1")
+    {
+        logger.LogInformation("Integrity check skipped (AETHER_SKIP_INTEGRITY=1)");
+    }
+    else
+    {
+        try
+        {
+            var integritySigner = host.Services.GetRequiredService<IntegritySigner>();
+            var feofallsConfig = host.Services.GetRequiredService<FeofallsConfig>();
+            var publicKey = await integritySigner.InitializeAsync();
+            logger.LogInformation("Agent identity key initialized.");
+
+            var failures = await integritySigner.VerifyAllAsync();
+            if (failures.Count > 0)
+            {
+                foreach (var (file, result) in failures)
+                    logger.LogWarning("Integrity check FAILED for {File}: {Error}", file, result.Error);
+            }
+            else
+            {
+                await integritySigner.SignBootFilesAsync(feofallsConfig);
+                logger.LogInformation("Boot file integrity verified ({Count} signed, 0 failures).",
+                    feofallsConfig.ConstitutionFiles.Count + feofallsConfig.IdentityFiles.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Integrity initialization skipped — agent will run without cryptographic identity");
+        }
+    }
 
     await host.RunAsync();
 }

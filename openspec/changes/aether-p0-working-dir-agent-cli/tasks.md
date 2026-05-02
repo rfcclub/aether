@@ -80,62 +80,62 @@
 - [x] 7.1 Create `Cli/FirstRunWizard.cs` using `Spectre.Console` for interactive prompts
 - [x] 7.2 Implement first-run detection: check `~/.aether/config.json` existence after working directory init
 - [x] 7.3 Implement `--non-interactive` mode: create minimal `config.json` with framework defaults, skip all prompts
-- [ ] 7.4 Implement provider selection prompt (OpenRouter / Anthropic / Fireworks / Other)
-- [ ] 7.5 Implement API key prompt (masked input with `Spectre.Console`)
-- [ ] 7.6 Implement agent name prompt with default value "default"
-- [ ] 7.7 Implement optional Telegram setup prompt (y/n → bot token input)
+- [x] 7.4 Implement provider selection prompt (OpenRouter / Anthropic / Fireworks / Other)
+- [x] 7.5 Implement API key prompt (masked input with `Spectre.Console`)
+- [x] 7.6 Implement agent name prompt with default value "default"
+- [x] 7.7 Implement optional Telegram setup prompt (y/n → bot token input)
 - [x] 7.8 Write `config.json` with wizard metadata: `wizard.lastRunAt`, `wizard.lastRunVersion`, `wizard.lastRunCommand`
-- [ ] 7.9 Print completion summary message with next-step instructions
-- [x] 7.10 Integrate wizard into `Program.cs`: runs before harness/serve/tui if `config.json` missing
+- [x] 7.9 Print completion summary message with next-step instructions
+- [x] 7.10 Integrate wizard into `Program.cs`: runs before harness/serve/tui if `config.json` missing; skipped in harness mode; TTY detection
 
 ## 8. Channel Binding Resolution
 
-- [ ] 8.1 Update `MessageRouter` to scan all agents' `bindings` arrays for `<channel_type>:<chat_id>` match
-- [ ] 8.2 Implement binding cache with invalidation on `config.json` file change (check `LastWriteTimeUtc`)
-- [ ] 8.3 Implement fallback: no binding match → default agent (first `enabled: true` or agent named "default")
-- [ ] 8.4 Implement legacy `gateway.agents.<source>` key support with deprecation warning log
-- [ ] 8.5 Update `ChannelMessageProcessor` to use resolved agent name from `MessageRouter`
+- [x] 8.1 Update `MessageRouter` to scan all agents' `bindings` arrays for `<channel_type>:<chat_id>` match
+- [x] 8.2 Implement binding cache with invalidation on `config.json` file change (check `LastWriteTimeUtc`)
+- [x] 8.3 Implement fallback: no binding match → default agent (first `enabled: true` or agent named "default")
+- [x] 8.4 Implement legacy `gateway.agents.<source>` key support with deprecation warning log
+- [x] 8.5 Update `ChannelMessageProcessor` to use resolved agent name from `MessageRouter`
 
 ## 9. Backward Compatibility and Migration
 
-- [ ] 9.1 Update `AgentProfile` constructor to accept `ConfigLoader` and resolve workspace path from `~/.aether/workspaces/<name>/`
-- [ ] 9.2 Implement fallback: if `~/.aether/workspaces/<name>/` doesn't exist, try `<cwd>/agents/<name>/` with deprecation warning
-- [ ] 9.3 Throw `DirectoryNotFoundException` if neither path exists (with clear message)
-- [ ] 9.4 Update `AgentConfig` to source defaults from `ConfigLoader` merged config instead of hardcoded values
-- [ ] 9.5 Update `Program.cs` harness mode (`--prompt`) to work without `~/.aether/` — use repo-relative paths as fallback
-- [ ] 9.6 Ensure existing `appsettings.json` and `AETHER_*` env var patterns continue to work unchanged
-- [ ] 9.7 Verify Maria migration path: `aether agent add maria` + manual file copy from `agents/maria/`
-- [ ] 9.8 Ensure `agents/` directory remains in `.gitignore` (already configured)
+- [x] 9.1 Update `AgentProfile` constructor to accept `ConfigLoader` and resolve workspace path from `~/.aether/workspaces/<name>/`
+- [x] 9.2 Implement fallback: if `~/.aether/workspaces/<name>/` doesn't exist, try `<cwd>/agents/<name>/` with deprecation warning
+- [x] 9.3 Throw `DirectoryNotFoundException` if neither path exists (with clear message)
+- [x] 9.4 Update `AgentConfig` to source defaults from `ConfigLoader` merged config instead of hardcoded values
+- [x] 9.5 Update `Program.cs` harness mode (`--prompt`) to work without `~/.aether/` — use repo-relative paths as fallback
+- [x] 9.6 Ensure existing `appsettings.json` and `AETHER_*` env var patterns continue to work unchanged
+- [x] 9.7 Verify Maria migration path: `aether agent add maria` + manual file copy from `agents/maria/`
+- [x] 9.8 Ensure `agents/` directory remains in `.gitignore` (already configured)
 
 ## 10. Provider Router Integration
 
-- [ ] 10.1 Update `ProviderRouter` to accept per-agent `AgentAuthConfig` for credential override
-- [ ] 10.2 Implement provider credential resolution: agent auth → global config → env vars
-- [ ] 10.3 Implement model fallback chain from agent's `models.json` in `ProviderRouter`
-- [ ] 10.4 Implement per-model parameter overrides (`maxTokens`, `temperature`, etc.) from `models.json`
+- [x] 10.1 Update `ProviderRouter` to accept per-agent `AgentAuthConfig` for credential override
+- [x] 10.2 Implement provider credential resolution: agent auth → global config → env vars
+- [x] 10.3 Implement model fallback chain from agent's `models.json` in `ProviderRouter`
+- [x] 10.4 Implement per-model parameter overrides (`maxTokens`, `temperature`, etc.) from `models.json`
 
 ## 11. Tests
 
-- [ ] 11.1 Add `WorkingDirectoryInitializerTests.cs` — test first-run creation, idempotency, custom `AETHER_HOME`, device.json content
-- [ ] 11.2 Add `ConfigLoaderTests.cs` — test 5-layer merge order, env var mapping, validation warnings/errors, agent config resolution
-- [ ] 11.3 Add `AgentWorkspaceScaffolderTests.cs` — test file creation, template content, non-overwrite, interactive/non-interactive modes
-- [ ] 11.4 Add `AgentAuthProfilesTests.cs` — test auth file creation, credential loading, chmod on Linux, global fallback
-- [ ] 11.5 Add `CliCommandTests.cs` — test `agent add/list/delete/set-identity/bind/unbind` command execution and output
-- [ ] 11.6 Add `FirstRunWizardTests.cs` — test detection, non-interactive mode, config.json metadata
-- [ ] 11.7 Add `ChannelBindingResolutionTests.cs` — test binding match, fallback, cache invalidation, legacy config
-- [ ] 11.8 Add `BackwardCompatibilityTests.cs` — test repo-relative fallback, deprecation warnings, harness mode without `~/.aether/`
-- [ ] 11.9 Add `AgentProfileTests.cs` — updated tests for `~/.aether/` resolution and fallback paths
-- [ ] 11.10 Update existing tests that depend on `AgentConfig` or `AgentProfile` to work with new config hierarchy
-- [ ] 11.11 Run full test suite (`dotnet test`): all existing 112+ tests pass + new tests pass, 0 failures
+- [x] 11.1 Add `WorkingDirectoryInitializerTests.cs` — test first-run creation, idempotency, custom `AETHER_HOME`, device.json content
+- [x] 11.2 Add `ConfigLoaderTests.cs` — test 5-layer merge order, env var mapping, validation warnings/errors, agent config resolution
+- [x] 11.3 Add `AgentWorkspaceScaffolderTests.cs` — test file creation, template content, non-overwrite, interactive/non-interactive modes
+- [x] 11.4 Add `AgentAuthProfilesTests.cs` — test auth file creation, credential loading, chmod on Linux, global fallback
+- [x] 11.5 Add `CliCommandTests.cs` — test `agent add/list/delete/set-identity/bind/unbind` command execution and output
+- [x] 11.6 Add `FirstRunWizardTests.cs` — test detection, non-interactive mode, config.json metadata
+- [x] 11.7 Add `ChannelBindingResolutionTests.cs` — test binding match, fallback, cache invalidation, legacy config
+- [x] 11.8 Add `BackwardCompatibilityTests.cs` — test repo-relative fallback, deprecation warnings, harness mode without `~/.aether/`
+- [x] 11.9 Add `AgentProfileTests.cs` — updated tests for `~/.aether/` resolution and fallback paths
+- [x] 11.10 Update existing tests that depend on `AgentConfig` or `AgentProfile` to work with new config hierarchy
+- [x] 11.11 Run full test suite (`dotnet test`): all existing 112+ tests pass + new tests pass, 0 failures
 
 ## 12. Build and Release
 
 - [ ] 12.1 Update `src/Aether/Aether.csproj` with new NuGet package references
-- [ ] 12.2 Fix any compilation errors from new namespaces and type references
-- [ ] 12.3 Build solution: `dotnet build` with zero errors
-- [ ] 12.4 Publish framework: `dotnet publish -c Release -o releases/latest`
-- [ ] 12.5 Run smoke test: `./releases/latest/Aether --prompt "hello"` works with env var API key
-- [ ] 12.6 Run `aether agent add test-agent --non-interactive` and verify workspace scaffolded
+- [x] 12.2 Fix any compilation errors from new namespaces and type references
+- [x] 12.3 Build solution: `dotnet build` with zero errors
+- [x] 12.4 Publish framework: `dotnet publish -c Release -o releases/latest`
+- [x] 12.5 Run smoke test: `./releases/latest/Aether --prompt "hello"` works with env var API key
+- [x] 12.6 Run `aether agent add test-agent --non-interactive` and verify workspace scaffolded
 
 ## 13. Documentation and Commit
 

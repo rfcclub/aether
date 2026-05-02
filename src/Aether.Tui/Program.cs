@@ -434,9 +434,11 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton<ILLMProvider>(provider =>
     {
         var config = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = config["llm:base_url"] ?? "https://openrouter.ai/api/v1";
-        var apiKey = config["llm:api_key"] ?? "";
-        var model = config["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
+        var baseUrl = config["providers:openrouter:base_url"]
+                      ?? config["llm:base_url"]
+                      ?? "https://openrouter.ai/api/v1";
+        var apiKey = config["providers:openrouter:api_key"] ?? config["llm:api_key"] ?? "";
+        var model = config["providers:openrouter:model"] ?? config["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
 
         var client = new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
         return new OpenRouterProvider(client, new OpenRouterOptions(apiKey, model, baseUrl));
