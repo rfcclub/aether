@@ -1,6 +1,8 @@
+using System.Linq;
 using Aether.Agent;
 using Aether.Channels;
 using Aether.Memory;
+using Aether.Providers;
 using Aether.Sessions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -12,7 +14,8 @@ public sealed class SlashCommandHandlerTests
     private SlashCommandHandler CreateHandler(
         FakeMemorySystem? memory = null,
         ISessionManager? sessions = null,
-        Action<string>? onModelChanged = null)
+        Action<string>? onModelChanged = null,
+        ProviderRouter? router = null)
     {
         var mem = memory ?? new FakeMemorySystem();
         var sessionMgr = sessions ?? new FakeSessionManager();
@@ -20,6 +23,8 @@ public sealed class SlashCommandHandlerTests
         var services = new ServiceCollection();
         services.AddSingleton<IMemorySystem>(mem);
         services.AddSingleton<ISessionManager>(sessionMgr);
+        if (router is not null)
+            services.AddSingleton<ProviderRouter>(router);
         var provider = services.BuildServiceProvider();
 
         return new SlashCommandHandler(provider, NullLogger<SlashCommandHandler>.Instance);
@@ -95,7 +100,7 @@ public sealed class SlashCommandHandlerTests
         var result = await handler.HandleAsync(Ctx("/model"), CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("Model:", result!.Text);
+        Assert.Contains("Current model:", result!.Text);
     }
 
     // ── 2.7 /model <name> updates model ──
@@ -103,13 +108,14 @@ public sealed class SlashCommandHandlerTests
     [Fact]
     public async Task ModelCommand_WithArgs_SwitchesModel()
     {
-        string? changedModel = null;
-        var handler = CreateHandler(onModelChanged: m => changedModel = m);
+        var router = CreateFakeRouter();
+        var handler = CreateHandler(router: router);
 
-        var result = await handler.HandleAsync(Ctx("/model claude-sonnet-4-6"), CancellationToken.None);
+        var result = await handler.HandleAsync(Ctx("/model accounts/fireworks/routers/kimi-k2p5-turbo"), CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("claude-sonnet-4-6", result!.Text);
+        Assert.Contains("accounts/fireworks/routers/kimi-k2p5-turbo", result!.Text);
+        Assert.Contains("Survives restart", result!.Text);
     }
 
     // ── 2.8 /model <unknown> warns but still sets ──
@@ -117,11 +123,13 @@ public sealed class SlashCommandHandlerTests
     [Fact]
     public async Task ModelCommand_UnknownModel_Warns()
     {
-        var handler = CreateHandler();
+        var router = CreateFakeRouter();
+        var handler = CreateHandler(router: router);
+
         var result = await handler.HandleAsync(Ctx("/model nonexistent-model"), CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("Model changed", result!.Text);
+        Assert.Contains("Unknown model", result!.Text);
         Assert.Contains("nonexistent-model", result!.Text);
     }
 
@@ -213,20 +221,36 @@ public sealed class SlashCommandHandlerTests
     [Fact]
     public async Task DI_ModelSwitch_UpdatesModelName()
     {
-        var provider = CreateDIProvider();
+        var router = CreateFakeRouter();
+        var services = new ServiceCollection();
+        services.AddSingleton<IMemorySystem>(new FakeMemorySystem());
+        services.AddSingleton<ISessionManager>(new FakeSessionManager());
+        services.AddSingleton<ProviderRouter>(router);
+        services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
+        services.AddLogging();
+        var provider = services.BuildServiceProvider();
+
         var handler = provider.GetRequiredService<ISlashCommandHandler>();
         var result = await handler.HandleAsync(
-            new SlashCommandContext("/model claude-sonnet-4-6", "default", "/tmp/ws", provider),
+            new SlashCommandContext("/model accounts/fireworks/routers/kimi-k2p5-turbo", "default", "/tmp/ws", provider),
             CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("claude-sonnet-4-6", result!.Text);
+        Assert.Contains("accounts/fireworks/routers/kimi-k2p5-turbo", result!.Text);
     }
 
     [Fact]
     public async Task AllCommands_ReturnNonEmptyText()
     {
-        var provider = CreateDIProvider();
+        var router = CreateFakeRouter();
+        var services = new ServiceCollection();
+        services.AddSingleton<IMemorySystem>(new FakeMemorySystem());
+        services.AddSingleton<ISessionManager>(new FakeSessionManager());
+        services.AddSingleton<ProviderRouter>(router);
+        services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
+        services.AddLogging();
+        var provider = services.BuildServiceProvider();
+
         var handler = provider.GetRequiredService<ISlashCommandHandler>();
 
         foreach (var cmd in new[] { "/new", "/reset", "/model", "/context", "/compact" })
@@ -237,5 +261,40 @@ public sealed class SlashCommandHandlerTests
             Assert.NotNull(result);
             Assert.NotEmpty(result!.Text);
         }
+    }
+
+    private static ProviderRouter CreateFakeRouter()
+    {
+        var fakeProvider = new FakeProvider("fireworks", "accounts/fireworks/routers/kimi-k2p5-turbo");
+        // Schema.sql is copied to test output dir
+        var schemaPath = System.IO.Path.Combine(
+            AppContext.BaseDirectory, "Data", "Schema.sql");
+        return new ProviderRouter(
+            new ILLMProvider[] { fakeProvider },
+            new ProviderRoutingOptions(),
+            new Aether.Data.AetherDb(":memory:", schemaPath),
+            NullLogger<ProviderRouter>.Instance);
+    }
+
+    private sealed class FakeProvider : ILLMProvider
+    {
+        public string Name { get; }
+        public string Model { get; }
+        public bool SupportsStreaming => true;
+        public bool SupportsTools => false;
+
+        public FakeProvider(string name, string model) { Name = name; Model = model; }
+
+        public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default)
+            => Task.FromResult(new LlmResponse("ok"));
+
+        public async IAsyncEnumerable<string> CompleteStreamingAsync(LlmRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        { yield break; }
+
+        public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(LlmRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        { yield break; }
+
+        public Task<bool> HealthCheckAsync(CancellationToken ct = default)
+            => Task.FromResult(true);
     }
 }

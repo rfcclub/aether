@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -493,5 +494,106 @@ public sealed class ConfigLoader
         if (el.TryGetProperty("fallbacks", out var fb) && fb.ValueKind == JsonValueKind.Array)
             model = model with { Fallbacks = fb.EnumerateArray().Select(f => f.GetString() ?? "").ToList() };
         return model;
+    }
+
+    public async Task UpdateAgentModelAsync(string agentName, string primaryModel, CancellationToken ct)
+    {
+        var path = Path.Combine(_aetherDir, "config.json");
+        var json = File.Exists(path) ? await File.ReadAllTextAsync(path, ct) : "{}";
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        using var stream = new MemoryStream();
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+
+        writer.WriteStartObject();
+
+        // Copy or write agents section with updated model
+        var wroteAgents = false;
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.NameEquals("agents"))
+            {
+                writer.WritePropertyName("agents");
+                writer.WriteStartObject();
+                var agentsEl = prop.Value;
+
+                // Copy existing agents
+                foreach (var agentProp in agentsEl.EnumerateObject())
+                {
+                    writer.WritePropertyName(agentProp.Name);
+
+                    if (agentProp.NameEquals(agentName))
+                    {
+                        // Merge model into this agent
+                        WriteAgentWithModel(writer, agentProp.Value, primaryModel);
+                    }
+                    else
+                    {
+                        agentProp.Value.WriteTo(writer);
+                    }
+                }
+
+                wroteAgents = true;
+                writer.WriteEndObject();
+            }
+            else
+            {
+                prop.WriteTo(writer);
+            }
+        }
+
+        // If no agents section exists, add one with just this agent
+        if (!wroteAgents)
+        {
+            writer.WritePropertyName("agents");
+            writer.WriteStartObject();
+            writer.WritePropertyName(agentName);
+            WriteAgentWithModel(writer, default, primaryModel);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        stream.Position = 0;
+        var updated = Encoding.UTF8.GetString(stream.ToArray());
+        await File.WriteAllTextAsync(path, updated, ct);
+
+        // Update cache so next LoadAsync picks it up
+        if (_cachedAgents is not null && _cachedAgents.TryGetValue(agentName, out var cached))
+        {
+            _cachedAgents[agentName] = cached with
+            {
+                Model = cached.Model is null
+                    ? new AgentModelConfig { Primary = primaryModel }
+                    : cached.Model with { Primary = primaryModel }
+            };
+        }
+
+        _logger.LogInformation("Persisted model '{Model}' for agent {Agent}", primaryModel, agentName);
+    }
+
+    private static void WriteAgentWithModel(Utf8JsonWriter writer, JsonElement existing, string primaryModel)
+    {
+        writer.WriteStartObject();
+
+        // Copy existing properties except "model"
+        if (existing.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in existing.EnumerateObject())
+            {
+                if (!prop.NameEquals("model"))
+                    prop.WriteTo(writer);
+            }
+        }
+
+        // Write updated model section
+        writer.WritePropertyName("model");
+        writer.WriteStartObject();
+        writer.WriteString("primary", primaryModel);
+        writer.WriteEndObject();
+
+        writer.WriteEndObject();
     }
 }

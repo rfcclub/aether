@@ -1,3 +1,4 @@
+using Aether.Config;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
@@ -11,13 +12,19 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
 {
     private readonly IServiceProvider _rootServices;
     private readonly ProviderRouter? _providerRouter;
+    private readonly ConfigLoader? _configLoader;
     private readonly ILogger<SlashCommandHandler> _logger;
 
-    public SlashCommandHandler(IServiceProvider rootServices, ILogger<SlashCommandHandler> logger, ProviderRouter? providerRouter = null)
+    public SlashCommandHandler(
+        IServiceProvider rootServices,
+        ILogger<SlashCommandHandler> logger,
+        ProviderRouter? providerRouter = null,
+        ConfigLoader? configLoader = null)
     {
         _rootServices = rootServices;
         _logger = logger;
         _providerRouter = providerRouter ?? rootServices.GetService<ProviderRouter>();
+        _configLoader = configLoader ?? rootServices.GetService<ConfigLoader>();
     }
 
     public async Task<SlashCommandResult?> HandleAsync(SlashCommandContext ctx, CancellationToken ct)
@@ -46,7 +53,7 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
         var sessionMgr = _rootServices.GetRequiredService<ISessionManager>();
         var session = await sessionMgr.GetOrCreateSessionAsync(ctx.AgentName, ct);
         var memory = _rootServices.GetRequiredService<IMemorySystem>();
-        memory.CompactContext(0); // clear all ephemeral context
+        memory.CompactContext(0);
 
         _logger.LogInformation("New session {SessionId} created for agent {Agent}", session.Id, ctx.AgentName);
         return new SlashCommandResult($"New session: {session.Id}");
@@ -55,35 +62,68 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
     private Task<SlashCommandResult> HandleResetAsync(SlashCommandContext ctx, CancellationToken ct)
     {
         var memory = _rootServices.GetRequiredService<IMemorySystem>();
-        memory.CompactContext(0); // clear all ephemeral context
+        memory.CompactContext(0);
 
         _logger.LogInformation("Context cleared for {Agent}", ctx.AgentName);
         return Task.FromResult(new SlashCommandResult("Context cleared."));
     }
 
-    private Task<SlashCommandResult> HandleModelAsync(SlashCommandContext ctx, string args, CancellationToken ct)
+    private async Task<SlashCommandResult> HandleModelAsync(SlashCommandContext ctx, string args, CancellationToken ct)
     {
+        // No args: show current model + available models
         if (string.IsNullOrWhiteSpace(args))
         {
             var current = _providerRouter?.EffectiveModel ?? "none";
-            var fallbacks = _providerRouter?.ModelChain is { Count: > 1 } chain
-                ? $" (fallbacks: {string.Join(", ", chain.Skip(1))})"
-                : "";
-            return Task.FromResult(new SlashCommandResult($"Model: {current}{fallbacks}"));
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Current model: {current}");
+            sb.AppendLine();
+
+            var available = _providerRouter?.GetAvailableModels();
+            if (available is { Count: > 0 })
+            {
+                sb.AppendLine("Available models:");
+                foreach (var (provider, model) in available)
+                {
+                    var marker = string.Equals(model, current, StringComparison.OrdinalIgnoreCase) ? " ← current" : "";
+                    sb.AppendLine($"  [{provider}] {model}{marker}");
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Usage: /model <model-id>");
+            return new SlashCommandResult(sb.ToString().TrimEnd());
         }
 
         // Switch model
-        var newPrimary = args;
+        var newPrimary = args.Trim();
+
+        // Verify model resolves to a provider
+        var resolvedProvider = _providerRouter?.ResolveModelToProvider(newPrimary);
+        if (resolvedProvider is null)
+        {
+            var available = _providerRouter?.GetAvailableModels() ?? Array.Empty<(string, string)>();
+            var models = string.Join(", ", available.Select(m => m.Model));
+            return new SlashCommandResult($"Unknown model: {newPrimary}\nAvailable: {models}");
+        }
+
+        // Update in-memory chain
         if (_providerRouter is not null)
         {
             var existing = _providerRouter.ModelChain?.Skip(1).ToList() ?? new List<string>();
             var newChain = new List<string> { newPrimary };
-            newChain.AddRange(existing);
+            newChain.AddRange(existing.Where(f => f != newPrimary));
             _providerRouter.ModelChain = newChain;
         }
 
+        // Persist to config.json so it survives restart
+        if (_configLoader is not null)
+        {
+            await _configLoader.UpdateAgentModelAsync(ctx.AgentName, newPrimary, ct);
+        }
+
         _logger.LogInformation("Model switched to {Model} for {Agent}", newPrimary, ctx.AgentName);
-        return Task.FromResult(new SlashCommandResult($"Model changed to: {newPrimary}"));
+        return new SlashCommandResult($"Model changed to: {newPrimary} [{resolvedProvider.Name}]\nSurvives restart.");
     }
 
     private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
@@ -122,7 +162,6 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
     private static int EstimateTokens(string text)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        // Rough estimate: ~4 chars per token
         return Math.Max(1, text.Length / 4);
     }
 }

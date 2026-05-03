@@ -510,6 +510,19 @@ public class ProviderRouter : ILLMProvider
     // ── Model-to-Provider Resolution ──
 
     /// <summary>
+    /// Returns all available (provider, model) pairs for display to users.
+    /// </summary>
+    public IReadOnlyList<(string Provider, string Model)> GetAvailableModels()
+    {
+        var result = new List<(string, string)>();
+        foreach (var p in _providers)
+        {
+            result.Add((p.Name, p.Model));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Resolve a model identifier to the best-matching ILLMProvider.
     /// Resolution order:
     ///   1. Exact match in any provider's Models list
