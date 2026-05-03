@@ -72,4 +72,4 @@
 - [x] 9.1 Run full test suite, verify no regressions
 - [x] 9.2 Verify backward compat: existing hot-reload tools still work as passive stubs
 - [x] 9.3 Verify sandbox path restrictions effective (see SandboxContextTests + integration)
-- [ ] 9.4 Commit + push
+- [x] 9.4 Commit + push
