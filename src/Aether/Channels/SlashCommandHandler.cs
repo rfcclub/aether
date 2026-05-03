@@ -65,10 +65,11 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
     {
         if (string.IsNullOrWhiteSpace(args))
         {
-            var current = _providerRouter?.ModelChain is { Count: > 0 } chain
-                ? $"{chain[0]}" + (chain.Count > 1 ? $" (fallbacks: {string.Join(", ", chain.Skip(1))})" : "")
-                : "none";
-            return Task.FromResult(new SlashCommandResult($"Model: {current}"));
+            var current = _providerRouter?.EffectiveModel ?? "none";
+            var fallbacks = _providerRouter?.ModelChain is { Count: > 1 } chain
+                ? $" (fallbacks: {string.Join(", ", chain.Skip(1))})"
+                : "";
+            return Task.FromResult(new SlashCommandResult($"Model: {current}{fallbacks}"));
         }
 
         // Switch model
@@ -85,21 +86,25 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
         return Task.FromResult(new SlashCommandResult($"Model changed to: {newPrimary}"));
     }
 
-    private Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
+    private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
     {
         var memory = _rootServices.GetRequiredService<IMemorySystem>();
+        var sessionMgr = _rootServices.GetRequiredService<ISessionManager>();
         var contextEntries = memory.GetContext();
         var tokenEstimate = contextEntries.Sum(e => EstimateTokens(e.Content));
 
-        var model = _providerRouter?.ModelChain is { Count: > 0 } chain ? chain[0] : "none";
+        var model = _providerRouter?.EffectiveModel ?? "none";
+
+        var session = await sessionMgr.GetOrCreateSessionAsync(ctx.AgentName, ct);
+        var history = await sessionMgr.GetHistoryAsync(session.Id, 500, ct);
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"Session: {ctx.AgentName}");
+        sb.AppendLine($"Session: {ctx.AgentName} ({session.Id})");
         sb.AppendLine($"Model: {model}");
-        sb.AppendLine($"Ephemeral entries: {contextEntries.Count}");
-        sb.AppendLine($"Estimated tokens: {tokenEstimate}");
+        sb.AppendLine($"Messages in session: {history.Count}");
+        sb.AppendLine($"Ephemeral entries: {contextEntries.Count} (~{tokenEstimate} tokens)");
 
-        return Task.FromResult(new SlashCommandResult(sb.ToString().TrimEnd()));
+        return new SlashCommandResult(sb.ToString().TrimEnd());
     }
 
     private Task<SlashCommandResult> HandleCompactAsync(SlashCommandContext ctx, CancellationToken ct)

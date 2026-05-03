@@ -54,6 +54,10 @@ public class ProviderRouter : ILLMProvider
     /// </summary>
     public IReadOnlyList<string>? ModelChain { get; set; }
 
+    public string EffectiveModel => ModelChain is { Count: > 0 } chain
+        ? chain[0]
+        : _providers.FirstOrDefault()?.Model ?? "unknown";
+
     public string Name => "Router";
     public string Model => "Multi";
     public bool SupportsStreaming => _providers.Any(p => p.SupportsStreaming);

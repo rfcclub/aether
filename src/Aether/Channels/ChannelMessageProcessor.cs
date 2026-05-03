@@ -1,6 +1,7 @@
 using System.Text;
 using Aether.Agent;
 using Aether.Config;
+using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly ChannelAccess _channelAccess;
     private readonly ConfigLoader _configLoader;
     private readonly ISlashCommandHandler _slashCommands;
+    private readonly IMemorySystem _memory;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -32,6 +34,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         ChannelAccess channelAccess,
         ConfigLoader configLoader,
         ISlashCommandHandler slashCommands,
+        IMemorySystem memory,
         ILogger<ChannelMessageProcessor> logger)
     {
         _channel = channel;
@@ -40,6 +43,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         _channelAccess = channelAccess;
         _configLoader = configLoader;
         _slashCommands = slashCommands;
+        _memory = memory;
         _logger = logger;
     }
 
@@ -116,6 +120,9 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 return;
             }
 
+            // Add user message to ephemeral context
+            _memory.AddToContext($"User: {message.Text}", 0.5f);
+
             await _channel.SetTypingAsync(message.ChatId, true, ct);
 
             using var scope = _services.CreateScope();
@@ -157,8 +164,12 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 fullResponse.Append(chunk);
             }
 
+            // Add assistant response to ephemeral context
+            var responseText = fullResponse.ToString();
+            _memory.AddToContext($"Assistant: {responseText}", 0.5f);
+
             await _channel.SetTypingAsync(message.ChatId, false, ct);
-            await _channel.SendMessageAsync(message.ChatId, fullResponse.ToString(), ct);
+            await _channel.SendMessageAsync(message.ChatId, responseText, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
