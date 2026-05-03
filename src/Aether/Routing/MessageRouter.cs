@@ -1,6 +1,7 @@
 using Aether.Channels;
 using Aether.Config;
 using Aether.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.Routing;
@@ -21,6 +22,7 @@ public sealed class MessageRouter
         _queue = queue;
     }
 
+    [ActivatorUtilitiesConstructor]
     public MessageRouter(ConfigLoader configLoader, ILogger<MessageRouter> logger)
     {
         _configLoader = configLoader;

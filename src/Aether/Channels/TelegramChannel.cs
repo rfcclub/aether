@@ -16,6 +16,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
     // Track streaming message IDs per chat so we can edit in-place.
     private readonly Dictionary<string, int> _streamingMessageIds = new();
+    private readonly Dictionary<string, string> _lastStreamingText = new();
 
     public string Name => "telegram";
     public bool IsConnected => _client is not null;
@@ -76,43 +77,28 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
         if (chunkIndex == 0)
         {
-            // First chunk: send as a new message, record the message ID
             var msg = await _client.SendMessage(
                 chatId: chatId,
                 text: chunk,
                 parseMode: ParseMode.None,
                 cancellationToken: ct);
             _streamingMessageIds[chatId] = msg.Id;
+            _lastStreamingText[chatId] = chunk;
         }
         else if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
         {
-            // Subsequent chunks: edit the existing message in-place.
-            // Telegram has a rate limit on edit_message, so we batch by only editing
-            // every few chunks. We always edit on the first few chunks to give the
-            // user a responsive feel, then throttle.
-            // We always edit so the user sees progress.
             try
             {
-                // Append the new chunk to the existing text for the edit.
-                // We read back the current text from the message we track.
-                // However, we don't store the full text here — we only have the chunk.
-                // So we send the chunk as-is and let the accumulate happen on the
-                // Telegram side. But edit_message replaces the entire text, so we
-                // need the full accumulated text. Since we don't have it here,
-                // the caller (ChannelMessageProcessor) accumulates and sends the full
-                // accumulated text. So we'll just edit with the chunk.
-                // Actually, edit_message replaces the whole message text. We need
-                // to accumulate. Let's use a dictionary for accumulated text per chat.
                 await _client.EditMessageText(
                     chatId: chatId,
                     messageId: messageId,
-                    text: chunk, // This is the full accumulated text from the caller
+                    text: chunk,
                     parseMode: ParseMode.None,
                     cancellationToken: ct);
+                _lastStreamingText[chatId] = chunk;
             }
             catch (Exception ex)
             {
-                // Edit failures are non-fatal — the final message will still be sent.
                 _logger.LogWarning(ex, "Failed to edit streaming message for chat {ChatId}", chatId);
             }
         }
@@ -122,10 +108,16 @@ public sealed class TelegramChannel : IChannel, IDisposable
     {
         if (_client is null) return;
 
-        // If we had a streaming message, update it with the final full text.
-        // Otherwise, just send as a new message.
         if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
         {
+            // Skip edit if text hasn't changed since last chunk
+            if (_lastStreamingText.TryGetValue(chatId, out var lastText) && lastText == fullText)
+            {
+                _streamingMessageIds.Remove(chatId);
+                _lastStreamingText.Remove(chatId);
+                return;
+            }
+
             try
             {
                 await _client.EditMessageText(
@@ -138,12 +130,6 @@ public sealed class TelegramChannel : IChannel, IDisposable
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to edit final streaming message for chat {ChatId}", chatId);
-                // Fall back to sending a new message
-                await _client.SendMessage(
-                    chatId: chatId,
-                    text: fullText,
-                    parseMode: ParseMode.None,
-                    cancellationToken: ct);
             }
         }
         else
@@ -156,6 +142,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
         }
 
         _streamingMessageIds.Remove(chatId);
+        _lastStreamingText.Remove(chatId);
     }
 
     public async Task SetTypingAsync(string chatId, bool isTyping, CancellationToken ct)
@@ -223,7 +210,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
         return new InboundMessage(
             Id: message.MessageId.ToString(),
             ChannelName: "telegram",
-            ChatId: $"telegram:{message.Chat.Id}",
+            ChatId: message.Chat.Id.ToString(),
             SenderId: message.From.Username ?? message.From.Id.ToString(),
             Text: message.Text,
             Timestamp: message.Date,

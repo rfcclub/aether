@@ -75,6 +75,7 @@ public sealed class ChannelAccess
             return _state.Mode switch
             {
                 "open" => AccessResult.Allowed,
+                "pairing" when _state.Allowed.Count == 0 => AutoAllowFirstSender(senderId),
                 "pairing" => AccessResult.NeedsPairing,
                 "allowlist" => AccessResult.Denied,
                 _ => AccessResult.NeedsPairing
@@ -84,6 +85,19 @@ public sealed class ChannelAccess
         {
             _lock.Release();
         }
+    }
+
+    private AccessResult AutoAllowFirstSender(string senderId)
+    {
+        _state.Allowed.Add(senderId);
+        _state = _state with { Mode = "allowlist" };
+        _logger.LogInformation("Auto-allowed first sender {SenderId}, mode transitioned to allowlist", senderId);
+        // Sync save — one-time init, called under _lock but SaveAsync doesn't acquire _lock
+        var path = GetAccessPath();
+        Directory.CreateDirectory(_baseDir);
+        var json = JsonSerializer.Serialize(_state, JsonOptions);
+        File.WriteAllText(path, json);
+        return AccessResult.Allowed;
     }
 
     public async Task<string> RequestPairingAsync(string senderId, CancellationToken ct = default)
@@ -171,6 +185,7 @@ public sealed class ChannelAccess
 
     private async Task SaveAsync(CancellationToken ct)
     {
+        Directory.CreateDirectory(_baseDir);
         var path = GetAccessPath();
         var json = JsonSerializer.Serialize(_state, JsonOptions);
         await File.WriteAllTextAsync(path, json, ct);

@@ -32,7 +32,7 @@ public interface IAgentProfile
 /// </summary>
 public record AgentConfig
 {
-    public List<string> StartupFiles { get; init; } = new() { "SOUL.md", "USER.md" };
+    public List<string> StartupFiles { get; init; } = new() { "AGENTS.md" };
     public string LongTermMemoryFile { get; init; } = "MEMORY.md";
     public string? HeartbeatFile { get; init; } = "HEARTBEAT.md";
     public string DailyMemoryDirectory { get; init; } = "memory";
@@ -53,7 +53,7 @@ public record AgentConfig
 public record FeofallsConfig
 {
     /// <summary>0_CONSTITUTION — axioms, boundaries, red lines. Creator approval required for writes.</summary>
-    public List<string> ConstitutionFiles { get; init; } = new() { "AGENTS_GUARD.md", "AGENTS.md" };
+    public List<string> ConstitutionFiles { get; init; } = new() { "AGENTS_GUARD.md" };
 
     /// <summary>1_IDENTITY — SOUL.md, USER.md, IDENTITY.md. Who the agent is.</summary>
     public List<string> IdentityFiles { get; init; } = new() { "SOUL.md", "USER.md", "IDENTITY.md" };

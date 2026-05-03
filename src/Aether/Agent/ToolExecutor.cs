@@ -1,28 +1,95 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using Aether.Config;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Aether.Agent;
 
 public sealed class ToolExecutor : IToolExecutor
 {
     private readonly SandboxOptions _options;
-    private readonly string[] _allowedPaths;
+    private string[] _allowedPaths;
+    private string[] _deniedPaths;
+    private readonly bool _sandboxDisabled;
+    private readonly ILogger<ToolExecutor>? _logger;
 
-    public ToolExecutor(IConfiguration configuration)
-        : this(SandboxOptions.FromConfiguration(configuration))
+    public ToolExecutor(IConfiguration configuration, ILogger<ToolExecutor>? logger = null)
+        : this(SandboxOptions.FromConfiguration(configuration), null, null, logger)
     {
     }
 
     public ToolExecutor(SandboxOptions options)
+        : this(options, null, null, null)
+    {
+    }
+
+    public ToolExecutor(SandboxOptions options, string? workspacePath, SpecToolsSection? toolsConfig = null, ILogger<ToolExecutor>? logger = null)
     {
         _options = options;
-        _allowedPaths = options.AllowedPaths
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => Path.GetFullPath(path))
-            .Select(path => path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            .ToArray();
+        _logger = logger;
+        _sandboxDisabled = string.Equals(options.Type, "none", StringComparison.OrdinalIgnoreCase);
+        _allowedPaths = Array.Empty<string>();
+        _deniedPaths = Array.Empty<string>();
+        _logger?.LogInformation("ToolExecutor init: type={Type} sandboxDisabled={SandboxDisabled} workspace={Workspace}", options.Type, _sandboxDisabled, workspacePath ?? "(null)");
+        RebuildPaths(workspacePath, toolsConfig);
+    }
+
+    public void SetAgentContext(string workspace, SpecToolsSection? toolsConfig = null)
+    {
+        _logger?.LogInformation("ToolExecutor SetAgentContext: workspace={Workspace} sandboxDisabled={SandboxDisabled}", workspace, _sandboxDisabled);
+        RebuildPaths(workspace, toolsConfig);
+    }
+
+    private void RebuildPaths(string? workspacePath, SpecToolsSection? toolsConfig)
+    {
+        var paths = new List<string>();
+
+        // Workspace is always allowed
+        if (!string.IsNullOrWhiteSpace(workspacePath))
+        {
+            var normalized = Path.GetFullPath(workspacePath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            paths.Add(normalized);
+        }
+
+        // Explicit allowed paths from SandboxOptions
+        foreach (var path in _options.AllowedPaths)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            paths.Add(Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+
+        // Extra allowed paths from per-agent tools config
+        if (toolsConfig?.File?.AllowedPaths is { Count: > 0 } extraPaths)
+        {
+            foreach (var path in extraPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path)) continue;
+                paths.Add(Path.GetFullPath(path)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
+        }
+
+        _allowedPaths = paths.Distinct().ToArray();
+
+        // Build denied paths from per-agent config
+        var denied = new List<string>();
+        if (toolsConfig?.File?.DeniedPaths is { Count: > 0 } deniedPathsList)
+        {
+            foreach (var path in deniedPathsList)
+            {
+                if (string.IsNullOrWhiteSpace(path)) continue;
+                var fullDenied = Path.IsPathRooted(path)
+                    ? Path.GetFullPath(path)
+                    : Path.GetFullPath(Path.Combine(workspacePath ?? ".", path));
+                denied.Add(fullDenied.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
+        }
+
+        _deniedPaths = denied.ToArray();
     }
 
     public Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
@@ -240,7 +307,25 @@ public sealed class ToolExecutor : IToolExecutor
 
     private bool IsPathAllowed(string path)
     {
+        // Sandbox type "none" disables all path restrictions
+        if (_sandboxDisabled) return true;
+
+        _logger?.LogWarning("ToolExecutor IsPathAllowed: DENIED path='{Path}' sandboxDisabled={SandboxDisabled} allowedPaths=[{Allowed}] deniedPaths=[{Denied}]",
+            path, _sandboxDisabled, string.Join(", ", _allowedPaths), string.Join(", ", _deniedPaths));
+
         var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        // Check denied paths first — they take precedence over allowed paths
+        foreach (var denied in _deniedPaths)
+        {
+            if (string.Equals(fullPath, denied, StringComparison.Ordinal)
+                || fullPath.StartsWith(denied + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || fullPath.StartsWith(denied + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
         return _allowedPaths.Any(allowed =>
             string.Equals(fullPath, allowed, StringComparison.Ordinal)
             || fullPath.StartsWith(allowed + Path.DirectorySeparatorChar, StringComparison.Ordinal)

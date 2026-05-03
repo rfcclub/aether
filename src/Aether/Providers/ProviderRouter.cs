@@ -26,6 +26,17 @@ public class ProviderRouter : ILLMProvider
     private readonly Dictionary<string, CircuitBreakerState> _circuitBreakers = new();
     private readonly object _lock = new();
 
+    private string PrimaryGroup => _options.ProviderPriorities
+        .OrderBy(kv => kv.Value)
+        .Select(kv => kv.Key)
+        .FirstOrDefault() ?? "openrouter";
+
+    private List<string> FallbackGroups => _options.ProviderPriorities
+        .OrderBy(kv => kv.Value)
+        .Select(kv => kv.Key)
+        .Where(g => g != PrimaryGroup)
+        .ToList();
+
     private const int CircuitFailureThreshold = 3;
     private static readonly TimeSpan CircuitResetTimeout = TimeSpan.FromSeconds(60);
 
@@ -34,6 +45,14 @@ public class ProviderRouter : ILLMProvider
     /// Set before calling CompleteAsync to enable per-agent overrides.
     /// </summary>
     public AgentSpecConfig? CurrentAgent { get; set; }
+
+    /// <summary>
+    /// Model fallback chain for the current agent: [primary, fallback1, fallback2, ...].
+    /// Set before calling CompleteAsync to enable model-first routing.
+    /// When set, models are tried in order, each resolving to a provider.
+    /// When null, falls back to provider-priority routing (backward compat).
+    /// </summary>
+    public IReadOnlyList<string>? ModelChain { get; set; }
 
     public string Name => "Router";
     public string Model => "Multi";
@@ -55,40 +74,74 @@ public class ProviderRouter : ILLMProvider
     public async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default)
     {
         var complexity = EstimateComplexity(request.Messages);
-        var needsBetterModel = ShouldEscalateToBetterModel(request.Messages, complexity);
 
-        // Try primary group first
+        // Model-first routing: iterate agent's model chain
+        if (ModelChain is { Count: > 0 })
+        {
+            foreach (var modelId in ModelChain)
+            {
+                var provider = ResolveModelToProvider(modelId);
+                if (provider is null)
+                {
+                    _logger.LogWarning("Model '{ModelId}' could not be resolved to any provider, skipping", modelId);
+                    continue;
+                }
+
+                if (IsCircuitOpen(provider.Name))
+                {
+                    _logger.LogDebug("Skipping {Provider} for model '{ModelId}' - circuit open", provider.Name, modelId);
+                    continue;
+                }
+
+                try
+                {
+                    _logger.LogInformation("Trying model '{ModelId}' via {Provider} (complexity {Complexity})",
+                        modelId, provider.Name, complexity);
+                    var response = await provider.CompleteAsync(request, ct);
+                    RecordSuccess(provider.Name);
+                    await RecordUsageAsync(provider.Name, provider.Model, 0, 0, null, ct);
+                    return response;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Model '{ModelId}' via {Provider} failed, trying next in chain",
+                        modelId, provider.Name);
+                    RecordFailure(provider.Name);
+                }
+            }
+
+            throw new InvalidOperationException("All models in agent chain failed");
+        }
+
+        // Fallback: provider-priority routing (backward compat, no ModelChain set)
+        var needsBetterModel = ShouldEscalateToBetterModel(request.Messages, complexity);
+        var primaryGroup = PrimaryGroup;
         try
         {
-            _logger.LogInformation("Trying primary group (fireworks) for complexity {Complexity}", complexity);
-            var response = await TryEndpointGroupAsync("fireworks", request, ct);
-
-            // Record usage (simplified - no token counting without provider response)
-            await RecordUsageAsync("fireworks", "unknown", 0, 0, null, ct);
-
+            _logger.LogInformation("Trying primary group ({Group}) for complexity {Complexity}", primaryGroup, complexity);
+            var response = await TryEndpointGroupAsync(primaryGroup, request, ct);
+            await RecordUsageAsync(primaryGroup, "unknown", 0, 0, null, ct);
             return response;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Primary group failed");
-            RecordFailure("fireworks");
+            RecordFailure(primaryGroup);
         }
 
-        if (needsBetterModel)
+        foreach (var fallbackGroup in FallbackGroups)
         {
             try
             {
-                _logger.LogInformation("Escalating to fallback (openrouter) for complexity {Complexity}", complexity);
-                var response = await TryEndpointGroupAsync("openrouter", request, ct);
-
-                await RecordUsageAsync("openrouter", "unknown", 0, 0, null, ct);
-
+                _logger.LogInformation("Trying fallback ({Group}) for complexity {Complexity}", fallbackGroup, complexity);
+                var response = await TryEndpointGroupAsync(fallbackGroup, request, ct);
+                await RecordUsageAsync(fallbackGroup, "unknown", 0, 0, null, ct);
                 return response;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Fallback group also failed");
-                RecordFailure("openrouter");
+                _logger.LogWarning(ex, "Fallback group {Group} also failed", fallbackGroup);
+                RecordFailure(fallbackGroup);
             }
         }
 
@@ -100,7 +153,7 @@ public class ProviderRouter : ILLMProvider
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var complexity = EstimateComplexity(request.Messages);
-        var endpoint = SelectEndpoint("fireworks") ?? SelectEndpoint("openrouter");
+        var endpoint = SelectEndpoint(PrimaryGroup) ?? SelectEndpoint(FallbackGroups.FirstOrDefault() ?? "openrouter");
 
         if (endpoint is null)
         {
@@ -132,11 +185,12 @@ public class ProviderRouter : ILLMProvider
         // cannot live inside try blocks with catch clauses in C#)
         var events = new List<StreamEvent>();
         var primarySucceeded = false;
+        var primaryGroup = PrimaryGroup;
 
         try
         {
-            _logger.LogInformation("Trying primary group (fireworks) for streaming (complexity {Complexity})", complexity);
-            var endpoint = SelectEndpoint("fireworks");
+            _logger.LogInformation("Trying primary group ({Group}) for streaming (complexity {Complexity})", primaryGroup, complexity);
+            var endpoint = SelectEndpoint(primaryGroup);
             if (endpoint is not null)
             {
                 await foreach (var evt in endpoint.CompleteStreamingEventsAsync(request, ct))
@@ -149,7 +203,7 @@ public class ProviderRouter : ILLMProvider
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Primary streaming group failed");
-            RecordFailure("fireworks");
+            RecordFailure(primaryGroup);
         }
 
         if (primarySucceeded)
@@ -158,30 +212,30 @@ public class ProviderRouter : ILLMProvider
             yield break;
         }
 
-        if (needsBetterModel)
+        foreach (var fallbackGroup in FallbackGroups)
         {
             events.Clear();
-            var fallbackSucceeded = false;
+            var succeeded = false;
             try
             {
-                _logger.LogInformation("Escalating to fallback (openrouter) for streaming");
-                var endpoint = SelectEndpoint("openrouter");
+                _logger.LogInformation("Trying fallback ({Group}) for streaming", fallbackGroup);
+                var endpoint = SelectEndpoint(fallbackGroup);
                 if (endpoint is not null)
                 {
                     await foreach (var evt in endpoint.CompleteStreamingEventsAsync(request, ct))
                     {
                         events.Add(evt);
                     }
-                    fallbackSucceeded = true;
+                    succeeded = true;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Fallback streaming group also failed");
-                RecordFailure("openrouter");
+                _logger.LogWarning(ex, "Fallback streaming group {Group} also failed", fallbackGroup);
+                RecordFailure(fallbackGroup);
             }
 
-            if (fallbackSucceeded)
+            if (succeeded)
             {
                 foreach (var evt in events) yield return evt;
                 yield break;
@@ -448,6 +502,52 @@ public class ProviderRouter : ILLMProvider
 
     private int GetPriority(string providerName) =>
         _options.ProviderPriorities.GetValueOrDefault(providerName.Split('-')[0], 999);
+
+    // ── Model-to-Provider Resolution ──
+
+    /// <summary>
+    /// Resolve a model identifier to the best-matching ILLMProvider.
+    /// Resolution order:
+    ///   1. Exact match in any provider's Models list
+    ///   2. Exact match against any provider's default Model
+    ///   3. Prefix match: modelId starts with "providerName/"
+    ///   4. Returns null if no provider matches
+    /// </summary>
+    public ILLMProvider? ResolveModelToProvider(string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+
+        // 1. Check provider Models list (explicit model support)
+        foreach (var provider in _providers)
+        {
+            var cfg = GetAgentProviderConfig(provider.Name);
+            if (cfg?.Models is { Count: > 0 } && cfg.Models.Contains(modelId, StringComparer.OrdinalIgnoreCase))
+                return provider;
+        }
+
+        // 2. Check each provider's default model
+        foreach (var provider in _providers)
+        {
+            var cfg = GetAgentProviderConfig(provider.Name);
+            if (cfg is not null && string.Equals(cfg.Model, modelId, StringComparison.OrdinalIgnoreCase))
+                return provider;
+            // Also check the provider instance's model
+            if (string.Equals(provider.Model, modelId, StringComparison.OrdinalIgnoreCase))
+                return provider;
+        }
+
+        // 3. Prefix match: "openrouter/deepseek/r1" → provider named "openrouter"
+        var slashIdx = modelId.IndexOf('/');
+        if (slashIdx > 0)
+        {
+            var prefix = modelId[..slashIdx];
+            var match = _providers.FirstOrDefault(p =>
+                p.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) return match;
+        }
+
+        return null;
+    }
 
     private sealed class CircuitBreakerState
     {

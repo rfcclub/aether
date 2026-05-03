@@ -9,7 +9,7 @@ public sealed class AnthropicProvider : AnthropicCompatibleProviderBase
 {
     private readonly AnthropicOptions _options;
 
-    public override string Name => "anthropic";
+    public override string Name => _options.Name;
     public override string Model => _options.Model;
 
     public AnthropicProvider(HttpClient client, AnthropicOptions options) : base(client)
@@ -21,4 +21,4 @@ public sealed class AnthropicProvider : AnthropicCompatibleProviderBase
     protected override string GetBaseUrl() => _options.BaseUrl;
 }
 
-public sealed record AnthropicOptions(string ApiKey, string Model, string BaseUrl);
+public sealed record AnthropicOptions(string ApiKey, string Model, string BaseUrl, string Name = "anthropic");

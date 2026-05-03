@@ -37,7 +37,7 @@ public sealed class AetherInitializationService : IHostedService
         }
         else
         {
-            _logger.LogWarning("Memory system is not SqliteMemorySystem - skipping initialization.");
+            _logger.LogDebug("Memory system is not SqliteMemorySystem - skipping initialization.");
         }
 
         _logger.LogInformation("Aether initialization complete.");

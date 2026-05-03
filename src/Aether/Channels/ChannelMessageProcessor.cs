@@ -44,6 +44,9 @@ public sealed class ChannelMessageProcessor : BackgroundService
     {
         _logger.LogInformation("Channel message processor starting...");
 
+        await _channelAccess.LoadAsync(stoppingToken);
+        _logger.LogInformation("Channel access loaded");
+
         var tcs = new TaskCompletionSource();
         using var reg = stoppingToken.Register(() => tcs.TrySetResult());
 
@@ -106,42 +109,43 @@ public sealed class ChannelMessageProcessor : BackgroundService
 
             // Apply per-agent provider config before LLM call
             var agentSpec = _configLoader.GetAgentSpec(routed.Value.AgentName);
+            var agentConfig = _configLoader.GetAgentConfig(routed.Value.AgentName);
             if (agentSpec is not null)
             {
                 var providerRouter = scope.ServiceProvider.GetService<ProviderRouter>();
                 if (providerRouter is not null)
+                {
                     providerRouter.CurrentAgent = agentSpec;
+
+                    // Set model chain for model-first routing
+                    if (agentConfig?.Model is { } modelCfg)
+                    {
+                        var chain = new List<string>();
+                        if (!string.IsNullOrEmpty(modelCfg.Primary))
+                            chain.Add(modelCfg.Primary);
+                        chain.AddRange(modelCfg.Fallbacks);
+                        if (chain.Count > 0)
+                            providerRouter.ModelChain = chain;
+                    }
+                }
+
+                var toolExecutor = scope.ServiceProvider.GetService<Aether.Agent.IToolExecutor>();
+                if (toolExecutor is not null)
+                    toolExecutor.SetAgentContext(routed.Value.WorkspacePath, agentSpec.Tools);
             }
 
             var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();
 
-            // Stream the response through the channel, accumulating for the final save
-            var fullResponse = new StringBuilder();
-            var chunkIndex = 0;
-            var editsRemaining = MaxStreamingEdits;
+            await _channel.SetTypingAsync(message.ChatId, true, ct);
 
+            var fullResponse = new StringBuilder();
             await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, routed.Value.Prompt, ct))
             {
                 fullResponse.Append(chunk);
-
-                // Only push to channel for the first N chunks to avoid rate limits.
-                // After that, just accumulate silently.
-                if (editsRemaining > 0)
-                {
-                    await _channel.SendStreamingChunkAsync(
-                        message.ChatId,
-                        fullResponse.ToString(), // send accumulated text so edits show full progress
-                        chunkIndex,
-                        ct);
-                    chunkIndex++;
-                    editsRemaining--;
-                }
             }
 
             await _channel.SetTypingAsync(message.ChatId, false, ct);
-
-            // Signal the stream is complete with the full accumulated text
-            await _channel.SendStreamingCompleteAsync(message.ChatId, fullResponse.ToString(), ct);
+            await _channel.SendMessageAsync(message.ChatId, fullResponse.ToString(), ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

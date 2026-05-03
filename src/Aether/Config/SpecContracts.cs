@@ -80,6 +80,7 @@ public sealed record SpecProviderEntry
     public string? BaseUrl { get; init; }
     public string? ApiKey { get; init; }
     public string Model { get; init; } = string.Empty;
+    public List<string>? Models { get; init; }
     public int MaxTokens { get; init; } = 4096;
     public double Temperature { get; init; } = 0.7;
     public int TimeoutSeconds { get; init; } = 120;

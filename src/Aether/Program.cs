@@ -8,6 +8,7 @@ using Aether.Config;
 using Aether.Data;
 using Aether.Memory;
 using Aether.Providers;
+using Microsoft.Extensions.DependencyInjection;
 using Aether.Routing;
 using Aether.SelfImprovement;
 using Aether.WorkingDirectory;
@@ -16,7 +17,6 @@ using Aether.Sessions;
 using Aether.Skills;
 using Aether.Tooling;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ToolExecutor = Aether.Agent.ToolExecutor;
@@ -45,7 +45,7 @@ if (args.FirstOrDefault() is "agent" or "integrity" or "access")
 
 // First-run wizard: create ~/.aether/config.json if missing
 // Skip in harness mode — it doesn't need ~/.aether/
-if (args.FirstOrDefault() is not "serve" && prompt is null)
+if (prompt is null)
 {
     var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME");
     var aetherDir = aetherHome ?? Path.Combine(
@@ -163,6 +163,21 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         Console.Error.WriteLine(ex.Message);
         Environment.ExitCode = 1;
     }
+}
+
+static string ResolveDefaultAgentName(IServiceProvider provider)
+{
+    var configLoader = provider.GetService<ConfigLoader>();
+    if (configLoader is not null)
+    {
+        var result = configLoader.LoadAsync().Result;
+        foreach (var (name, entry) in result.Agents)
+        {
+            if (entry.Enabled)
+                return name;
+        }
+    }
+    return "default";
 }
 
 static string ResolvePath(string path)
@@ -396,12 +411,30 @@ static async Task RunServeAsync(bool traceStartup)
     }
 
     Trace("before builder");
-    var builder = Host.CreateApplicationBuilder();
+    var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+    {
+        // WSL: disable default appsettings.json file probing (extremely slow on Plan 9 fs)
+        // We add appsettings.json explicitly below with optional: true.
+        DisableDefaults = true,
+        ContentRootPath = Environment.CurrentDirectory,
+        ApplicationName = "Aether"
+    });
     Trace("after builder");
 
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME") ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var aetherConfigPath = Path.Combine(aetherHome, "config.json");
+
     builder.Configuration
-        .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+        .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true, reloadOnChange: false)
+        .AddJsonFile(aetherConfigPath, optional: true, reloadOnChange: true)
         .AddEnvironmentVariables("AETHER_");
+
+    builder.Logging.AddSimpleConsole(c => c.IncludeScopes = false);
+    builder.Logging.AddProvider(new FileLoggerProvider(
+        Path.Combine(aetherHome, "logs", "aether.log")));
+    builder.Logging.SetMinimumLevel(LogLevel.Information);
+    builder.Logging.AddFilter("Console", LogLevel.Warning);
 
     builder.Services.AddSingleton<AetherHostMarker>();
     builder.Services.AddSingleton(provider =>
@@ -412,7 +445,12 @@ static async Task RunServeAsync(bool traceStartup)
         return new AetherDb(databasePath, schemaPath);
     });
     builder.Services.AddSingleton<IMessageQueue, ChannelMessageQueue>();
-    builder.Services.AddSingleton<MessageRouter>();
+    builder.Services.AddSingleton<MessageRouter>(provider =>
+    {
+        var configLoader = provider.GetRequiredService<ConfigLoader>();
+        var logger = provider.GetRequiredService<ILogger<MessageRouter>>();
+        return new MessageRouter(configLoader, logger);
+    });
     builder.Services.AddSingleton<ISessionManager, SessionManager>();
     builder.Services.AddSingleton<IMemorySystem>(provider =>
     {
@@ -507,56 +545,31 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddHostedService<DailyReviewHostedService>();
 
-    // Provider registration — reads both legacy flat keys and new spec-style "providers" section.
-    builder.Services.AddHttpClient<ILLMProvider, OpenRouterProvider>((provider, client) =>
-    {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["providers:openrouter:base_url"]
-                      ?? configuration["llm:base_url"]
-                      ?? "https://openrouter.ai/api/v1";
-        client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-    });
-    builder.Services.AddHttpClient<ILLMProvider, FireworksProvider>((provider, client) =>
-    {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["providers:fireworks:base_url"]
-                      ?? configuration["fireworks:base_url"]
-                      ?? "https://api.fireworks.ai/inference/v1";
-        client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-    });
-    builder.Services.AddHttpClient<ILLMProvider, AnthropicProvider>((provider, client) =>
-    {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = configuration["providers:anthropic:base_url"]
-                      ?? configuration["anthropic:base_url"]
-                      ?? "https://api.anthropic.com";
-        client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-    });
+    // ── Dynamic provider registration ──
+    // Providers are loaded from config.json / appsettings.json via ConfigLoader.
+    // Each provider gets its own HttpClient registered as an ILLMProvider singleton.
+    var aetherHomeDir = Environment.GetEnvironmentVariable("AETHER_HOME");
+    var aetherCfgDir = aetherHomeDir ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var bootstrapLoader = new ConfigLoader(
+        builder.Configuration, aetherCfgDir,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
+    var bootstrapConfig = bootstrapLoader.LoadAsync().Result;
 
-    builder.Services.AddSingleton(provider =>
+    if (bootstrapConfig.Providers.Count == 0)
     {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        return new OpenRouterOptions(
-            ApiKey: configuration["providers:openrouter:api_key"] ?? configuration["llm:api_key"] ?? "",
-            Model: configuration["providers:openrouter:model"] ?? configuration["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free",
-            BaseUrl: configuration["providers:openrouter:base_url"] ?? configuration["llm:base_url"] ?? "https://openrouter.ai/api/v1");
-    });
-    builder.Services.AddSingleton(provider =>
+        Console.Error.WriteLine("Aether: No providers configured. Add providers to ~/.aether/config.json or appsettings.json.");
+    }
+
+    foreach (var (name, entry) in bootstrapConfig.Providers)
     {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        return new FireworksOptions(
-            ApiKey: configuration["providers:fireworks:api_key"] ?? configuration["fireworks:api_key"] ?? "",
-            Model: configuration["providers:fireworks:model"] ?? configuration["fireworks:model"] ?? "accounts/fireworks/models/deepseek-v3-0324",
-            BaseUrl: configuration["providers:fireworks:base_url"] ?? configuration["fireworks:base_url"] ?? "https://api.fireworks.ai/inference/v1");
-    });
-    builder.Services.AddSingleton(provider =>
-    {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        return new AnthropicOptions(
-            ApiKey: configuration["providers:anthropic:api_key"] ?? configuration["anthropic:api_key"] ?? "",
-            Model: configuration["providers:anthropic:model"] ?? configuration["anthropic:model"] ?? "claude-3-5-sonnet-20241022",
-            BaseUrl: configuration["providers:anthropic:base_url"] ?? configuration["anthropic:base_url"] ?? "https://api.anthropic.com");
-    });
+        builder.Services.AddSingleton<ILLMProvider>(provider =>
+        {
+            var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger("Aether.Providers");
+            return ProviderFactory.Create(entry, name, logger);
+        });
+    }
 
     builder.Services.AddSingleton<ProviderHealthMonitor>();
     builder.Services.AddSingleton(provider =>
@@ -564,15 +577,15 @@ static async Task RunServeAsync(bool traceStartup)
         var providers = provider.GetRequiredService<IEnumerable<ILLMProvider>>().ToList();
         var db = provider.GetRequiredService<AetherDb>();
         var logger = provider.GetRequiredService<ILogger<ProviderRouter>>();
-        var options = new ProviderRoutingOptions
+        var config = provider.GetRequiredService<IConfiguration>();
+        var priorities = new Dictionary<string, int>();
+        var prioritiesList = config.GetSection("provider_priorities").Get<string[]>();
+        if (prioritiesList is { Length: > 0 })
         {
-            ProviderPriorities = new Dictionary<string, int>
-            {
-                ["fireworks"] = 1,
-                ["openrouter"] = 2,
-                ["anthropic"] = 3
-            }
-        };
+            for (var i = 0; i < prioritiesList.Length; i++)
+                priorities[prioritiesList[i]] = i + 1;
+        }
+        var options = new ProviderRoutingOptions { ProviderPriorities = priorities };
         return new ProviderRouter(providers, options, db, logger);
     });
 
@@ -580,13 +593,13 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<AgentConfig>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var agentName = configuration["agent:name"] ?? "maria";
+        var agentName = configuration["agent:name"] ?? ResolveDefaultAgentName(provider);
         var agentsRoot = configuration["agent:root"] ?? "agents";
         var agentDir = Path.Combine(agentsRoot, agentName);
 
         return new AgentConfig
         {
-            StartupFiles = (configuration["agent:startup_files"] ?? "SOUL.md,USER.md")
+            StartupFiles = (configuration["agent:startup_files"] ?? "AGENTS.md")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList(),
             LongTermMemoryFile = configuration["agent:long_term_memory"] ?? "MEMORY.md",
@@ -602,7 +615,7 @@ static async Task RunServeAsync(bool traceStartup)
         var config = provider.GetRequiredService<AgentConfig>();
         var configLoader = provider.GetRequiredService<ConfigLoader>();
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var agentName = configuration["agent:name"] ?? "maria";
+        var agentName = configuration["agent:name"] ?? ResolveDefaultAgentName(provider);
         var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<AgentProfile>();
         return AgentProfile.FromConfigLoader(agentName, configLoader, config, logger);
@@ -659,7 +672,7 @@ static async Task RunServeAsync(bool traceStartup)
 
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
-        var llm = provider.GetRequiredService<ILLMProvider>();
+        var llm = provider.GetRequiredService<ProviderRouter>();
         var memory = provider.GetRequiredService<IMemorySystem>();
         var tools = provider.GetRequiredService<IToolExecutor>();
         var sessions = provider.GetRequiredService<ISessionManager>();
@@ -733,7 +746,15 @@ static async Task RunServeAsync(bool traceStartup)
             if (failures.Count > 0)
             {
                 foreach (var (file, result) in failures)
-                    logger.LogWarning("Integrity check FAILED for {File}: {Error}", file, result.Error);
+                {
+                    if (result.Status == IntegrityStatus.Unsigned)
+                        logger.LogInformation("Integrity: {File} is unsigned — will sign.", file);
+                    else
+                        logger.LogInformation("Integrity: {File} modified — re-signing ({Error}).", file, result.Error);
+                }
+                await integritySigner.SignBootFilesAsync(feofallsConfig);
+                logger.LogInformation("Boot files re-signed ({Count} files).",
+                    feofallsConfig.ConstitutionFiles.Count + feofallsConfig.IdentityFiles.Count);
             }
             else
             {

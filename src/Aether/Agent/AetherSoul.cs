@@ -331,57 +331,57 @@ public sealed class AetherSoul
     {
         var sb = new StringBuilder();
 
+        // 0. Constitution — red lines, must always be in context
         if (!string.IsNullOrWhiteSpace(constitution))
         {
             sb.AppendLine("## Constitution (Non-Negotiable)");
             sb.AppendLine(constitution);
+            sb.AppendLine();
         }
 
+        // 1. Bootstrap — AGENTS.md contains instructions to read other files via tools
         sb.AppendLine(persona);
+        sb.AppendLine();
 
+        // 1.5 Cognitive context — SOUL.md, USER.md, IDENTITY.md (agent identity)
         if (!string.IsNullOrWhiteSpace(cognitive))
         {
-            sb.AppendLine();
             sb.AppendLine("## Cognitive Context");
             sb.AppendLine(cognitive);
+            sb.AppendLine();
+        }
+
+        // 2. Working state — current tasks, heartbeat
+        if (!string.IsNullOrWhiteSpace(workingState))
+        {
+            sb.AppendLine("## Working State");
+            sb.AppendLine(workingState);
+            sb.AppendLine();
         }
 
         if (!string.IsNullOrWhiteSpace(dailyMemory))
         {
-            sb.AppendLine();
             sb.AppendLine("## Recent Memory");
             sb.AppendLine(dailyMemory);
+            sb.AppendLine();
         }
 
         if (!string.IsNullOrWhiteSpace(memoryContext))
         {
-            sb.AppendLine();
             sb.AppendLine("## Group Context");
             sb.AppendLine(memoryContext);
-        }
-
-        if (!string.IsNullOrWhiteSpace(workingState))
-        {
             sb.AppendLine();
-            sb.AppendLine("## Working State");
-            sb.AppendLine(workingState);
         }
 
         if (skillContext != null)
         {
-            sb.AppendLine().AppendLine($"[Skill: {skillContext.Skill.Name}]");
+            sb.AppendLine($"[Skill: {skillContext.Skill.Name}]");
             if (!string.IsNullOrWhiteSpace(skillContext.Skill.Description))
-            {
                 sb.AppendLine($"Description: {skillContext.Skill.Description}");
-            }
             if (!string.IsNullOrWhiteSpace(skillContext.Skill.Body))
-            {
                 sb.AppendLine().AppendLine(skillContext.Skill.Body);
-            }
             if (skillContext.Skill.AutoApply)
-            {
                 sb.AppendLine().AppendLine("(Auto-apply mode — follow skill steps)");
-            }
         }
 
         return sb.ToString();

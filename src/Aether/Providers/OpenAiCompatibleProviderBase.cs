@@ -29,6 +29,9 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
         Client = client;
     }
 
+    /// <summary>Override to set Client.BaseAddress after construction.</summary>
+    public virtual void Initialize() { }
+
     public virtual async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, GetEndpoint());
