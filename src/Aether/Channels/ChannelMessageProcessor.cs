@@ -22,6 +22,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly IServiceProvider _services;
     private readonly ChannelAccess _channelAccess;
     private readonly ConfigLoader _configLoader;
+    private readonly ISlashCommandHandler _slashCommands;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -30,6 +31,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         IServiceProvider services,
         ChannelAccess channelAccess,
         ConfigLoader configLoader,
+        ISlashCommandHandler slashCommands,
         ILogger<ChannelMessageProcessor> logger)
     {
         _channel = channel;
@@ -37,6 +39,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         _services = services;
         _channelAccess = channelAccess;
         _configLoader = configLoader;
+        _slashCommands = slashCommands;
         _logger = logger;
     }
 
@@ -102,6 +105,16 @@ public sealed class ChannelMessageProcessor : BackgroundService
 
             var routed = await _router.RouteAsync(message, ct);
             if (routed is null) return;
+
+            // Slash commands — handle before LLM scope
+            var slashCtx = new SlashCommandContext(
+                message.Text, routed.Value.AgentName, routed.Value.WorkspacePath, _services);
+            var slashResult = await _slashCommands.HandleAsync(slashCtx, ct);
+            if (slashResult is not null)
+            {
+                await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                return;
+            }
 
             await _channel.SetTypingAsync(message.ChatId, true, ct);
 

@@ -460,6 +460,7 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
     builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
+    builder.Services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
     builder.Services.AddSingleton<ISkillRegistry, SkillRegistry>();
     builder.Services.AddSingleton<ISkillLoader, SkillParser>();
     builder.Services.AddSingleton<ISkillTrigger, SkillTrigger>();
