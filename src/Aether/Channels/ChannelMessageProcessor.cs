@@ -152,6 +152,10 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 var toolExecutor = scope.ServiceProvider.GetService<Aether.Agent.IToolExecutor>();
                 if (toolExecutor is not null)
                     toolExecutor.SetAgentContext(routed.Value.WorkspacePath, agentSpec.Tools);
+
+                // Set sandbox context for tool dispatch
+                Tooling.ToolSandboxAccessor.Current = new Tooling.SandboxContext(
+                    routed.Value.WorkspacePath, agentSpec.Tools);
             }
 
             var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();

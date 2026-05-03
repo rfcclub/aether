@@ -460,6 +460,42 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
     builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
+
+    // Tool ecosystem — built-in tool implementations
+    builder.Services.AddHttpClient<TavilyWebSearchProvider>();
+    builder.Services.AddSingleton<IWebSearchProvider>(provider =>
+        provider.GetRequiredService<TavilyWebSearchProvider>());
+    builder.Services.AddHttpClient<WebFetchTool>();
+    builder.Services.AddSingleton<ReadTool>();
+    builder.Services.AddSingleton<WriteTool>();
+    builder.Services.AddSingleton<EditTool>();
+    builder.Services.AddSingleton<GlobTool>();
+    builder.Services.AddSingleton<GrepTool>();
+    builder.Services.AddSingleton<BashTool>();
+
+    // Register all IToolImplementation instances for tool-code bridge
+    builder.Services.AddSingleton<IEnumerable<IToolImplementation>>(provider =>
+    {
+        return new IToolImplementation[]
+        {
+            provider.GetRequiredService<ReadTool>(),
+            provider.GetRequiredService<WriteTool>(),
+            provider.GetRequiredService<EditTool>(),
+            provider.GetRequiredService<GlobTool>(),
+            provider.GetRequiredService<GrepTool>(),
+            provider.GetRequiredService<BashTool>(),
+        };
+    });
+
+    // Register built-in tools at startup
+    builder.Services.AddSingleton<IHostedService>(provider =>
+    {
+        var registry = provider.GetRequiredService<IToolRegistry>();
+        var logger = provider.GetRequiredService<ILogger<ToolStartupRegistration>>();
+        var webFetchTool = provider.GetRequiredService<WebFetchTool>();
+        var impls = provider.GetRequiredService<IEnumerable<IToolImplementation>>();
+        return new ToolStartupRegistration(registry, impls, webFetchTool, logger);
+    });
     builder.Services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
     builder.Services.AddSingleton<ISkillRegistry, SkillRegistry>();
     builder.Services.AddSingleton<ISkillLoader, SkillParser>();
