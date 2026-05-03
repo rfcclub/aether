@@ -623,15 +623,69 @@ Phase 3: Enhancements
 
 ---
 
-## 10. Next Steps
+## 10. ConfigLoader — Configuration Hierarchy
 
-1. ** Miriam to create Project Plan** based on this architecture
-2. ** Erza to start implementation** with Channel Manager + basic Agent Loop
-3. ** Maria to design test suite** for validation
-4. ** Prototype sandbox** implementation early (critical path)
+`ConfigLoader` (singleton service at `Config/ConfigLoader.cs`) merges configuration from 5 layers:
+
+| Layer | Source | Scope |
+|-------|--------|-------|
+| 1 | `appsettings.json` | Global defaults (committed to repo) |
+| 2 | `~/.aether/config.json` | Global providers + agents registry |
+| 3 | `<workspace>/.aether.json` | Per-agent overrides (model, tools, sandbox) |
+| 4 | `AETHER_*` env vars | Process-level overrides (nesting via `__`) |
+| 5 | CLI flags | One-shot overrides (`--model`, `--agent.name`) |
+
+**Merge behavior:** Later layers overwrite earlier ones. `AETHER_*` env vars use `__` as nesting separator (e.g., `AETHER_providers__openrouter__api_key` maps to `providers:openrouter:api_key`). Single-underscore fallback supported.
+
+**Caching:** Merged config cached until per-agent or CLI-override call. `GetAgentConfig(string name)` resolves agent-specific `AgentEntryConfig` with auth profile credentials.
+
+**Agent auth resolution:** `AgentAuthProfiles` reads per-agent `auth-profiles.json` and `models.json` from `~/.aether/agents/<name>/agent/`. These override global provider credentials when agent is specified. Linux permission: `chmod 700` on agent directories.
+
+## 11. Working Directory — `~/.aether/`
+
+`WorkingDirectoryInitializer` (`WorkingDirectory/WorkingDirectoryInitializer.cs`) implements `IHostedService` and runs before other services on startup.
+
+**Directory tree created on first run:**
+```
+~/.aether/
+├── identity/device.json     # UUID v4, ISO 8601 timestamp, version
+├── agents/<name>/agent/     # Auth profiles per agent
+├── workspaces/<name>/       # Agent workspace files
+├── store/                   # SQLite databases
+├── cron/                    # Cron task definitions
+├── logs/                    # Agent logs
+└── backups/                 # Encrypted backups
+```
+
+**Idempotency:** Never overwrites existing files or directories. Missing subdirectories recreated on startup. `device.json` created only once. Overridable via `$AETHER_HOME` environment variable.
+
+## 12. CLI Architecture
+
+`AetherCli` (`Cli/AetherCli.cs`) uses `System.CommandLine` for subcommand dispatch.
+
+**Entry point** (`Program.cs`): First argument `"agent"`, `"integrity"`, or `"access"` dispatches to `AetherCli.BuildRootCommand()`. Other modes: `"serve"` (long-running host), `"tui"` (Terminal.Gui chat), `--prompt` (one-shot), default (REPL).
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `aether agent add <name>` | Create agent + scaffold workspace |
+| `aether agent list [--json]` | List all registered agents |
+| `aether agent delete <name>` | Remove agent (--prune-workspace, --force) |
+| `aether agent set-identity <name>` | Update display name, emoji, avatar |
+| `aether agent bind <name> --channel <type:chatId>` | Bind agent to channel |
+| `aether agent unbind <name> --channel <type:chatId>` | Remove channel binding |
+
+**FirstRunWizard** (`Cli/FirstRunWizard.cs`): Detected by absence of `~/.aether/config.json`. Uses `Spectre.Console` for interactive prompts: provider selection, API key (masked), agent name, optional Telegram setup. `--non-interactive` flag skips all prompts and creates minimal config.
+
+## 13. Next Steps
+
+1. **Terminal GUI (Avalonia)** — Replace Terminal.Gui with Avalonia desktop app
+2. **Provider ecosystem** — More provider types, health monitoring refinement
+3. **Multi-agent orchestration** — Agent-to-agent communication
+4. **Plugin ecosystem** — Custom tool and channel plugins
 
 ---
 
-*Document Version: 1.0*  
-*Last Updated: 2026-04-19*  
+*Document Version: 1.1*  
+*Last Updated: 2026-05-03*  
 *Author: Maria (Architecture Lead for Aether)*

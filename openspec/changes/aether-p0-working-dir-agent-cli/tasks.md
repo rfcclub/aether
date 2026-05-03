@@ -130,7 +130,7 @@
 
 ## 12. Build and Release
 
-- [ ] 12.1 Update `src/Aether/Aether.csproj` with new NuGet package references
+- [x] 12.1 Update `src/Aether/Aether.csproj` with new NuGet package references
 - [x] 12.2 Fix any compilation errors from new namespaces and type references
 - [x] 12.3 Build solution: `dotnet build` with zero errors
 - [x] 12.4 Publish framework: `dotnet publish -c Release -o releases/latest`
@@ -139,8 +139,8 @@
 
 ## 13. Documentation and Commit
 
-- [ ] 13.1 Update `SETUP.md` with `~/.aether/` working directory documentation
-- [ ] 13.2 Update `ARCHITECTURE.md` with ConfigLoader, WorkingDirectory, and CLI architecture sections
-- [ ] 13.3 Add `aether agent --help` examples to `SETUP.md`
+- [x] 13.1 Update `SETUP.md` with `~/.aether/` working directory documentation
+- [x] 13.2 Update `ARCHITECTURE.md` with ConfigLoader, WorkingDirectory, and CLI architecture sections
+- [x] 13.3 Add `aether agent --help` examples to `SETUP.md`
 - [ ] 13.4 Commit all changes with message: `feat: add working directory, agent CLI, config hierarchy, channel binding, first-run wizard`
 - [ ] 13.5 Push to remote `https://github.com/rfcclub/aether.git`

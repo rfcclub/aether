@@ -309,7 +309,7 @@ cd tests/Aether.Tests
 dotnet test
 ```
 
-78 xUnit tests covering: AetherSoul, ProviderRouter, SkillSystem, OpenRouter, SessionManager, FileMemory, MessageRouter, ToolRegistry, AetherDb, and more.
+229+ xUnit tests covering: AetherSoul, ProviderRouter (model routing + factory), MessageRouter, ConfigLoader, SlashCommandHandler, ToolExecutor, ToolRegistry, AgentProfile (FEOFALLS), SkillSystem, WorkingDirectoryInitializer, AgentWorkspaceScaffolder, ChannelBindingResolution, FirstRunWizard, AgentHeartbeat, LifecycleStateMachine, FeofallsBootContract, and more.
 
 ## Troubleshooting
 
@@ -349,6 +349,128 @@ Increase sandbox timeout in config:
   }
 }
 ```
+
+## Aether Working Directory (`~/.aether/`)
+
+On first run, Aether creates a working directory at `~/.aether/` (overridable via `$AETHER_HOME`). This directory holds all agent state, configuration, workspaces, and runtime data.
+
+### Directory Tree
+
+```
+~/.aether/
+├── identity/
+│   └── device.json         # UUID v4 device ID, creation timestamp, Aether version
+├── agents/
+│   └── <name>/
+│       └── agent/
+│           ├── auth-state.json    # Active provider + model
+│           ├── auth-profiles.json # Provider credentials
+│           └── models.json        # Primary model + fallbacks + overrides
+├── workspaces/
+│   └── <name>/              # Per-agent workspace (SOUL.md, USER.md, etc.)
+├── store/                   # SQLite databases (aether.db, memory.db)
+├── cron/                    # Cron task definitions
+├── logs/                    # Agent logs
+├── backups/                 # Encrypted backups
+└── config.json              # Global providers + agents registry
+```
+
+- `identity/device.json` — Created once on first run. Contains a UUID v4 `deviceId`, ISO 8601 `createdAt` timestamp, and Aether `version`.
+- `agents/<name>/agent/` — Per-agent auth profiles and model configuration. Permissions set to `chmod 700` on Linux.
+- `workspaces/<name>/` — Agent workspace with SOUL.md, USER.md, MEMORY.md, HEARTBEAT.md, TASK_INBOX.md, and `.aether.json`.
+- `config.json` — Global config: `providers`, `agents` registry, `wizard` metadata.
+
+### Idempotency
+
+`WorkingDirectoryInitializer` never overwrites existing files. Missing subdirectories are created on startup. Existing `device.json` is preserved.
+
+## Configuration Hierarchy
+
+Aether merges configuration from 5 layers (higher number = higher priority):
+
+| Layer | Source | Scope |
+|-------|--------|-------|
+| 1 | `appsettings.json` | Global defaults (committed to repo) |
+| 2 | `~/.aether/config.json` | Global providers + agents registry |
+| 3 | `<workspace>/.aether.json` | Per-agent overrides (model, tools, sandbox) |
+| 4 | `AETHER_*` env vars | Process-level overrides (nesting via `__`) |
+| 5 | CLI flags | One-shot overrides (`--model`, `--agent.name`) |
+
+`ConfigLoader` (singleton service) caches merged config and resolves per-agent config via `GetAgentConfig(string name)`. Agent auth profiles (`auth-profiles.json`) override global provider credentials.
+
+### Per-Agent Config Example
+
+`~/.aether/workspaces/maria/.aether.json`:
+```json
+{
+  "model": {
+    "primary": "openrouter/anthropic/claude-sonnet-4-20250514",
+    "fallbacks": ["google/gemini-3.1-pro-preview"]
+  },
+  "tools": {
+    "file": {
+      "allowedPaths": ["/data/projects"],
+      "deniedPaths": ["_INTEGRITY/"]
+    }
+  },
+  "heartbeat": {
+    "intervalMinutes": 60
+  }
+}
+```
+
+## Agent CLI
+
+`aether agent` subcommands manage agent lifecycle from the terminal.
+
+### aether agent add
+
+```bash
+aether agent add <name> [--workspace <path>] [--model <model-id>] [--non-interactive]
+```
+
+Creates an agent entry in `~/.aether/config.json`, scaffolds workspace at `~/.aether/workspaces/<name>/`, creates auth profile directory. Interactive by default (prompts for model selection).
+
+### aether agent list
+
+```bash
+aether agent list [--json]
+```
+
+Lists all registered agents with name, model, enabled status, bindings, and workspace path. `--json` outputs machine-readable JSON.
+
+### aether agent delete
+
+```bash
+aether agent delete <name> [--prune-workspace] [--force]
+```
+
+Removes agent from config. `--prune-workspace` also deletes the workspace directory. `--force` skips confirmation.
+
+### aether agent set-identity
+
+```bash
+aether agent set-identity <name> [--display-name <name>] [--emoji <emoji>] [--avatar <url>]
+```
+
+Updates agent identity fields: display name, emoji, and avatar URL.
+
+### aether agent bind
+
+```bash
+aether agent bind <name> --channel telegram:<chatId>
+aether agent bind <name>                      # List current bindings
+```
+
+Binds an agent to a channel (e.g., Telegram chat). Run without `--channel` to list current bindings.
+
+### aether agent unbind
+
+```bash
+aether agent unbind <name> --channel telegram:<chatId>
+```
+
+Removes a channel binding from an agent.
 
 ## Project Structure
 
