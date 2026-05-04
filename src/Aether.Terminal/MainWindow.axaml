@@ -1,0 +1,65 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Aether.Terminal"
+        xmlns:views="clr-namespace:Aether.Terminal.Views"
+        x:Class="Aether.Terminal.MainWindow"
+        x:DataType="vm:TerminalViewModel"
+        Title="Aether Terminal"
+        Width="900" Height="600"
+        MinWidth="500" MinHeight="350"
+        Background="{StaticResource TerminalBackground}"
+        FontFamily="Cascadia Code, Consolas, monospace"
+        FontSize="13">
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto">
+        <!-- TitleBar -->
+        <Border Grid.Row="0" Padding="12,6" Background="#111111">
+            <StackPanel Orientation="Horizontal" Spacing="16">
+                <TextBlock Text="AETHER"
+                           FontWeight="Bold"
+                           FontSize="15"
+                           Foreground="{StaticResource TerminalAccent}" />
+                <TextBlock Text="{Binding AgentName}"
+                           Foreground="{StaticResource TerminalDim}" />
+                <TextBlock Text="{Binding ModelName}"
+                           Foreground="{StaticResource TerminalDim}" />
+                <TextBlock Text="{Binding StatusText}"
+                           Foreground="{StaticResource TerminalDim}" />
+            </StackPanel>
+        </Border>
+
+        <!-- ChatView -->
+        <views:ChatView Grid.Row="1" x:Name="ChatArea" />
+
+        <!-- Thinking indicator -->
+        <Border Grid.Row="2" Padding="12,2"
+                IsVisible="{Binding IsThinking}"
+                Background="#0a0a0a">
+            <TextBlock Text="thinking..."
+                       FontStyle="Italic"
+                       Foreground="{StaticResource TerminalDim}" />
+        </Border>
+
+        <!-- InputLine -->
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="8,4">
+            <TextBox Grid.Column="0"
+                     Text="{Binding InputText, Mode=TwoWay}"
+                     Watermark="Type a message... /theme /clear /exit"
+                     Background="#222222"
+                     Foreground="{StaticResource TerminalForeground}"
+                     FontFamily="Cascadia Code, Consolas, monospace"
+                     FontSize="13"
+                     Padding="8,6"
+                     BorderThickness="0"
+                     KeyDown="OnInputKeyDown" />
+            <Button Grid.Column="1"
+                    Content=">"
+                    Command="{Binding SendCommand}"
+                    Width="40"
+                    Background="{StaticResource TerminalAccent}"
+                    Foreground="#000000"
+                    FontWeight="Bold"
+                    BorderThickness="0" />
+        </Grid>
+    </Grid>
+</Window>

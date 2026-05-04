@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Skills;
 
-public class SkillTrigger : ISkillTrigger
+public class SkillTrigger 
 {
     private readonly ILogger<SkillTrigger> _logger;
     private const float AutoThreshold = 0.35f;

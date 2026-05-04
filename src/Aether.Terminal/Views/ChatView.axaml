@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:Aether.Terminal.Models"
+             x:Class="Aether.Terminal.Views.ChatView">
+    <ScrollViewer x:Name="ChatScroller"
+                  Padding="8"
+                  VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="MessagesList">
+            <ItemsControl.DataTemplates>
+                <DataTemplate DataType="models:ChatMessage">
+                    <Border CornerRadius="4" Padding="10,6" Margin="4,3"
+                            Background="#2a2a2a">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock FontSize="10"
+                                           Foreground="{StaticResource TerminalDim}"
+                                           Text="{Binding Role}" />
+                                <TextBlock FontSize="10"
+                                           Foreground="{StaticResource TerminalDim}"
+                                           Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding Content}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0"
+                                       Foreground="{StaticResource TerminalForeground}" />
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.DataTemplates>
+        </ItemsControl>
+    </ScrollViewer>
+</UserControl>

@@ -8,9 +8,9 @@ public enum MemoryLifecycleState { Active, Decaying, Archived, Consolidated }
 /// </summary>
 public sealed class LifecycleStateMachine
 {
-    private readonly FeofallsConfig _config;
+    private readonly BootConfig _config;
 
-    public LifecycleStateMachine(FeofallsConfig config)
+    public LifecycleStateMachine(BootConfig config)
     {
         _config = config;
     }

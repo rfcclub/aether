@@ -13,7 +13,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Terminal.Gui;
 using ToolExecutor = Aether.Agent.ToolExecutor;
-using IToolExecutor = Aether.Agent.IToolExecutor;
 
 var configuration = LoadConfiguration();
 var services = BuildServices(configuration);
@@ -416,20 +415,20 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         return new AetherDb(databasePath, schemaPath);
     });
 
-    services.AddSingleton<ISessionManager, SessionManager>();
-    services.AddSingleton<IMemorySystem>(provider =>
+    services.AddSingleton<SessionManager, SessionManager>();
+    services.AddSingleton<FileMemory>(provider =>
     {
         var config = provider.GetRequiredService<IConfiguration>();
         var groupsPath = config["groups:path"] ?? "groups";
         Directory.CreateDirectory(groupsPath);
         return new FileMemory(groupsPath);
     });
-    services.AddSingleton<IToolRegistry, ToolRegistry>();
-    services.AddSingleton<IToolExecutor, ToolExecutor>();
-    services.AddSingleton<ISkillRegistry, SkillRegistry>();
-    services.AddSingleton<ISkillLoader, SkillParser>();
-    services.AddSingleton<ISkillTrigger, SkillTrigger>();
-    services.AddSingleton<ISkillEvolution, SkillEvolution>();
+    services.AddSingleton<ToolRegistry, ToolRegistry>();
+    services.AddSingleton<ToolExecutor, ToolExecutor>();
+    services.AddSingleton<SkillRegistry, SkillRegistry>();
+    services.AddSingleton<SkillParser, SkillParser>();
+    services.AddSingleton<SkillTrigger, SkillTrigger>();
+    services.AddSingleton<SkillEvolution, SkillEvolution>();
 
     services.AddSingleton<ILLMProvider>(provider =>
     {
@@ -460,7 +459,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         };
     });
 
-    services.AddSingleton<IAgentProfile>(provider =>
+    services.AddSingleton<AgentProfile>(provider =>
     {
         var config = provider.GetRequiredService<AgentConfig>();
         var configuration = provider.GetRequiredService<IConfiguration>();
@@ -472,12 +471,12 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ILLMProvider>();
-        var memory = provider.GetRequiredService<IMemorySystem>();
-        var tools = provider.GetRequiredService<IToolExecutor>();
-        var sessions = provider.GetRequiredService<ISessionManager>();
-        var skills = provider.GetRequiredService<ISkillRegistry>();
-        var skillTrigger = provider.GetRequiredService<ISkillTrigger>();
-        var profile = provider.GetRequiredService<IAgentProfile>();
+        var memory = provider.GetRequiredService<FileMemory>();
+        var tools = provider.GetRequiredService<ToolExecutor>();
+        var sessions = provider.GetRequiredService<SessionManager>();
+        var skills = provider.GetRequiredService<SkillRegistry>();
+        var skillTrigger = provider.GetRequiredService<SkillTrigger>();
+        var profile = provider.GetRequiredService<AgentProfile>();
         return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile);
     });
 

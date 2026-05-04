@@ -5,7 +5,9 @@ public sealed class NoOpChannel : IChannel
     public string Name => "noop";
     public bool IsConnected => false;
 
+#pragma warning disable CS0067
     public event EventHandler<InboundMessage>? OnMessage;
+#pragma warning restore CS0067
 
     public Task ConnectAsync(CancellationToken ct) => Task.CompletedTask;
     public Task DisconnectAsync(CancellationToken ct) => Task.CompletedTask;

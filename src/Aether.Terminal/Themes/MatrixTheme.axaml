@@ -1,0 +1,10 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="TerminalBackground">#0a0a0a</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalForeground">#00ff00</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalDim">#005500</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalAccent">#00cc00</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalUserBubble">#1a3a1a</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalToolBubble">#3a2a00</SolidColorBrush>
+    <SolidColorBrush x:Key="TerminalError">#ff4444</SolidColorBrush>
+</ResourceDictionary>

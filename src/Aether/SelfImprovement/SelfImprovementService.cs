@@ -5,20 +5,20 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.SelfImprovement;
 
-public class SelfImprovementService : ISelfImprovementService
+public class SelfImprovementService 
 {
-    private readonly IMemorySystem _memory;
-    private readonly ISkillEvolution _skillEvolution;
-    private readonly IBenchmarkGate _benchmarkGate;
-    private readonly IPipelineTracker _pipelineTracker;
+    private readonly FileMemory _memory;
+    private readonly SkillEvolution _skillEvolution;
+    private readonly BenchmarkGate _benchmarkGate;
+    private readonly PipelineTracker _pipelineTracker;
     private readonly string _patchesPath;
     private readonly ILogger<SelfImprovementService> _logger;
 
     public SelfImprovementService(
-        IMemorySystem memory,
-        ISkillEvolution skillEvolution,
-        IBenchmarkGate benchmarkGate,
-        IPipelineTracker pipelineTracker,
+        FileMemory memory,
+        SkillEvolution skillEvolution,
+        BenchmarkGate benchmarkGate,
+        PipelineTracker pipelineTracker,
         string patchesPath,
         ILogger<SelfImprovementService> logger)
     {

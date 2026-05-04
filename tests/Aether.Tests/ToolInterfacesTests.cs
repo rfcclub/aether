@@ -21,33 +21,34 @@ public sealed class ToolInterfacesTests
     }
 
     [Fact]
-    public void ISandboxContext_ResolvesFromDI()
+    public void SandboxContext_ResolvesFromDI()
     {
         var services = new ServiceCollection();
         var sandbox = new FakeSandboxContext("/tmp/ws");
-        services.AddSingleton<ISandboxContext>(sandbox);
+        services.AddSingleton<SandboxContext>(sandbox);
         var provider = services.BuildServiceProvider();
 
-        var resolved = provider.GetRequiredService<ISandboxContext>();
+        var resolved = provider.GetRequiredService<SandboxContext>();
         Assert.NotNull(resolved);
         Assert.Equal("/tmp/ws", resolved.WorkspacePath);
     }
 
     [Fact]
-    public void IWebSearchProvider_ResolvesFromDI()
+    public void TavilyWebSearchProvider_ResolvesFromDI()
     {
         var services = new ServiceCollection();
         var search = new FakeWebSearchProvider();
-        services.AddSingleton<IWebSearchProvider>(search);
+        services.AddSingleton<TavilyWebSearchProvider>(search);
         var provider = services.BuildServiceProvider();
 
-        var resolved = provider.GetRequiredService<IWebSearchProvider>();
+        var resolved = provider.GetRequiredService<TavilyWebSearchProvider>();
         Assert.NotNull(resolved);
-        Assert.Equal("fake", resolved.Name);
+        Assert.Equal("tavily", resolved.Name);
+        Assert.NotNull(resolved);
     }
 
     [Fact]
-    public async Task IWebSearchProvider_SearchAsync_ReturnsResults()
+    public async Task TavilyWebSearchProvider_SearchAsync_ReturnsResults()
     {
         var provider = new FakeWebSearchProvider();
         var results = await provider.SearchAsync("test query", 5, CancellationToken.None);
@@ -61,8 +62,8 @@ public sealed class ToolInterfacesTests
         var services = new ServiceCollection();
         services.AddLogging();
 
-        // Register IToolRegistry + ToolRegistry
-        services.AddSingleton<IToolRegistry, ToolRegistry>();
+        // Register ToolRegistry + ToolRegistry
+        services.AddSingleton<ToolRegistry, ToolRegistry>();
 
         // Register IToolImplementations
         var impls = new List<IToolImplementation>
@@ -83,7 +84,7 @@ public sealed class ToolInterfacesTests
 
         var provider = services.BuildServiceProvider();
 
-        var registry = provider.GetRequiredService<IToolRegistry>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ToolStartupRegistration>();
         var webFetchTool = provider.GetRequiredService<WebFetchTool>();
@@ -106,7 +107,7 @@ public sealed class ToolInterfacesTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<IToolRegistry, ToolRegistry>();
+        services.AddSingleton<ToolRegistry, ToolRegistry>();
 
         // Use real file tools for schema validation
         services.AddSingleton<IToolImplementation, ReadTool>();
@@ -121,7 +122,7 @@ public sealed class ToolInterfacesTests
 
         var provider = services.BuildServiceProvider();
 
-        var registry = provider.GetRequiredService<IToolRegistry>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ToolStartupRegistration>();
         var webFetchTool = provider.GetRequiredService<WebFetchTool>();
@@ -166,30 +167,20 @@ public sealed class ToolInterfacesTests
             Description = description;
         }
 
-        public Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+        public Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
             => Task.FromResult<object>("ok");
     }
 
-    private sealed class FakeSandboxContext : ISandboxContext
+    private sealed class FakeSandboxContext : SandboxContext
     {
-        public string WorkspacePath { get; }
-        public bool AllowWrites => true;
-        public IReadOnlyList<string> AllowedPaths => new[] { WorkspacePath };
-        public IReadOnlyList<string> DeniedPaths => Array.Empty<string>();
-        public IReadOnlyList<string> AllowedCommands => new[] { "ls", "echo", "cat" };
-        public int BashTimeoutSeconds => 60;
-
-        public FakeSandboxContext(string workspacePath) => WorkspacePath = workspacePath;
-
-        public bool IsPathAllowed(string path) =>
-            path.StartsWith(WorkspacePath, StringComparison.OrdinalIgnoreCase);
+        public FakeSandboxContext(string workspacePath) : base(workspacePath) { }
     }
 
-    private sealed class FakeWebSearchProvider : IWebSearchProvider
+    private sealed class FakeWebSearchProvider : TavilyWebSearchProvider
     {
-        public string Name => "fake";
+        public FakeWebSearchProvider() : base(new HttpClient(), new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(), null!) { }
 
-        public Task<IReadOnlyList<WebSearchResult>> SearchAsync(string query, int limit, CancellationToken ct)
+        public new Task<IReadOnlyList<WebSearchResult>> SearchAsync(string query, int limit, CancellationToken ct)
         {
             return Task.FromResult<IReadOnlyList<WebSearchResult>>(new[]
             {

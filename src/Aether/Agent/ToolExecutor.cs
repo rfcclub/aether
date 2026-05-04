@@ -7,8 +7,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Agent;
 
-public sealed class ToolExecutor : IToolExecutor
+public class ToolExecutor
 {
+    protected ToolExecutor() { _options = new SandboxOptions("none", 30000, 512, false, Array.Empty<string>()); _sandboxDisabled = true; _allowedPaths = Array.Empty<string>(); _deniedPaths = Array.Empty<string>(); }
+
     private readonly SandboxOptions _options;
     private string[] _allowedPaths;
     private string[] _deniedPaths;
@@ -92,7 +94,7 @@ public sealed class ToolExecutor : IToolExecutor
         _deniedPaths = denied.ToArray();
     }
 
-    public Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+    public virtual Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
     {
         return call.Name.ToLowerInvariant() switch
         {

@@ -11,7 +11,7 @@ namespace Aether.Agents;
 /// </summary>
 public sealed class AgentHeartbeatService : IHostedService, IDisposable
 {
-    private readonly IAgentProfile _profile;
+    private readonly AgentProfile _profile;
     private readonly AetherSoul _soul;
     private readonly AgentConfig _config;
     private readonly ILogger<AgentHeartbeatService> _logger;
@@ -20,7 +20,7 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
     private CancellationTokenSource? _cts;
 
     public AgentHeartbeatService(
-        IAgentProfile profile,
+        AgentProfile profile,
         AetherSoul soul,
         AgentConfig config,
         ILogger<AgentHeartbeatService> logger,
@@ -71,7 +71,7 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
             }
 
             _logger.LogDebug("Heartbeat tick for {AgentName}", _profile.Name);
-            var response = await _soul.ProcessAsync(_profile.Name, heartbeatContent, ct);
+            var response = await _soul.ProcessTaskAsync(_profile.Name, heartbeatContent, ct);
 
             if (!response.Content.Contains("HEARTBEAT_OK"))
             {

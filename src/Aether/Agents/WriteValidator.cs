@@ -1,6 +1,6 @@
 namespace Aether.Agents;
 
-public enum FeofallsLayer { Constitution, Identity, Cognitive, Learning, OperationalData, WorkingState, Unknown }
+public enum BootLayer { Constitution, Identity, Cognitive, Learning, OperationalData, WorkingState, Unknown }
 
 public readonly record struct WriteResult(bool Allowed, bool RequiresApproval);
 
@@ -11,45 +11,45 @@ public readonly record struct WriteResult(bool Allowed, bool RequiresApproval);
 /// </summary>
 public sealed class WriteValidator
 {
-    private readonly FeofallsConfig _config;
+    private readonly BootConfig _config;
 
-    public WriteValidator(FeofallsConfig config)
+    public WriteValidator(BootConfig config)
     {
         _config = config;
     }
 
-    public WriteResult ValidateWrite(string relativePath, FeofallsLayer layer)
+    public WriteResult ValidateWrite(string relativePath, BootLayer layer)
     {
         return layer switch
         {
-            FeofallsLayer.Constitution => new WriteResult(false, true),
-            FeofallsLayer.Identity => new WriteResult(false, true),
+            BootLayer.Constitution => new WriteResult(false, true),
+            BootLayer.Identity => new WriteResult(false, true),
             _ => new WriteResult(true, false)
         };
     }
 
-    public WriteResult ValidateRead(string relativePath, FeofallsLayer layer)
+    public WriteResult ValidateRead(string relativePath, BootLayer layer)
     {
         return new WriteResult(true, false);
     }
 
-    public static FeofallsLayer ClassifyPath(string relativePath, FeofallsConfig config)
+    public static BootLayer ClassifyPath(string relativePath, BootConfig config)
     {
         var fileName = Path.GetFileName(relativePath);
         if (config.ConstitutionFiles.Any(f => Path.GetFileName(f) == fileName))
-            return FeofallsLayer.Constitution;
+            return BootLayer.Constitution;
         if (config.IdentityFiles.Any(f => Path.GetFileName(f) == fileName))
-            return FeofallsLayer.Identity;
+            return BootLayer.Identity;
         if (config.CognitiveFiles.Any(f => Path.GetFileName(f) == fileName))
-            return FeofallsLayer.Cognitive;
+            return BootLayer.Cognitive;
         if (fileName == Path.GetFileName(config.EpisodicLogFile) ||
             fileName == Path.GetFileName(config.MistakesFile) ||
             fileName == Path.GetFileName(config.DreamsFile))
-            return FeofallsLayer.Learning;
+            return BootLayer.Learning;
         if (fileName == Path.GetFileName(config.TaskInboxFile ?? "") ||
             fileName == Path.GetFileName(config.TaskReportFile ?? "") ||
             fileName == Path.GetFileName(config.HeartbeatFile ?? ""))
-            return FeofallsLayer.WorkingState;
-        return FeofallsLayer.Unknown;
+            return BootLayer.WorkingState;
+        return BootLayer.Unknown;
     }
 }

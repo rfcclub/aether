@@ -13,23 +13,28 @@ public sealed class AetherSoul
     private const int MaxToolIterations = 8;
     private const int MaxContextTokens = 120000;
     private readonly ILLMProvider _llm;
-    private readonly IMemorySystem _memory;
-    private readonly IToolExecutor _tools;
-    private readonly ISessionManager _sessions;
-    private readonly ISkillRegistry _skills;
-    private readonly ISkillTrigger _skillTrigger;
-    private readonly IAgentProfile _profile;
-    private readonly IBootContract? _bootContract;
+    private readonly FileMemory _memory;
+    private readonly ToolExecutor _tools;
+    private readonly SessionManager _sessions;
+    private readonly SkillRegistry _skills;
+    private readonly SkillTrigger _skillTrigger;
+    private readonly AgentProfile _profile;
+    private readonly BootContract? _bootContract;
+
+    // Cache persona + boot content to avoid re-reading files on every call
+    private (string Persona, string DailyMemory, string Constitution, string Cognitive, string WorkingState) _cache;
+    private DateTime _cacheExpiry = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
 
     public AetherSoul(
         ILLMProvider llm,
-        IMemorySystem memory,
-        IToolExecutor tools,
-        ISessionManager sessions,
-        ISkillRegistry skills,
-        ISkillTrigger skillTrigger,
-        IAgentProfile profile,
-        IBootContract? bootContract = null)
+        FileMemory memory,
+        ToolExecutor tools,
+        SessionManager sessions,
+        SkillRegistry skills,
+        SkillTrigger skillTrigger,
+        AgentProfile profile,
+        BootContract? bootContract = null)
     {
         _llm = llm;
         _memory = memory;
@@ -41,22 +46,56 @@ public sealed class AetherSoul
         _bootContract = bootContract;
     }
 
+    /// <summary>
+    /// Process a task prompt without persona loading — for heartbeat, cron, and scheduled tasks.
+    /// </summary>
+    public async Task<AgentResponse> ProcessTaskAsync(string groupFolder, string prompt, CancellationToken ct = default)
+    {
+        var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
+        var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
+        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
+
+        var messages = new List<LlmMessage>
+        {
+            LlmMessage.System(BuildSystemPrompt("Task executor", "", memoryContext, null, null, null, null))
+        };
+        messages.AddRange(history.Select(m => new LlmMessage(m.Role, m.Content)));
+        messages.Add(LlmMessage.User(prompt));
+        TruncateHistory(messages);
+
+        await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", prompt, DateTimeOffset.UtcNow), ct);
+        var response = await RunLlmToolLoopAsync(messages, ct);
+        await _sessions.AppendMessageAsync(session.Id, new SessionMessage("assistant", response.Content, DateTimeOffset.UtcNow), ct);
+
+        return new AgentResponse(response.Content, session.Id);
+    }
+
     public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct = default)
     {
         var session = await _sessions.GetOrCreateSessionAsync(groupFolder, ct);
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
-        var persona = await _profile.LoadPersonaAsync(ct);
-        var dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
-        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
-        // FEOFALLS boot contract — constitution + cognitive + working state
-        string? constitution = null, cognitive = null, workingState = null;
-        if (_bootContract is not null)
+        // Cache persona + boot content — avoids re-reading files on every heartbeat/cron tick
+        string persona, dailyMemory, constitution, cognitive, workingState;
+        if (DateTime.UtcNow < _cacheExpiry)
         {
-            constitution = await _bootContract.LoadConstitutionAsync(ct);
-            cognitive = await _bootContract.LoadCognitiveAsync(ct);
-            workingState = await _bootContract.LoadWorkingStateAsync(ct);
+            (persona, dailyMemory, constitution, cognitive, workingState) = _cache;
         }
+        else
+        {
+            persona = await _profile.LoadPersonaAsync(ct);
+            dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
+            constitution = null!; cognitive = null!; workingState = null!;
+            if (_bootContract is not null)
+            {
+                constitution = await _bootContract.LoadConstitutionAsync(ct);
+                cognitive = await _bootContract.LoadCognitiveAsync(ct);
+                workingState = await _bootContract.LoadWorkingStateAsync(ct);
+            }
+            _cache = (persona, dailyMemory, constitution, cognitive, workingState);
+            _cacheExpiry = DateTime.UtcNow + CacheTtl;
+        }
+        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
         // Detect skill trigger before building messages
         var skillContext = _skillTrigger.DetectTrigger(prompt, _skills.List().ToList());
@@ -97,7 +136,7 @@ public sealed class AetherSoul
         var dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
-        // FEOFALLS boot contract
+        // Boot contract
         string? constitution = null, cognitive = null, workingState = null;
         if (_bootContract is not null)
         {

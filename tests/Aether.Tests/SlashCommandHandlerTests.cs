@@ -13,7 +13,7 @@ public sealed class SlashCommandHandlerTests
 {
     private SlashCommandHandler CreateHandler(
         FakeMemorySystem? memory = null,
-        ISessionManager? sessions = null,
+        SessionManager? sessions = null,
         Action<string>? onModelChanged = null,
         ProviderRouter? router = null)
     {
@@ -21,8 +21,8 @@ public sealed class SlashCommandHandlerTests
         var sessionMgr = sessions ?? new FakeSessionManager();
 
         var services = new ServiceCollection();
-        services.AddSingleton<IMemorySystem>(mem);
-        services.AddSingleton<ISessionManager>(sessionMgr);
+        services.AddSingleton<FileMemory>(mem);
+        services.AddSingleton<SessionManager>(sessionMgr);
         if (router is not null)
             services.AddSingleton<ProviderRouter>(router);
         var provider = services.BuildServiceProvider();
@@ -189,9 +189,9 @@ public sealed class SlashCommandHandlerTests
     private static IServiceProvider CreateDIProvider()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<IMemorySystem, FakeMemorySystem>();
-        services.AddSingleton<ISessionManager, FakeSessionManager>();
-        services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
+        services.AddSingleton<FileMemory, FakeMemorySystem>();
+        services.AddSingleton<SessionManager, FakeSessionManager>();
+        services.AddSingleton<SlashCommandHandler, SlashCommandHandler>();
         services.AddLogging();
         return services.BuildServiceProvider();
     }
@@ -200,7 +200,7 @@ public sealed class SlashCommandHandlerTests
     public async Task DI_Resolution_ReturnsHandler()
     {
         var provider = CreateDIProvider();
-        var handler = provider.GetRequiredService<ISlashCommandHandler>();
+        var handler = provider.GetRequiredService<SlashCommandHandler>();
         Assert.NotNull(handler);
         Assert.IsType<SlashCommandHandler>(handler);
     }
@@ -209,7 +209,7 @@ public sealed class SlashCommandHandlerTests
     public async Task DI_NewCommand_ReturnsSessionId()
     {
         var provider = CreateDIProvider();
-        var handler = provider.GetRequiredService<ISlashCommandHandler>();
+        var handler = provider.GetRequiredService<SlashCommandHandler>();
         var result = await handler.HandleAsync(
             new SlashCommandContext("/new", "default", "/tmp/ws", provider),
             CancellationToken.None);
@@ -223,14 +223,14 @@ public sealed class SlashCommandHandlerTests
     {
         var router = CreateFakeRouter();
         var services = new ServiceCollection();
-        services.AddSingleton<IMemorySystem>(new FakeMemorySystem());
-        services.AddSingleton<ISessionManager>(new FakeSessionManager());
+        services.AddSingleton<FileMemory>(new FakeMemorySystem());
+        services.AddSingleton<SessionManager>(new FakeSessionManager());
         services.AddSingleton<ProviderRouter>(router);
-        services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
+        services.AddSingleton<SlashCommandHandler, SlashCommandHandler>();
         services.AddLogging();
         var provider = services.BuildServiceProvider();
 
-        var handler = provider.GetRequiredService<ISlashCommandHandler>();
+        var handler = provider.GetRequiredService<SlashCommandHandler>();
         var result = await handler.HandleAsync(
             new SlashCommandContext("/model accounts/fireworks/routers/kimi-k2p5-turbo", "default", "/tmp/ws", provider),
             CancellationToken.None);
@@ -244,14 +244,14 @@ public sealed class SlashCommandHandlerTests
     {
         var router = CreateFakeRouter();
         var services = new ServiceCollection();
-        services.AddSingleton<IMemorySystem>(new FakeMemorySystem());
-        services.AddSingleton<ISessionManager>(new FakeSessionManager());
+        services.AddSingleton<FileMemory>(new FakeMemorySystem());
+        services.AddSingleton<SessionManager>(new FakeSessionManager());
         services.AddSingleton<ProviderRouter>(router);
-        services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
+        services.AddSingleton<SlashCommandHandler, SlashCommandHandler>();
         services.AddLogging();
         var provider = services.BuildServiceProvider();
 
-        var handler = provider.GetRequiredService<ISlashCommandHandler>();
+        var handler = provider.GetRequiredService<SlashCommandHandler>();
 
         foreach (var cmd in new[] { "/new", "/reset", "/model", "/context", "/compact" })
         {

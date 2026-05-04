@@ -7,9 +7,9 @@ public sealed class WriteValidatorTests
     [Fact]
     public void Validate_AllowsEpisodicLogWrites()
     {
-        var validator = new WriteValidator(new FeofallsConfig());
+        var validator = new WriteValidator(new BootConfig());
 
-        var result = validator.ValidateWrite("INTROSPECTION.md", FeofallsLayer.Learning);
+        var result = validator.ValidateWrite("INTROSPECTION.md", BootLayer.Learning);
 
         Assert.True(result.Allowed);
         Assert.False(result.RequiresApproval);
@@ -18,9 +18,9 @@ public sealed class WriteValidatorTests
     [Fact]
     public void Validate_RequiresCreatorApprovalForConstitution()
     {
-        var validator = new WriteValidator(new FeofallsConfig());
+        var validator = new WriteValidator(new BootConfig());
 
-        var result = validator.ValidateWrite("AGENTS_GUARD.md", FeofallsLayer.Constitution);
+        var result = validator.ValidateWrite("AGENTS_GUARD.md", BootLayer.Constitution);
 
         Assert.False(result.Allowed);
         Assert.True(result.RequiresApproval);
@@ -29,9 +29,9 @@ public sealed class WriteValidatorTests
     [Fact]
     public void Validate_AllowsConstitutionRead_Always()
     {
-        var validator = new WriteValidator(new FeofallsConfig());
+        var validator = new WriteValidator(new BootConfig());
 
-        var result = validator.ValidateRead("AGENTS_GUARD.md", FeofallsLayer.Constitution);
+        var result = validator.ValidateRead("AGENTS_GUARD.md", BootLayer.Constitution);
 
         Assert.True(result.Allowed);
     }
@@ -39,26 +39,26 @@ public sealed class WriteValidatorTests
     [Fact]
     public void Validate_LayerFromPath_IdentifiesConstitution()
     {
-        var config = new FeofallsConfig
+        var config = new BootConfig
         {
             ConstitutionFiles = new() { "AGENTS_GUARD.md", "AGENTS.md" }
         };
 
         var layer = WriteValidator.ClassifyPath("AGENTS_GUARD.md", config);
 
-        Assert.Equal(FeofallsLayer.Constitution, layer);
+        Assert.Equal(BootLayer.Constitution, layer);
     }
 
     [Fact]
     public void Validate_LayerFromPath_IdentifiesIdentity()
     {
-        var config = new FeofallsConfig
+        var config = new BootConfig
         {
             IdentityFiles = new() { "SOUL.md", "USER.md" }
         };
 
         var layer = WriteValidator.ClassifyPath("SOUL.md", config);
 
-        Assert.Equal(FeofallsLayer.Identity, layer);
+        Assert.Equal(BootLayer.Identity, layer);
     }
 }

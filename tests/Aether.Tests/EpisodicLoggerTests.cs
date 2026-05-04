@@ -21,7 +21,7 @@ public sealed class EpisodicLoggerTests : IDisposable
     [Fact]
     public async Task AppendEpisodeAsync_WritesCanonicalSchema()
     {
-        var logger = new EpisodicLogger(_agentDir, new FeofallsConfig());
+        var logger = new EpisodicLogger(_agentDir, new BootConfig());
         var id = await logger.AppendEpisodeAsync(
             "session-1", "user", "Resolved the login bug by fixing token expiry.",
             new Dictionary<string, string> { ["topic"] = "debugging" });
@@ -38,7 +38,7 @@ public sealed class EpisodicLoggerTests : IDisposable
     [Fact]
     public async Task AppendEpisodeAsync_IncrementsSequenceNumber()
     {
-        var logger = new EpisodicLogger(_agentDir, new FeofallsConfig());
+        var logger = new EpisodicLogger(_agentDir, new BootConfig());
         var id1 = await logger.AppendEpisodeAsync("s1", "user", "First.");
         var id2 = await logger.AppendEpisodeAsync("s1", "assistant", "Second.");
 
@@ -50,7 +50,7 @@ public sealed class EpisodicLoggerTests : IDisposable
     [Fact]
     public async Task AppendMistakeAsync_UsesMistakesFile()
     {
-        var config = new FeofallsConfig { MistakesFile = "MISTAKES.md" };
+        var config = new BootConfig { MistakesFile = "MISTAKES.md" };
         var logger = new EpisodicLogger(_agentDir, config);
         await logger.AppendMistakeAsync("session-2", "Forgot to validate null input.");
 

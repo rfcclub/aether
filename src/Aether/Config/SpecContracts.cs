@@ -17,6 +17,20 @@ public sealed record AgentSpecConfig
     public SpecPolicySection Policy { get; init; } = new();
     public Dictionary<string, SpecChannelEntry> Channels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public SpecLoggingSection Logging { get; init; } = new();
+    public SpecKairosSection Kairos { get; init; } = new();
+}
+
+public sealed record SpecKairosSection
+{
+    public bool Enabled { get; init; }
+    public List<SpecKairosRule> Rules { get; init; } = new();
+}
+
+public sealed record SpecKairosRule
+{
+    public string Watch { get; init; } = string.Empty;
+    public string Channel { get; init; } = "telegram";
+    public int CooldownSeconds { get; init; } = 300;
 }
 
 public sealed record SpecAgentSection

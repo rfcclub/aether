@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Skills;
 
-public partial class SkillParser : ISkillLoader
+public partial class SkillParser 
 {
     private readonly ILogger<SkillParser> _logger;
 

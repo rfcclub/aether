@@ -31,6 +31,7 @@ public sealed class AgentIntegrationTests : IDisposable
     [Fact]
     public async Task AetherSoul_UsesAgentPersonaInSystemPrompt()
     {
+        File.WriteAllText(Path.Combine(_agentDir, "AGENTS.md"), "You are Maria. User is Thoor.");
         var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
         var llm = new FakeLlmProvider("test", "test-model", new LlmResponse("Hello, bệ hạ!"));
         var memory = new FakeMemorySystem();

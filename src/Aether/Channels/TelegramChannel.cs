@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
@@ -14,7 +15,6 @@ public sealed class TelegramChannel : IChannel, IDisposable
     private Task? _pollingTask;
     private bool _disposed;
 
-    // Track streaming message IDs per chat so we can edit in-place.
     private readonly Dictionary<string, int> _streamingMessageIds = new();
     private readonly Dictionary<string, string> _lastStreamingText = new();
 
@@ -45,15 +45,9 @@ public sealed class TelegramChannel : IChannel, IDisposable
         _cts?.Cancel();
         if (_pollingTask is not null)
         {
-            try
-            {
-                await _pollingTask.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            }
+            try { await _pollingTask.WaitAsync(TimeSpan.FromSeconds(5), ct); }
             catch (OperationCanceledException) { }
-            catch (TimeoutException)
-            {
-                _logger.LogWarning("Telegram polling task did not stop within 5 seconds");
-            }
+            catch (TimeoutException) { _logger.LogWarning("Telegram polling task did not stop within 5 seconds"); }
         }
 
         _client = null;
@@ -63,12 +57,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
     public async Task SendMessageAsync(string chatId, string text, CancellationToken ct)
     {
         if (_client is null) throw new InvalidOperationException("Telegram channel is not connected.");
-
-        await _client.SendMessage(
-            chatId: chatId,
-            text: text,
-            parseMode: ParseMode.None,
-            cancellationToken: ct);
+        await TryMarkdownAsync(mode => _client.SendMessage(chatId, text, parseMode: mode, cancellationToken: ct), ct);
     }
 
     public async Task SendStreamingChunkAsync(string chatId, string chunk, int chunkIndex, CancellationToken ct)
@@ -77,30 +66,21 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
         if (chunkIndex == 0)
         {
-            var msg = await _client.SendMessage(
-                chatId: chatId,
-                text: chunk,
-                parseMode: ParseMode.None,
-                cancellationToken: ct);
-            _streamingMessageIds[chatId] = msg.Id;
-            _lastStreamingText[chatId] = chunk;
+            var msgId = 0;
+            await TryMarkdownAsync(async mode =>
+            {
+                var msg = await _client.SendMessage(chatId, chunk, parseMode: mode, cancellationToken: ct);
+                msgId = msg.Id;
+            }, ct);
+            if (msgId != 0)
+            {
+                _streamingMessageIds[chatId] = msgId;
+                _lastStreamingText[chatId] = chunk;
+            }
         }
         else if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
         {
-            try
-            {
-                await _client.EditMessageText(
-                    chatId: chatId,
-                    messageId: messageId,
-                    text: chunk,
-                    parseMode: ParseMode.None,
-                    cancellationToken: ct);
-                _lastStreamingText[chatId] = chunk;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to edit streaming message for chat {ChatId}", chatId);
-            }
+            await EditWithFallbackAsync(chatId, messageId, chunk, ct);
         }
     }
 
@@ -110,7 +90,6 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
         if (_streamingMessageIds.TryGetValue(chatId, out var messageId))
         {
-            // Skip edit if text hasn't changed since last chunk
             if (_lastStreamingText.TryGetValue(chatId, out var lastText) && lastText == fullText)
             {
                 _streamingMessageIds.Remove(chatId);
@@ -118,27 +97,11 @@ public sealed class TelegramChannel : IChannel, IDisposable
                 return;
             }
 
-            try
-            {
-                await _client.EditMessageText(
-                    chatId: chatId,
-                    messageId: messageId,
-                    text: fullText,
-                    parseMode: ParseMode.None,
-                    cancellationToken: ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to edit final streaming message for chat {ChatId}", chatId);
-            }
+            await EditWithFallbackAsync(chatId, messageId, fullText, ct);
         }
         else
         {
-            await _client.SendMessage(
-                chatId: chatId,
-                text: fullText,
-                parseMode: ParseMode.None,
-                cancellationToken: ct);
+            await SendMessageAsync(chatId, fullText, ct);
         }
 
         _streamingMessageIds.Remove(chatId);
@@ -148,34 +111,69 @@ public sealed class TelegramChannel : IChannel, IDisposable
     public async Task SetTypingAsync(string chatId, bool isTyping, CancellationToken ct)
     {
         if (_client is null) return;
-
         if (isTyping)
+            await _client.SendChatAction(chatId, ChatAction.Typing, cancellationToken: ct);
+    }
+
+    public bool OwnsChatId(string chatId) => chatId.StartsWith("telegram:", StringComparison.Ordinal);
+
+    // ── MarkdownV2 fallback helpers ──
+
+    /// <summary>
+    /// Try sending with MarkdownV2, fall back to plain text on parse error.
+    /// </summary>
+    private async Task TryMarkdownAsync(Func<ParseMode, Task> action, CancellationToken ct)
+    {
+        try
         {
-            await _client.SendChatAction(
-                chatId: chatId,
-                action: ChatAction.Typing,
-                cancellationToken: ct);
+            await action(ParseMode.MarkdownV2);
+        }
+        catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
+        {
+            _logger.LogWarning(ex, "MarkdownV2 parse failed, falling back to plain text");
+            await action(ParseMode.None);
         }
     }
 
-    public bool OwnsChatId(string chatId)
+    /// <summary>
+    /// Edit a message with MarkdownV2, fall back to plain text on parse error.
+    /// </summary>
+    private async Task EditWithFallbackAsync(string chatId, int messageId, string text, CancellationToken ct)
     {
-        return chatId.StartsWith("telegram:", StringComparison.Ordinal);
+        try
+        {
+            await _client!.EditMessageText(chatId, messageId, text, parseMode: ParseMode.MarkdownV2, cancellationToken: ct);
+            _lastStreamingText[chatId] = text;
+        }
+        catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
+        {
+            try
+            {
+                await _client!.EditMessageText(chatId, messageId, text, parseMode: ParseMode.None, cancellationToken: ct);
+                _lastStreamingText[chatId] = text;
+            }
+            catch (Exception innerEx)
+            {
+                _logger.LogWarning(innerEx, "Failed to edit message with plain text for chat {ChatId}", chatId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to edit message for chat {ChatId}", chatId);
+        }
     }
+
+    // ── Polling ──
 
     private async Task PollLoopAsync(CancellationToken ct)
     {
         var offset = 0;
-
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                var updates = await _client!.GetUpdates(
-                    offset: offset,
-                    timeout: 30,
-                    allowedUpdates: new[] { UpdateType.Message },
-                    cancellationToken: ct);
+                var updates = await _client!.GetUpdates(offset, timeout: 30,
+                    allowedUpdates: new[] { UpdateType.Message }, cancellationToken: ct);
 
                 foreach (var update in updates)
                 {
@@ -185,15 +183,10 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
                     var inbound = ConvertMessage(message);
                     if (inbound is not null)
-                    {
                         OnMessage?.Invoke(this, inbound.Value);
-                    }
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Telegram polling error");

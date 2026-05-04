@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.SelfImprovement;
 
-public class PipelineTracker : IPipelineTracker
+public class PipelineTracker 
 {
     private readonly AetherDb _db;
     private readonly ILogger<PipelineTracker> _logger;

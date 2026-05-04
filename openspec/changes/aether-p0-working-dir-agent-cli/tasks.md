@@ -142,5 +142,5 @@
 - [x] 13.1 Update `SETUP.md` with `~/.aether/` working directory documentation
 - [x] 13.2 Update `ARCHITECTURE.md` with ConfigLoader, WorkingDirectory, and CLI architecture sections
 - [x] 13.3 Add `aether agent --help` examples to `SETUP.md`
-- [ ] 13.4 Commit all changes with message: `feat: add working directory, agent CLI, config hierarchy, channel binding, first-run wizard`
-- [ ] 13.5 Push to remote `https://github.com/rfcclub/aether.git`
+- [x] 13.4 Commit all changes with message: `feat: add working directory, agent CLI, config hierarchy, channel binding, first-run wizard`
+- [x] 13.5 Push to remote `https://github.com/rfcclub/aether.git`

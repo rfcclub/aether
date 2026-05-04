@@ -19,8 +19,8 @@ using Aether.Tooling;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Aether.Scheduling;
 using ToolExecutor = Aether.Agent.ToolExecutor;
-using IToolExecutor = Aether.Agent.IToolExecutor;
 
 if (args.Contains("--smoke", StringComparer.OrdinalIgnoreCase))
 {
@@ -444,26 +444,26 @@ static async Task RunServeAsync(bool traceStartup)
         var schemaPath = ResolvePath(configuration["database:schema"] ?? Path.Combine("Data", "Schema.sql"));
         return new AetherDb(databasePath, schemaPath);
     });
-    builder.Services.AddSingleton<IMessageQueue, ChannelMessageQueue>();
+    builder.Services.AddSingleton<ChannelMessageQueue>();
     builder.Services.AddSingleton<MessageRouter>(provider =>
     {
         var configLoader = provider.GetRequiredService<ConfigLoader>();
         var logger = provider.GetRequiredService<ILogger<MessageRouter>>();
         return new MessageRouter(configLoader, logger);
     });
-    builder.Services.AddSingleton<ISessionManager, SessionManager>();
-    builder.Services.AddSingleton<IMemorySystem>(provider =>
+    builder.Services.AddSingleton<SessionManager>();
+    builder.Services.AddSingleton<FileMemory>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var groupsPath = configuration["groups:path"] ?? "groups";
         return new FileMemory(groupsPath);
     });
-    builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
-    builder.Services.AddSingleton<IToolExecutor, ToolExecutor>();
+    builder.Services.AddSingleton<ToolRegistry>();
+    builder.Services.AddSingleton<ToolExecutor>();
 
     // Tool ecosystem — built-in tool implementations
     builder.Services.AddHttpClient<TavilyWebSearchProvider>();
-    builder.Services.AddSingleton<IWebSearchProvider>(provider =>
+    builder.Services.AddSingleton<TavilyWebSearchProvider>(provider =>
         provider.GetRequiredService<TavilyWebSearchProvider>());
     builder.Services.AddHttpClient<WebFetchTool>();
     builder.Services.AddSingleton<ReadTool>();
@@ -490,17 +490,17 @@ static async Task RunServeAsync(bool traceStartup)
     // Register built-in tools at startup
     builder.Services.AddSingleton<IHostedService>(provider =>
     {
-        var registry = provider.GetRequiredService<IToolRegistry>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var logger = provider.GetRequiredService<ILogger<ToolStartupRegistration>>();
         var webFetchTool = provider.GetRequiredService<WebFetchTool>();
         var impls = provider.GetRequiredService<IEnumerable<IToolImplementation>>();
         return new ToolStartupRegistration(registry, impls, webFetchTool, logger);
     });
-    builder.Services.AddSingleton<ISlashCommandHandler, SlashCommandHandler>();
-    builder.Services.AddSingleton<ISkillRegistry, SkillRegistry>();
-    builder.Services.AddSingleton<ISkillLoader, SkillParser>();
-    builder.Services.AddSingleton<ISkillTrigger, SkillTrigger>();
-    builder.Services.AddSingleton<ISkillEvolution, SkillEvolution>(provider =>
+    builder.Services.AddSingleton<SlashCommandHandler>();
+    builder.Services.AddSingleton<SkillRegistry>();
+    builder.Services.AddSingleton<SkillParser>();
+    builder.Services.AddSingleton<SkillTrigger>();
+    builder.Services.AddSingleton<SkillEvolution>(provider =>
     {
         var logger = provider.GetRequiredService<ILogger<SkillEvolution>>();
         var configuration = provider.GetRequiredService<IConfiguration>();
@@ -552,7 +552,7 @@ static async Task RunServeAsync(bool traceStartup)
     // Tool hot-reload: watches tools/*.json for changes at runtime.
     builder.Services.AddSingleton<IHostedService>(provider =>
     {
-        var registry = provider.GetRequiredService<IToolRegistry>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var logger = provider.GetRequiredService<ILogger<ToolHotReloadService>>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var toolsPath = configuration["tooling:hot_reload_path"] ?? "tools";
@@ -560,8 +560,8 @@ static async Task RunServeAsync(bool traceStartup)
     });
 
     // Self-improvement services
-    builder.Services.AddSingleton<IPipelineTracker, PipelineTracker>();
-    builder.Services.AddSingleton<IBenchmarkGate>(provider =>
+    builder.Services.AddSingleton<PipelineTracker>();
+    builder.Services.AddSingleton<BenchmarkGate>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var logger = provider.GetRequiredService<ILogger<BenchmarkGate>>();
@@ -569,12 +569,12 @@ static async Task RunServeAsync(bool traceStartup)
         var timeoutSeconds = configuration.GetValue("self_improvement:benchmark_timeout_seconds", 60);
         return new BenchmarkGate(testProjectPath, timeoutSeconds, logger);
     });
-    builder.Services.AddSingleton<ISelfImprovementService>(provider =>
+    builder.Services.AddSingleton<SelfImprovementService>(provider =>
     {
-        var memory = provider.GetRequiredService<IMemorySystem>();
-        var skillEvolution = provider.GetRequiredService<ISkillEvolution>();
-        var benchmarkGate = provider.GetRequiredService<IBenchmarkGate>();
-        var pipelineTracker = provider.GetRequiredService<IPipelineTracker>();
+        var memory = provider.GetRequiredService<FileMemory>();
+        var skillEvolution = provider.GetRequiredService<SkillEvolution>();
+        var benchmarkGate = provider.GetRequiredService<BenchmarkGate>();
+        var pipelineTracker = provider.GetRequiredService<PipelineTracker>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var logger = provider.GetRequiredService<ILogger<SelfImprovementService>>();
         var patchesPath = configuration["self_improvement:patches_path"] ?? "patches";
@@ -647,7 +647,7 @@ static async Task RunServeAsync(bool traceStartup)
         };
     });
 
-    builder.Services.AddSingleton<IAgentProfile>(provider =>
+    builder.Services.AddSingleton<AgentProfile>(provider =>
     {
         var config = provider.GetRequiredService<AgentConfig>();
         var configLoader = provider.GetRequiredService<ConfigLoader>();
@@ -660,63 +660,90 @@ static async Task RunServeAsync(bool traceStartup)
 
     builder.Services.AddSingleton<AgentMemoryBridge>(provider =>
     {
-        var profile = provider.GetRequiredService<IAgentProfile>();
+        var profile = provider.GetRequiredService<AgentProfile>();
         var config = provider.GetRequiredService<AgentConfig>();
         return new AgentMemoryBridge(profile.AgentDirectory, config);
     });
 
     builder.Services.AddHostedService<AgentHeartbeatService>();
 
-    // FEOFALLS Cognitive Architecture
-    builder.Services.AddSingleton<FeofallsConfig>(provider =>
+    // Cron scheduler — recurring tasks from ~/.aether/cron/*.md
+    builder.Services.AddHostedService(provider =>
     {
-        var config = provider.GetRequiredService<AgentConfig>();
-        return config.Feofalls ?? new FeofallsConfig();
+        var soul = provider.GetRequiredService<AetherSoul>();
+        var channel = provider.GetRequiredService<IChannel>();
+        var logger = provider.GetRequiredService<ILogger<CronSchedulerService>>();
+        var cronDir = Path.Combine(aetherCfgDir, "cron");
+        return new CronSchedulerService(cronDir, soul, channel, logger);
     });
 
-    builder.Services.AddSingleton<IBootContract>(provider =>
+    // KAIROS proactive notifier — file-watch notifications
+    builder.Services.AddHostedService(provider =>
     {
-        var profile = provider.GetRequiredService<IAgentProfile>();
-        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
-        return new FeofallsBootContract(profile.AgentDirectory, feofallsConfig);
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var cfgLoader = provider.GetRequiredService<ConfigLoader>();
+        var cfg = provider.GetRequiredService<IConfiguration>();
+        var agent = cfg["assistant:name"] ?? "default";
+        var agentSpec = cfgLoader.GetAgentSpec(agent);
+        var kairosCfg = agentSpec?.Kairos ?? new SpecKairosSection();
+        var kairosConfig = new KairosConfig(
+            kairosCfg.Enabled,
+            kairosCfg.Rules.Select(r => new KairosRule(r.Watch, r.Channel, r.CooldownSeconds)).ToList());
+        var channel = provider.GetRequiredService<IChannel>();
+        var logger = provider.GetRequiredService<ILogger<KairosWatchService>>();
+        return new KairosWatchService(profile.AgentDirectory, kairosConfig, channel, logger);
+    });
+
+    // Boot Cognitive Architecture
+    builder.Services.AddSingleton<BootConfig>(provider =>
+    {
+        var config = provider.GetRequiredService<AgentConfig>();
+        return config.Boot ?? new BootConfig();
+    });
+
+    builder.Services.AddSingleton<BootContract>(provider =>
+    {
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var bootConfig = provider.GetRequiredService<BootConfig>();
+        return new BootContract(profile.AgentDirectory, bootConfig);
     });
 
     builder.Services.AddSingleton<IntegritySigner>(provider =>
     {
-        var profile = provider.GetRequiredService<IAgentProfile>();
+        var profile = provider.GetRequiredService<AgentProfile>();
         var logger = provider.GetRequiredService<ILogger<IntegritySigner>>();
         return new IntegritySigner(profile.AgentDirectory, logger);
     });
 
     builder.Services.AddSingleton<EpisodicLogger>(provider =>
     {
-        var profile = provider.GetRequiredService<IAgentProfile>();
-        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
-        return new EpisodicLogger(profile.AgentDirectory, feofallsConfig);
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var bootConfig = provider.GetRequiredService<BootConfig>();
+        return new EpisodicLogger(profile.AgentDirectory, bootConfig);
     });
 
     builder.Services.AddSingleton<LifecycleStateMachine>(provider =>
     {
-        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
-        return new LifecycleStateMachine(feofallsConfig);
+        var bootConfig = provider.GetRequiredService<BootConfig>();
+        return new LifecycleStateMachine(bootConfig);
     });
 
     builder.Services.AddSingleton<WriteValidator>(provider =>
     {
-        var feofallsConfig = provider.GetRequiredService<FeofallsConfig>();
-        return new WriteValidator(feofallsConfig);
+        var bootConfig = provider.GetRequiredService<BootConfig>();
+        return new WriteValidator(bootConfig);
     });
 
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
-        var memory = provider.GetRequiredService<IMemorySystem>();
-        var tools = provider.GetRequiredService<IToolExecutor>();
-        var sessions = provider.GetRequiredService<ISessionManager>();
-        var skills = provider.GetRequiredService<ISkillRegistry>();
-        var skillTrigger = provider.GetRequiredService<ISkillTrigger>();
-        var profile = provider.GetRequiredService<IAgentProfile>();
-        var bootContract = provider.GetRequiredService<IBootContract>();
+        var memory = provider.GetRequiredService<FileMemory>();
+        var tools = provider.GetRequiredService<ToolExecutor>();
+        var sessions = provider.GetRequiredService<SessionManager>();
+        var skills = provider.GetRequiredService<SkillRegistry>();
+        var skillTrigger = provider.GetRequiredService<SkillTrigger>();
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var bootContract = provider.GetRequiredService<BootContract>();
         return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract);
     });
 
@@ -775,7 +802,7 @@ static async Task RunServeAsync(bool traceStartup)
         try
         {
             var integritySigner = host.Services.GetRequiredService<IntegritySigner>();
-            var feofallsConfig = host.Services.GetRequiredService<FeofallsConfig>();
+            var bootConfig = host.Services.GetRequiredService<BootConfig>();
             var publicKey = await integritySigner.InitializeAsync();
             logger.LogInformation("Agent identity key initialized.");
 
@@ -789,15 +816,15 @@ static async Task RunServeAsync(bool traceStartup)
                     else
                         logger.LogInformation("Integrity: {File} modified — re-signing ({Error}).", file, result.Error);
                 }
-                await integritySigner.SignBootFilesAsync(feofallsConfig);
+                await integritySigner.SignBootFilesAsync(bootConfig);
                 logger.LogInformation("Boot files re-signed ({Count} files).",
-                    feofallsConfig.ConstitutionFiles.Count + feofallsConfig.IdentityFiles.Count);
+                    bootConfig.ConstitutionFiles.Count + bootConfig.IdentityFiles.Count);
             }
             else
             {
-                await integritySigner.SignBootFilesAsync(feofallsConfig);
+                await integritySigner.SignBootFilesAsync(bootConfig);
                 logger.LogInformation("Boot file integrity verified ({Count} signed, 0 failures).",
-                    feofallsConfig.ConstitutionFiles.Count + feofallsConfig.IdentityFiles.Count);
+                    bootConfig.ConstitutionFiles.Count + bootConfig.IdentityFiles.Count);
             }
         }
         catch (Exception ex)

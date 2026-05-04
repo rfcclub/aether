@@ -8,12 +8,12 @@ namespace Aether;
 public sealed class AetherInitializationService : IHostedService
 {
     private readonly AetherDb _db;
-    private readonly IMemorySystem _memory;
+    private readonly FileMemory _memory;
     private readonly ILogger<AetherInitializationService> _logger;
 
     public AetherInitializationService(
         AetherDb db,
-        IMemorySystem memory,
+        FileMemory memory,
         ILogger<AetherInitializationService> logger)
     {
         _db = db;
@@ -28,17 +28,6 @@ public sealed class AetherInitializationService : IHostedService
         _logger.LogInformation("Initializing database schema...");
         await _db.InitializeAsync(ct);
         _logger.LogInformation("Database schema initialized.");
-
-        if (_memory is SqliteMemorySystem sqliteMemory)
-        {
-            _logger.LogInformation("Initializing memory system...");
-            await sqliteMemory.InitializeAsync(ct);
-            _logger.LogInformation("Memory system initialized.");
-        }
-        else
-        {
-            _logger.LogDebug("Memory system is not SqliteMemorySystem - skipping initialization.");
-        }
 
         _logger.LogInformation("Aether initialization complete.");
     }

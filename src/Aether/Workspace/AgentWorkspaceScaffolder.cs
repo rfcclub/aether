@@ -111,6 +111,13 @@ public sealed class AgentWorkspaceScaffolder
         "  },\n" +
         "  \"heartbeat\": {\n" +
         "    \"intervalMinutes\": 60\n" +
+        "  },\n" +
+        "  \"kairos\": {\n" +
+        "    \"enabled\": false,\n" +
+        "    \"rules\": [\n" +
+        "      { \"watch\": \"research/*.md\", \"channel\": \"telegram\", \"cooldownSeconds\": 300 },\n" +
+        "      { \"watch\": \"TASK_REPORT.md\", \"channel\": \"telegram\", \"cooldownSeconds\": 120 }\n" +
+        "    ]\n" +
         "  }\n" +
         "}\n";
 }

@@ -193,7 +193,7 @@ public sealed class IntegritySigner
     /// <summary>
     /// Sign all constitution and identity files defined in the config.
     /// </summary>
-    public async Task SignBootFilesAsync(FeofallsConfig config, CancellationToken ct = default)
+    public async Task SignBootFilesAsync(BootConfig config, CancellationToken ct = default)
     {
         foreach (var file in config.ConstitutionFiles.Concat(config.IdentityFiles))
         {

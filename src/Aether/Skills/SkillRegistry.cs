@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Skills;
 
-public class SkillRegistry : ISkillRegistry
+public class SkillRegistry 
 {
     private readonly ConcurrentDictionary<string, SkillDefinition> _skills = new();
     private readonly ILogger<SkillRegistry> _logger;

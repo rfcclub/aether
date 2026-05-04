@@ -5,23 +5,23 @@ using Microsoft.Extensions.Logging;
 namespace Aether.Tooling;
 
 /// <summary>
-/// Registers all built-in tools in IToolRegistry at startup.
+/// Registers all built-in tools in ToolRegistry at startup.
 /// Code-registered tools delegate to IToolImplementation for real execution.
 /// </summary>
 public sealed class ToolStartupRegistration : IHostedService
 {
-    private readonly IToolRegistry _registry;
+    private readonly ToolRegistry _registry;
     private readonly IEnumerable<IToolImplementation> _implementations;
     private readonly WebFetchTool _webFetchTool;
-    private readonly IWebSearchProvider? _searchProvider;
+    private readonly TavilyWebSearchProvider? _searchProvider;
     private readonly ILogger _logger;
 
     public ToolStartupRegistration(
-        IToolRegistry registry,
+        ToolRegistry registry,
         IEnumerable<IToolImplementation> implementations,
         WebFetchTool webFetchTool,
         ILogger<ToolStartupRegistration> logger,
-        IWebSearchProvider? searchProvider = null)
+        TavilyWebSearchProvider? searchProvider = null)
     {
         _registry = registry;
         _implementations = implementations;
@@ -130,9 +130,9 @@ public sealed class ToolStartupRegistration : IHostedService
 /// </summary>
 public static class ToolSandboxAccessor
 {
-    private static readonly AsyncLocal<ISandboxContext?> _current = new();
+    private static readonly AsyncLocal<SandboxContext?> _current = new();
 
-    public static ISandboxContext? Current
+    public static SandboxContext? Current
     {
         get => _current.Value;
         set => _current.Value = value;

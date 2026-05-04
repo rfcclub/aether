@@ -4,15 +4,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Tooling;
 
-public interface IToolRegistry
-{
-    void Register(string name, ToolDefinition tool);
-    void Unregister(string name);
-    ToolDefinition? Resolve(string name);
-    IEnumerable<string> List();
-    bool HasTool(string name);
-}
-
 public record ToolDefinition(
     string Name,
     string Description,
@@ -22,7 +13,7 @@ public record ToolDefinition(
 
 public record ToolResult(bool Success, object? Data, string? Error);
 
-public class ToolRegistry : IToolRegistry
+public class ToolRegistry 
 {
     private readonly ConcurrentDictionary<string, ToolDefinition> _tools = new();
     private readonly ILogger<ToolRegistry> _logger;

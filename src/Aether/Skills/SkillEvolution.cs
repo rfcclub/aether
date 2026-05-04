@@ -3,14 +3,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Skills;
 
-public interface ISkillEvolution
-{
-    Task RecordUsageAsync(string skillName, string userMessage, bool helped, CancellationToken ct = default);
-    Task<IReadOnlyList<SkillEvolutionRecord>> GetRecordsAsync(string skillName, int limit = 20, CancellationToken ct = default);
-    Task<IReadOnlyList<PromotionCandidate>> GetRecidivismCandidatesAsync(CancellationToken ct = default);
-    Task GeneratePatchAsync(string skillName, PromotionCandidate candidate, CancellationToken ct = default);
-}
-
 public record SkillEvolutionRecord(
     string SkillName,
     string UserMessage,
@@ -19,7 +11,7 @@ public record SkillEvolutionRecord(
     DateTime RecordedAt
 );
 
-public class SkillEvolution : ISkillEvolution
+public class SkillEvolution 
 {
     private readonly List<SkillEvolutionRecord> _records = new();
     private readonly object _lock = new();

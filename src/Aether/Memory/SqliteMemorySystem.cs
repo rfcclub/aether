@@ -9,7 +9,7 @@ namespace Aether.Memory;
 ///
 /// IMPLEMENTATION STATUS: Complete
 /// </summary>
-public class SqliteMemorySystem : IMemorySystem, IDisposable
+public class SqliteMemorySystem : IDisposable
 {
     private readonly string _dbPath;
     private readonly string _memoryFilePath;

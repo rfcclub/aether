@@ -14,7 +14,7 @@ public sealed class LifecycleStateMachineTests
     [Fact]
     public void Active_DecaysAfterThreshold_WithoutAccess()
     {
-        var fsm = new LifecycleStateMachine(new FeofallsConfig
+        var fsm = new LifecycleStateMachine(new BootConfig
         {
             ActiveToDecayingDays = 60,
             DecayingToArchivedDays = 90
@@ -31,7 +31,7 @@ public sealed class LifecycleStateMachineTests
     [Fact]
     public void Active_StaysActive_WithRecentAccess()
     {
-        var fsm = new LifecycleStateMachine(new FeofallsConfig());
+        var fsm = new LifecycleStateMachine(new BootConfig());
 
         var createdAt = DateTime.UtcNow.AddDays(-100);
         var lastAccessed = DateTime.UtcNow.AddDays(-10);
@@ -44,7 +44,7 @@ public sealed class LifecycleStateMachineTests
     [Fact]
     public void Decaying_ArchivesAfterThreshold()
     {
-        var fsm = new LifecycleStateMachine(new FeofallsConfig
+        var fsm = new LifecycleStateMachine(new BootConfig
         {
             ActiveToDecayingDays = 30,
             DecayingToArchivedDays = 60
@@ -61,7 +61,7 @@ public sealed class LifecycleStateMachineTests
     [Fact]
     public void SalienceScore_DecaysWithLogFormula()
     {
-        var fsm = new LifecycleStateMachine(new FeofallsConfig());
+        var fsm = new LifecycleStateMachine(new BootConfig());
 
         var score = fsm.ComputeSalience(accessCount: 10, lastAccessAge: TimeSpan.FromDays(5));
 

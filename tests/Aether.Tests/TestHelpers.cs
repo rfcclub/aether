@@ -106,84 +106,90 @@ internal sealed class MultiResponseProvider : ILLMProvider
     public Task<bool> HealthCheckAsync(CancellationToken ct) => Task.FromResult(true);
 }
 
-internal sealed class FakeToolExecutor : IToolExecutor
+internal sealed class FakeToolExecutor : ToolExecutor
 {
     private readonly ToolResult _defaultResult;
     public List<ToolCall> Calls { get; } = new();
 
-    public FakeToolExecutor(ToolResult? defaultResult = null)
+    public FakeToolExecutor(ToolResult? defaultResult = null) : base()
     {
         _defaultResult = defaultResult ?? new ToolResult(true, "ok");
     }
 
-    public Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+    public override Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
     {
         Calls.Add(call);
         return Task.FromResult(_defaultResult);
     }
 }
 
-internal class FakeMemorySystem : IMemorySystem
+internal class FakeMemorySystem : FileMemory
 {
     public bool ShouldThrowOnPromote { get; set; }
     public bool PromoteReturnsTrue { get; set; }
     public List<PromotionCandidate> PromotedCandidates { get; } = new();
     public Func<DateTime, CancellationToken, Task<IReadOnlyList<SessionSummary>>>? OnGetRecentSessions { get; set; }
 
-    public virtual Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default) =>
+    public FakeMemorySystem() : base(Path.Combine(Path.GetTempPath(), "aether-test-memory"))
+    {
+    }
+
+    public override Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default) =>
         Task.FromResult("fake memory context");
 
-    public void AddToContext(string content, float priority = 0.5f) { }
-    public void CompactContext(int targetTokens) { }
-    public IReadOnlyList<ContextEntry> GetContext() => Array.Empty<ContextEntry>();
-    public virtual Task<string> CreateSessionAsync(string agentId, CancellationToken ct = default) => Task.FromResult("fake-session");
-    public Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<SearchResult>>(Array.Empty<SearchResult>());
-    public Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default) => Task.FromResult<SessionSummary?>(null);
-    public virtual Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
+    public override void AddToContext(string content, float priority = 0.5f) { }
+    public override void CompactContext(int targetTokens) { }
+    public override IReadOnlyList<ContextEntry> GetContext() => Array.Empty<ContextEntry>();
+    public override Task<string> CreateSessionAsync(string agentId, CancellationToken ct = default) => Task.FromResult("fake-session");
+    public override Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default) => Task.CompletedTask;
+    public override Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<SearchResult>>(Array.Empty<SearchResult>());
+    public override Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default) => Task.FromResult<SessionSummary?>(null);
+    public override Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
     {
         if (OnGetRecentSessions is not null)
             return OnGetRecentSessions(since, ct);
         return Task.FromResult<IReadOnlyList<SessionSummary>>(Array.Empty<SessionSummary>());
     }
-    public Task<string> GetDurableMemoryAsync(CancellationToken ct = default) => Task.FromResult("");
-    public virtual Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
+    public override Task<string> GetDurableMemoryAsync(CancellationToken ct = default) => Task.FromResult("");
+    public override Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
     {
         if (ShouldThrowOnPromote) throw new InvalidOperationException("Simulated promotion failure");
         PromotedCandidates.Add(candidate);
         return Task.FromResult(PromoteReturnsTrue);
     }
-    public Task ForceConsolidationAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public override Task ForceConsolidationAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
-internal sealed class FakeSessionManager : ISessionManager
+internal sealed class FakeSessionManager : SessionManager
 {
+    public FakeSessionManager() : base() { }
     public List<SessionMessage> SavedMessages { get; } = new();
 
-    public Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct)
+    public override Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct)
     {
         return Task.FromResult(new Session("session-1", groupFolder, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
     }
 
-    public Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct)
+    public override Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct)
     {
         SavedMessages.Add(message);
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct)
+    public override Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct)
     {
         return Task.FromResult<IReadOnlyList<SessionMessage>>(Array.Empty<SessionMessage>());
     }
 
-    public Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
+    public override Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
     {
         return Task.FromResult<IReadOnlyList<Session>>(Array.Empty<Session>());
     }
 }
 
-internal sealed class FakePipelineTracker : IPipelineTracker
+internal sealed class FakePipelineTracker : PipelineTracker
 {
+    public FakePipelineTracker() : base(new Aether.Data.AetherDb(":memory:", Path.GetTempFileName()), null!) { }
     public List<PromotionCandidate> Tracked { get; } = new();
     public List<(PromotionCandidate, CandidateState)> Transitions { get; } = new();
 
@@ -191,129 +197,105 @@ internal sealed class FakePipelineTracker : IPipelineTracker
     public bool ThrowOnTrack { get; set; }
     public bool ThrowOnTransition { get; set; }
 
-    public Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
+    public new Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
     {
         if (ThrowOnTrack) throw new InvalidOperationException("Simulated track failure");
         Tracked.Add(candidate);
         return Task.CompletedTask;
     }
 
-    public Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
+    public new Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
     {
         if (ThrowOnTransition) throw new InvalidOperationException("Simulated transition failure");
         Transitions.Add((candidate, newState));
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
+    public new Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
     {
-        var result = Tracked.Select(c => new TrackedCandidate(
-            Guid.NewGuid().ToString(), "hash", DefaultState, c.Source, c.Content,
-            DateTime.UtcNow, DateTime.UtcNow)).ToList();
-        return Task.FromResult<IReadOnlyList<TrackedCandidate>>(result);
+        return Task.FromResult<IReadOnlyList<TrackedCandidate>>(Array.Empty<TrackedCandidate>());
     }
 
-    public Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
+    public new Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
     {
-        var result = Transitions
-            .Where(t => t.Item2 == state)
-            .Select(t => new TrackedCandidate(
-                Guid.NewGuid().ToString(), "hash", state, t.Item1.Source, t.Item1.Content,
-                DateTime.UtcNow, DateTime.UtcNow))
-            .ToList();
-        return Task.FromResult<IReadOnlyList<TrackedCandidate>>(result);
+        return Task.FromResult<IReadOnlyList<TrackedCandidate>>(Array.Empty<TrackedCandidate>());
     }
 }
 
-internal sealed class FakeBenchmarkGate : IBenchmarkGate
+internal sealed class FakeBenchmarkGate : BenchmarkGate
 {
+    public FakeBenchmarkGate() : base(".", 60, null!) { }
+    public BenchmarkResult? FixedResult { get; set; }
+    public bool ShouldThrow { get; set; }
     public bool Passes { get; set; } = true;
-    public int CallCount { get; private set; }
     public bool ThrowOnRun { get; set; }
 
-    public Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
+    public new Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
     {
-        CallCount++;
         if (ThrowOnRun) throw new InvalidOperationException("Simulated benchmark failure");
-        return Task.FromResult(new BenchmarkResult(Passes, Passes ? 0 : 1, "", Passes ? "" : "test failure"));
+        return Task.FromResult(FixedResult ?? new BenchmarkResult(Passes, 0, "", ""));
     }
 }
 
-internal sealed class FakeSelfImprovementService : ISelfImprovementService
+internal sealed class FakeSelfImprovementService : SelfImprovementService
 {
-    public int CallCount { get; private set; }
+    public FakeSelfImprovementService() : base(null!, null!, null!, null!, ".", null!) { }
+    public bool RunDailyReviewCalled { get; set; }
+    public bool ShouldThrow { get; set; }
     public bool ThrowOnRun { get; set; }
 
-    public Task RunDailyReviewAsync(CancellationToken ct = default)
+    public new Task RunDailyReviewAsync(CancellationToken ct = default)
     {
-        CallCount++;
-        if (ThrowOnRun) throw new InvalidOperationException("Simulated review failure");
+        if (ThrowOnRun || ShouldThrow) throw new InvalidOperationException("Simulated review failure");
+        RunDailyReviewCalled = true;
         return Task.CompletedTask;
     }
 }
 
-/// <summary>
-/// A fake LLM provider that yields tokens one by one via streaming events.
-/// Useful for testing that ProcessStreamingAsync yields individual tokens correctly.
-/// Can also return tool calls via CompleteStreamingEventsAsync for tool-loop testing.
-/// </summary>
 internal sealed class FakeStreamingProvider : ILLMProvider
 {
-    private readonly string _response;
-    private readonly IReadOnlyList<LlmToolCall>? _toolCalls;
-    private readonly bool _throwToolError;
-
+    private readonly string _fullText;
+    private readonly int _chunks;
+    public string Name => "fake-streaming";
+    public string Model => "stream-model";
+    public bool SupportsStreaming => true;
+    public bool SupportsTools => false;
     public int CallCount { get; private set; }
     public LlmRequest? LastRequest { get; private set; }
 
-    public string Name => "fake-streamer";
-    public string Model => "fake-streamer-model";
-    public bool SupportsStreaming => true;
-    public bool SupportsTools => _toolCalls is not null;
-
-    public FakeStreamingProvider(string response, IReadOnlyList<LlmToolCall>? toolCalls = null, bool throwToolError = false)
+    public FakeStreamingProvider(string fullText, int chunks = 5)
     {
-        _response = response;
-        _toolCalls = toolCalls;
-        _throwToolError = throwToolError;
+        _fullText = fullText;
+        _chunks = chunks;
     }
 
-    public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)
+    public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default)
     {
-        CallCount++;
         LastRequest = request;
-        if (_throwToolError) throw new InvalidOperationException("tool use not supported");
-        return Task.FromResult(new LlmResponse(_response, _toolCalls));
+        CallCount++;
+        return Task.FromResult(new LlmResponse(_fullText));
     }
 
-    public async IAsyncEnumerable<string> CompleteStreamingAsync(
-        LlmRequest request,
+    public async IAsyncEnumerable<string> CompleteStreamingAsync(LlmRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        CallCount++;
         LastRequest = request;
-        if (_throwToolError) throw new InvalidOperationException("tool use not supported");
-
-        foreach (var ch in _response)
+        CallCount++;
+        var words = _fullText.Split(' ');
+        var perChunk = Math.Max(1, words.Length / _chunks);
+        for (var i = 0; i < words.Length; i += perChunk)
         {
-            yield return ch.ToString();
+            ct.ThrowIfCancellationRequested();
+            yield return string.Join(' ', words.Skip(i).Take(perChunk)) + " ";
         }
     }
 
-    public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(
-        LlmRequest request,
+    public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(LlmRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        CallCount++;
-        LastRequest = request;
-        if (_throwToolError) throw new InvalidOperationException("tool use not supported");
-
-        foreach (var ch in _response)
-        {
-            yield return new StreamEvent.TextToken(ch.ToString());
-        }
-
-        yield return new StreamEvent.Response(new LlmResponse(_response, _toolCalls));
+        await foreach (var token in CompleteStreamingAsync(request, ct))
+            yield return new StreamEvent.TextToken(token);
+        yield return new StreamEvent.Response(new LlmResponse(_fullText));
     }
 
     public Task<bool> HealthCheckAsync(CancellationToken ct) => Task.FromResult(true);
@@ -321,33 +303,37 @@ internal sealed class FakeStreamingProvider : ILLMProvider
 
 internal sealed class FakeHttpHandler : HttpMessageHandler
 {
-    private readonly string _responseJson;
+    private readonly string? _responseContent;
     private readonly HttpStatusCode _statusCode;
-
     public HttpRequestMessage? LastRequest { get; private set; }
-    public string LastBody { get; private set; } = "";
+    public string? LastBody { get; private set; }
 
-    public FakeHttpHandler(string responseJson, HttpStatusCode statusCode = HttpStatusCode.OK)
+    public FakeHttpHandler() { }
+
+    public FakeHttpHandler(string responseContent, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
-        _responseJson = responseJson;
+        _responseContent = responseContent;
         _statusCode = statusCode;
     }
 
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         LastRequest = request;
-        LastBody = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
-        return new HttpResponseMessage(_statusCode) { Content = new StringContent(_responseJson) };
+        LastBody = request.Content is not null ? await request.Content.ReadAsStringAsync(ct) : null;
+        return new HttpResponseMessage(_statusCode)
+        {
+            Content = new StringContent(_responseContent ?? "")
+        };
     }
 }
 
 internal static class TestAgentProfile
 {
-    public static Agents.IAgentProfile NoOp(string name = "test-agent")
+    public static Aether.Agents.AgentProfile NoOp()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"aether-test-{Guid.NewGuid():N}");
+        var dir = Path.Combine(Path.GetTempPath(), "aether-test-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "SOUL.md"), "Aether");
-        return new Agents.AgentProfile(name, dir, new Agents.AgentConfig { StartupFiles = new() { "SOUL.md" } });
+        File.WriteAllText(Path.Combine(dir, "AGENTS.md"), "You are Aether. Be helpful.");
+        return new Aether.Agents.AgentProfile("aether", dir, new AgentConfig());
     }
 }

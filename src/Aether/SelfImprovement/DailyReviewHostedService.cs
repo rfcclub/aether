@@ -5,12 +5,12 @@ namespace Aether.SelfImprovement;
 
 public class DailyReviewHostedService : BackgroundService
 {
-    private readonly ISelfImprovementService _pipeline;
+    private readonly SelfImprovementService _pipeline;
     private readonly ILogger<DailyReviewHostedService> _logger;
     private DateTime _lastFired;
 
     public DailyReviewHostedService(
-        ISelfImprovementService pipeline,
+        SelfImprovementService pipeline,
         ILogger<DailyReviewHostedService> logger)
     {
         _pipeline = pipeline;

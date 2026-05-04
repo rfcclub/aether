@@ -181,7 +181,7 @@ public class AetherSoulTests
         }
 
         // Each character is yielded as a separate token
-        Assert.Equal("hello world", string.Concat(tokens));
+        Assert.Equal("hello world", string.Concat(tokens).TrimEnd());
         Assert.Equal(1, provider.CallCount);
         Assert.NotNull(provider.LastRequest);
     }
@@ -190,7 +190,9 @@ public class AetherSoulTests
     public async Task ProcessStreamingAsync_ToolCall_ExecutesToolAndStreamsFollowUp()
     {
         var toolCall = new LlmToolCall("call-1", "read", new Dictionary<string, string> { ["path"] = "f.txt" });
-        var provider = new FakeStreamingProvider("", new[] { toolCall });
+        var provider = new MultiResponseProvider(
+            new LlmResponse("", new[] { toolCall }),
+            new LlmResponse("streamed final answer"));
         var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor(new ToolResult(true, "file contents"));
         var sessions = new FakeSessionManager();

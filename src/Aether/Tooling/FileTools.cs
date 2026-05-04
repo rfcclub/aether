@@ -16,9 +16,9 @@ public abstract class FileToolBase : IToolImplementation
 
     protected FileToolBase(ILogger logger) => _logger = logger;
 
-    public abstract Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct);
+    public abstract Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct);
 
-    protected string ResolvePath(string path, ISandboxContext sandbox)
+    protected string ResolvePath(string path, SandboxContext sandbox)
     {
         var resolved = Path.IsPathRooted(path)
             ? Path.GetFullPath(path)
@@ -48,7 +48,7 @@ public sealed class ReadTool : FileToolBase
 
     public ReadTool(ILogger<ReadTool> logger) : base(logger) { }
 
-    public override async Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public override async Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         var path = args.GetProperty("path").GetString()!;
         var resolved = ResolvePath(path, sandbox);
@@ -78,7 +78,7 @@ public sealed class WriteTool : FileToolBase
 
     public WriteTool(ILogger<WriteTool> logger) : base(logger) { }
 
-    public override async Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public override async Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         if (!sandbox.AllowWrites)
             throw new UnauthorizedAccessException("Write operations are not allowed in this session.");
@@ -119,7 +119,7 @@ public sealed class EditTool : FileToolBase
 
     public EditTool(ILogger<EditTool> logger) : base(logger) { }
 
-    public override async Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public override async Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         if (!sandbox.AllowWrites)
             throw new UnauthorizedAccessException("Write operations are not allowed in this session.");
@@ -164,7 +164,7 @@ public sealed class GlobTool : FileToolBase
 
     public GlobTool(ILogger<GlobTool> logger) : base(logger) { }
 
-    public override Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public override Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         var pattern = args.GetProperty("pattern").GetString()!;
 
@@ -200,7 +200,7 @@ public sealed class GrepTool : FileToolBase
 
     public GrepTool(ILogger<GrepTool> logger) : base(logger) { }
 
-    public override async Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public override async Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         var pattern = args.GetProperty("pattern").GetString()!;
         var searchPath = args.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String

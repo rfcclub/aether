@@ -7,7 +7,7 @@ namespace Aether.Tests;
 public sealed class FileToolsTests : IDisposable
 {
     private readonly string _workspace;
-    private readonly ISandboxContext _sandbox;
+    private readonly SandboxContext _sandbox;
 
     public FileToolsTests()
     {

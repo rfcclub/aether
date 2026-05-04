@@ -23,16 +23,16 @@ RequireFile(root, "src/Aether/Data/AetherDb.cs");
 RequireFile(root, "src/Aether/Channels/IChannel.cs");
 RequireFile(root, "src/Aether/Channels/InboundMessage.cs");
 RequireFile(root, "src/Aether/Routing/ChannelMessageQueue.cs");
-RequireFile(root, "src/Aether/Routing/IMessageQueue.cs");
+RequireFile(root, "src/Aether/Routing/ChannelMessageQueue.cs");
 RequireFile(root, "src/Aether/Routing/MessageRouter.cs");
 RequireFile(root, "src/Aether/Routing/RoutedMessage.cs");
 RequireFile(root, "src/Aether/Providers/ILLMProvider.cs");
 RequireFile(root, "src/Aether/Providers/OpenRouterProvider.cs");
 RequireFile(root, "src/Aether/Sessions/Session.cs");
 RequireFile(root, "src/Aether/Sessions/SessionManager.cs");
-RequireFile(root, "src/Aether/Memory/IMemorySystem.cs");
 RequireFile(root, "src/Aether/Memory/FileMemory.cs");
-RequireFile(root, "src/Aether/Agent/IToolExecutor.cs");
+RequireFile(root, "src/Aether/Memory/FileMemory.cs");
+RequireFile(root, "src/Aether/Agent/ToolExecutor.cs");
 RequireFile(root, "src/Aether/Agent/DisabledToolExecutor.cs");
 RequireFile(root, "src/Aether/Agent/ToolExecutor.cs");
 RequireFile(root, "src/Aether/Agent/AetherSoul.cs");
@@ -777,18 +777,18 @@ internal sealed class FakeProvider : ILLMProvider
     public Task<bool> HealthCheckAsync(CancellationToken ct) => Task.FromResult(true);
 }
 
-internal sealed class CapturingToolExecutor : IToolExecutor
+internal sealed class CapturingToolExecutor : ToolExecutor
 {
     private readonly ToolResult _result;
 
-    public CapturingToolExecutor(ToolResult result)
+    public CapturingToolExecutor(ToolResult result) : base()
     {
         _result = result;
     }
 
     public List<ToolCall> Calls { get; } = new();
 
-    public Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+    public override Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
     {
         Calls.Add(call);
         return Task.FromResult(_result);

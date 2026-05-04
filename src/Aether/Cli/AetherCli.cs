@@ -41,6 +41,7 @@ public sealed class AetherCli
         root.AddCommand(BuildAgentCommand());
         root.AddCommand(BuildAccessCommand());
         root.AddCommand(BuildIntegrityCommand());
+        root.AddCommand(BuildRestartCommand());
 
         return root;
     }
@@ -391,8 +392,8 @@ public sealed class AetherCli
             context.Console.WriteLine($"Keypair generated for '{agentName}'.");
 
             var agentConfig = AgentConfigForDir(agentDir);
-            var feofallsConfig = agentConfig.Feofalls ?? new FeofallsConfig();
-            await signer.SignBootFilesAsync(feofallsConfig, context.GetCancellationToken());
+            var bootConfig = agentConfig.Boot ?? new BootConfig();
+            await signer.SignBootFilesAsync(bootConfig, context.GetCancellationToken());
             context.Console.WriteLine($"Boot files signed. Integrity directory: {Path.Combine(agentDir, "_INTEGRITY")}");
         });
 
@@ -475,6 +476,61 @@ public sealed class AetherCli
         return cmd;
     }
 
+    private Command BuildRestartCommand()
+    {
+        var cmd = new Command("restart", "Restart the Aether service");
+
+        cmd.SetHandler(async (context) =>
+        {
+            // Try systemd service first
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "systemctl",
+                Arguments = "is-active aether.service",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+
+            try
+            {
+                using var check = System.Diagnostics.Process.Start(psi);
+                if (check is not null)
+                {
+                    var output = (await check.StandardOutput.ReadToEndAsync()).Trim();
+                    await check.WaitForExitAsync(context.GetCancellationToken());
+
+                    if (output == "active")
+                    {
+                        context.Console.WriteLine("Restarting Aether service via systemd...");
+                        var restart = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "sudo",
+                            Arguments = "systemctl restart aether.service",
+                            UseShellExecute = false
+                        });
+                        await restart!.WaitForExitAsync(context.GetCancellationToken());
+                        context.Console.WriteLine(restart.ExitCode == 0
+                            ? "Aether service restarted."
+                            : $"systemctl restart failed with exit code {restart.ExitCode}");
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+                // systemctl not available, fall through
+            }
+
+            context.Console.WriteLine("Aether is not running as a systemd service.");
+            context.Console.WriteLine("Install: sudo bash scripts/install-service.sh install");
+            context.Console.WriteLine("Or start manually: dotnet run -- serve");
+            context.ExitCode = 1;
+        });
+
+        return cmd;
+    }
+
     private string? ResolveAgentDir(string agentName)
     {
         // Check config.json workspace path first
@@ -516,7 +572,7 @@ public sealed class AetherCli
     {
         return new AgentConfig
         {
-            Feofalls = new FeofallsConfig
+            Boot = new BootConfig
             {
                 ConstitutionFiles = new() { "AGENTS_GUARD.md" },
                 IdentityFiles = new() { "SOUL.md", "USER.md", "IDENTITY.md" }

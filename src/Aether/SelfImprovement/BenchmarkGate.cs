@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.SelfImprovement;
 
-public class BenchmarkGate : IBenchmarkGate
+public class BenchmarkGate 
 {
     private readonly string _testProjectPath;
     private readonly int _timeoutSeconds;

@@ -3,18 +3,12 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Tooling;
 
-public interface IToolExecutor
+public class ToolExecutor
 {
-    Task<ToolResult> ExecuteAsync(string name, JsonElement args, CancellationToken ct = default);
-    Task<ToolResult> ExecuteAsync(string name, string jsonArgs, CancellationToken ct = default);
-}
-
-public class ToolExecutor : IToolExecutor
-{
-    private readonly IToolRegistry _registry;
+    private readonly ToolRegistry _registry;
     private readonly ILogger<ToolExecutor> _logger;
 
-    public ToolExecutor(IToolRegistry registry, ILogger<ToolExecutor> logger)
+    public ToolExecutor(ToolRegistry registry, ILogger<ToolExecutor> logger)
     {
         _registry = registry;
         _logger = logger;

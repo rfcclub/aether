@@ -11,5 +11,5 @@ public interface IToolImplementation
     string Name { get; }
     string Description { get; }
     JsonElement ParametersSchema { get; }
-    Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct);
+    Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct);
 }

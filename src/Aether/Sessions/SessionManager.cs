@@ -2,16 +2,18 @@ using Aether.Data;
 
 namespace Aether.Sessions;
 
-public sealed class SessionManager : ISessionManager
+public class SessionManager
 {
     private readonly AetherDb _db;
+
+    protected SessionManager() { _db = null!; }
 
     public SessionManager(AetherDb db)
     {
         _db = db;
     }
 
-    public async Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default)
+    public virtual async Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
 
@@ -54,7 +56,7 @@ public sealed class SessionManager : ISessionManager
         return session;
     }
 
-    public async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default)
+    public virtual async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
 
@@ -91,7 +93,7 @@ public sealed class SessionManager : ISessionManager
         await update.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
@@ -118,7 +120,7 @@ public sealed class SessionManager : ISessionManager
         return messages;
     }
 
-    public async Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
@@ -143,12 +145,4 @@ public sealed class SessionManager : ISessionManager
 
         return sessions;
     }
-}
-
-public interface ISessionManager
-{
-    Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default);
-    Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default);
-    Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default);
-    Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default);
 }

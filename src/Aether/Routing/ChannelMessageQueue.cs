@@ -2,7 +2,7 @@ using System.Threading.Channels;
 
 namespace Aether.Routing;
 
-public sealed class ChannelMessageQueue : IMessageQueue
+public sealed class ChannelMessageQueue 
 {
     private readonly Channel<RoutedMessage> _channel;
 

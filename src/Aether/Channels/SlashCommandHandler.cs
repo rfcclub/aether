@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Channels;
 
-public sealed class SlashCommandHandler : ISlashCommandHandler
+public sealed class SlashCommandHandler 
 {
     private readonly IServiceProvider _rootServices;
     private readonly ProviderRouter? _providerRouter;
@@ -50,9 +50,9 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
 
     private async Task<SlashCommandResult> HandleNewAsync(SlashCommandContext ctx, CancellationToken ct)
     {
-        var sessionMgr = _rootServices.GetRequiredService<ISessionManager>();
+        var sessionMgr = _rootServices.GetRequiredService<SessionManager>();
         var session = await sessionMgr.GetOrCreateSessionAsync(ctx.AgentName, ct);
-        var memory = _rootServices.GetRequiredService<IMemorySystem>();
+        var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(0);
 
         _logger.LogInformation("New session {SessionId} created for agent {Agent}", session.Id, ctx.AgentName);
@@ -61,7 +61,7 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
 
     private Task<SlashCommandResult> HandleResetAsync(SlashCommandContext ctx, CancellationToken ct)
     {
-        var memory = _rootServices.GetRequiredService<IMemorySystem>();
+        var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(0);
 
         _logger.LogInformation("Context cleared for {Agent}", ctx.AgentName);
@@ -128,8 +128,8 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
 
     private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
     {
-        var memory = _rootServices.GetRequiredService<IMemorySystem>();
-        var sessionMgr = _rootServices.GetRequiredService<ISessionManager>();
+        var memory = _rootServices.GetRequiredService<FileMemory>();
+        var sessionMgr = _rootServices.GetRequiredService<SessionManager>();
         var contextEntries = memory.GetContext();
         var tokenEstimate = contextEntries.Sum(e => EstimateTokens(e.Content));
 
@@ -149,7 +149,7 @@ public sealed class SlashCommandHandler : ISlashCommandHandler
 
     private Task<SlashCommandResult> HandleCompactAsync(SlashCommandContext ctx, CancellationToken ct)
     {
-        var memory = _rootServices.GetRequiredService<IMemorySystem>();
+        var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(4000);
 
         var remaining = memory.GetContext();

@@ -1,17 +1,19 @@
 namespace Aether.Memory;
 
-public sealed class FileMemory : IMemorySystem
+public class FileMemory
 {
     private readonly string _groupsRoot;
     private readonly List<ContextEntry> _context = new();
     private readonly object _lock = new();
+
+    protected FileMemory() { _groupsRoot = Path.GetTempPath(); }
 
     public FileMemory(string groupsRoot)
     {
         _groupsRoot = groupsRoot;
     }
 
-    public async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
+    public virtual async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
     {
         var parts = new List<string>();
 
@@ -23,7 +25,7 @@ public sealed class FileMemory : IMemorySystem
 
     // ── Ephemeral context ──
 
-    public void AddToContext(string content, float priority = 0.5f)
+    public virtual void AddToContext(string content, float priority = 0.5f)
     {
         if (string.IsNullOrEmpty(content)) return;
         lock (_lock)
@@ -32,7 +34,7 @@ public sealed class FileMemory : IMemorySystem
         }
     }
 
-    public void CompactContext(int targetTokens)
+    public virtual void CompactContext(int targetTokens)
     {
         lock (_lock)
         {
@@ -59,7 +61,7 @@ public sealed class FileMemory : IMemorySystem
         }
     }
 
-    public IReadOnlyList<ContextEntry> GetContext()
+    public virtual IReadOnlyList<ContextEntry> GetContext()
     {
         lock (_lock)
         {
@@ -69,28 +71,28 @@ public sealed class FileMemory : IMemorySystem
 
     // ── Session layer (stubs) ──
 
-    public Task<string> CreateSessionAsync(string agentId, CancellationToken ct = default)
+    public virtual Task<string> CreateSessionAsync(string agentId, CancellationToken ct = default)
         => Task.FromResult(Guid.NewGuid().ToString());
 
-    public Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default)
+    public virtual Task AppendMessageAsync(string sessionId, string role, string content, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default)
+    public virtual Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int limit = 10, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<SearchResult>>(Array.Empty<SearchResult>());
 
-    public Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default)
+    public virtual Task<SessionSummary?> GetSessionAsync(string sessionId, CancellationToken ct = default)
         => Task.FromResult<SessionSummary?>(null);
 
-    public Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
+    public virtual Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<SessionSummary>>(Array.Empty<SessionSummary>());
 
-    public Task<string> GetDurableMemoryAsync(CancellationToken ct = default)
+    public virtual Task<string> GetDurableMemoryAsync(CancellationToken ct = default)
         => Task.FromResult(string.Empty);
 
-    public Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
+    public virtual Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
         => Task.FromResult(false);
 
-    public Task ForceConsolidationAsync(CancellationToken ct = default)
+    public virtual Task ForceConsolidationAsync(CancellationToken ct = default)
         => Task.CompletedTask;
 
     // ── Helpers ──

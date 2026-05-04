@@ -10,13 +10,13 @@ public sealed class MessageRouter
 {
     private readonly AetherDb? _db;
     private readonly ConfigLoader? _configLoader;
-    private readonly IMessageQueue? _queue;
+    private readonly ChannelMessageQueue? _queue;
     private readonly ILogger<MessageRouter>? _logger;
 
     private DateTime _lastConfigRead = DateTime.MinValue;
     private Dictionary<string, string>? _bindingCache; // routeKey -> agentName
 
-    public MessageRouter(AetherDb db, IMessageQueue queue)
+    public MessageRouter(AetherDb db, ChannelMessageQueue queue)
     {
         _db = db;
         _queue = queue;

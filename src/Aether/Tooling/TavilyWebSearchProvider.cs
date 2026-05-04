@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Tooling;
 
-public sealed class TavilyWebSearchProvider : IWebSearchProvider
+public class TavilyWebSearchProvider 
 {
     private readonly HttpClient _http;
     private readonly string? _apiKey;

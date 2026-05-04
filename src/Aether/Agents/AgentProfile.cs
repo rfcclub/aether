@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aether.Agents;
 
-public sealed class AgentProfile : IAgentProfile
+public sealed class AgentProfile 
 {
     private readonly AgentConfig _config;
 

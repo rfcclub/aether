@@ -4,6 +4,7 @@ using Aether.Config;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -23,8 +24,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly IServiceProvider _services;
     private readonly ChannelAccess _channelAccess;
     private readonly ConfigLoader _configLoader;
-    private readonly ISlashCommandHandler _slashCommands;
-    private readonly IMemorySystem _memory;
+    private readonly SlashCommandHandler _slashCommands;
+    private readonly FileMemory _memory;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -33,8 +34,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
         IServiceProvider services,
         ChannelAccess channelAccess,
         ConfigLoader configLoader,
-        ISlashCommandHandler slashCommands,
-        IMemorySystem memory,
+        SlashCommandHandler slashCommands,
+        FileMemory memory,
         ILogger<ChannelMessageProcessor> logger)
     {
         _channel = channel;
@@ -149,13 +150,14 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     }
                 }
 
-                var toolExecutor = scope.ServiceProvider.GetService<Aether.Agent.IToolExecutor>();
+                var toolExecutor = scope.ServiceProvider.GetService<Aether.Agent.ToolExecutor>();
                 if (toolExecutor is not null)
                     toolExecutor.SetAgentContext(routed.Value.WorkspacePath, agentSpec.Tools);
 
                 // Set sandbox context for tool dispatch
+                var sandboxType = scope.ServiceProvider.GetRequiredService<IConfiguration>()["sandbox:type"] ?? "process";
                 Tooling.ToolSandboxAccessor.Current = new Tooling.SandboxContext(
-                    routed.Value.WorkspacePath, agentSpec.Tools);
+                    routed.Value.WorkspacePath, agentSpec.Tools, sandboxType);
             }
 
             var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();

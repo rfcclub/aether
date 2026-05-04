@@ -6,10 +6,10 @@ namespace Aether.Agents;
 public sealed class EpisodicLogger
 {
     private readonly string _agentDir;
-    private readonly FeofallsConfig _config;
+    private readonly BootConfig _config;
     private int _sequence;
 
-    public EpisodicLogger(string agentDir, FeofallsConfig config)
+    public EpisodicLogger(string agentDir, BootConfig config)
     {
         _agentDir = agentDir;
         _config = config;

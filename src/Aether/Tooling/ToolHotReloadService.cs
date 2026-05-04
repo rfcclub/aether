@@ -7,14 +7,14 @@ namespace Aether.Tooling;
 /// <summary>
 /// Background service that watches a configurable <c>tools/</c> directory for
 /// <c>.json</c> tool definition files and registers/unregisters them in
-/// <see cref="IToolRegistry"/> at runtime — no restart required.
+/// <see cref="ToolRegistry"/> at runtime — no restart required.
 ///
 /// A 2-second debounce timer prevents duplicate processing from
 /// <see cref="FileSystemWatcher"/> firing multiple events for a single save.
 /// </summary>
 public sealed class ToolHotReloadService : BackgroundService
 {
-    private readonly IToolRegistry _registry;
+    private readonly ToolRegistry _registry;
     private readonly string _toolsPath;
     private readonly ILogger<ToolHotReloadService> _logger;
 
@@ -38,7 +38,7 @@ public sealed class ToolHotReloadService : BackgroundService
     private readonly Dictionary<string, string> _knownFiles = new(StringComparer.OrdinalIgnoreCase);
 
     public ToolHotReloadService(
-        IToolRegistry registry,
+        ToolRegistry registry,
         ILogger<ToolHotReloadService> logger,
         string toolsPath = "tools")
     {

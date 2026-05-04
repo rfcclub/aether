@@ -87,7 +87,7 @@ public class SelfImprovementServiceTests
 
     private sealed class FakeMemorySystemWithSessions : FakeMemorySystem
     {
-        public override Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
+        public new Task<IReadOnlyList<SessionSummary>> GetRecentSessionsAsync(DateTime since, CancellationToken ct = default)
         {
             return Task.FromResult<IReadOnlyList<SessionSummary>>(new[]
             {

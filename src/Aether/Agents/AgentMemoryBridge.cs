@@ -2,7 +2,7 @@ namespace Aether.Agents;
 
 /// <summary>
 /// Bridges OC-format agent memory files (daily transcripts, MEMORY.md, task inbox/report).
-/// Complements the existing IMemorySystem (SQLite/FTS5) with file-based agent memory.
+/// Complements the existing FileMemory (SQLite/FTS5) with file-based agent memory.
 /// </summary>
 public sealed class AgentMemoryBridge
 {
@@ -61,16 +61,16 @@ public sealed class AgentMemoryBridge
 
     public async Task<string> ReadDreamsAsync(CancellationToken ct = default)
     {
-        if (_config.Feofalls is null) return string.Empty;
-        var filePath = Path.Combine(_agentDir, _config.Feofalls.DreamsFile);
+        if (_config.Boot is null) return string.Empty;
+        var filePath = Path.Combine(_agentDir, _config.Boot.DreamsFile);
         if (!File.Exists(filePath)) return string.Empty;
         return await File.ReadAllTextAsync(filePath, ct);
     }
 
     public async Task AppendDreamAsync(string content)
     {
-        if (_config.Feofalls is null) return;
-        var filePath = Path.Combine(_agentDir, _config.Feofalls.DreamsFile);
+        if (_config.Boot is null) return;
+        var filePath = Path.Combine(_agentDir, _config.Boot.DreamsFile);
         var entry = $"\n---\n\n*{DateTime.UtcNow:MMMM dd, yyyy 'at' h:mm tt}*\n\n{content}\n";
         await File.AppendAllTextAsync(filePath, entry);
     }

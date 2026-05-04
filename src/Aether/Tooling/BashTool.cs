@@ -24,7 +24,7 @@ public sealed class BashTool : IToolImplementation
 
     public BashTool(ILogger<BashTool> logger) => _logger = logger;
 
-    public async Task<object> ExecuteAsync(JsonElement args, ISandboxContext sandbox, CancellationToken ct)
+    public async Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         var command = args.GetProperty("command").GetString()!;
 

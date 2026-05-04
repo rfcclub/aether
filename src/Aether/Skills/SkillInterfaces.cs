@@ -25,25 +25,3 @@ public record SkillContext(
     DateTime TriggeredAt
 );
 
-public interface ISkillRegistry
-{
-    void Register(SkillDefinition skill);
-    void Unregister(string name);
-    SkillDefinition? Resolve(string name);
-    IEnumerable<SkillDefinition> List();
-    IEnumerable<SkillDefinition> FindMatching(string userMessage);
-    bool HasSkill(string name);
-}
-
-public interface ISkillLoader
-{
-    Task<IReadOnlyList<SkillDefinition>> LoadFromDirectoryAsync(string path, CancellationToken ct = default);
-    SkillDefinition? ParseSkillFile(string path, string content);
-}
-
-public interface ISkillTrigger
-{
-    SkillContext? DetectTrigger(string userMessage, IReadOnlyList<SkillDefinition> skills);
-    SkillContext? DetectExplicit(string userMessage);
-    SkillContext? DetectAuto(string userMessage, IReadOnlyList<SkillDefinition> skills);
-}

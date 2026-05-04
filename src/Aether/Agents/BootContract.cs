@@ -2,12 +2,12 @@ using System.Text;
 
 namespace Aether.Agents;
 
-public sealed class FeofallsBootContract : IBootContract
+public sealed class BootContract 
 {
     private readonly string _agentDir;
-    private readonly FeofallsConfig _config;
+    private readonly BootConfig _config;
 
-    public FeofallsBootContract(string agentDir, FeofallsConfig config)
+    public BootContract(string agentDir, BootConfig config)
     {
         _agentDir = agentDir;
         _config = config;
