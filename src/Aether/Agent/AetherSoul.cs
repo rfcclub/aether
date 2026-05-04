@@ -394,15 +394,7 @@ public sealed class AetherSoul
         sb.AppendLine("If SOUL.md is present, its voice and rules are your voice and rules.");
         sb.AppendLine("If IDENTITY.md is present, its self-model is your self-model.");
         sb.AppendLine("Follow AGENTS.md operating rules at all times.");
-        sb.AppendLine();
-        sb.AppendLine("**Startup ritual is ALREADY DONE.** SOUL.md, USER.md, IDENTITY.md, AGENTS.md,");
-        sb.AppendLine("and MEMORY.md are already loaded above. Do NOT re-read them with tools.");
-        sb.AppendLine("Do NOT use 'read' to re-load files that are already in this system prompt.");
-        sb.AppendLine("Skip TASK_INBOX.md unless the user explicitly asks about tasks.");
-        sb.AppendLine();
-        sb.AppendLine("**User requests OVERRIDE all rituals.** When the user says X, do X NOW.");
-        sb.AppendLine("Do not redirect to file reading, task checking, or ritual steps.");
-        sb.AppendLine("The user's command is your ONLY priority.");
+        sb.AppendLine("The user's request is your priority. Act on it directly.");
         sb.AppendLine();
         sb.AppendLine("## CRITICAL — You MUST Use Tools To Read Files");
         sb.AppendLine("When any file is mentioned (SOUL.md, USER.md, TASK_INBOX.md, MEMORY.md,");
@@ -427,11 +419,6 @@ public sealed class AetherSoul
         {
             sb.AppendLine("## AGENTS.md — Your Operating Rules");
             sb.AppendLine(persona);
-            sb.AppendLine();
-            sb.AppendLine("**NOTE: The startup ritual in AGENTS.md above is ALREADY COMPLETE.**");
-            sb.AppendLine("All persona files (SOUL.md, USER.md, IDENTITY.md, MEMORY.md, 2B)");
-            sb.AppendLine("are loaded in this prompt. Skip the ritual section. Follow only");
-            sb.AppendLine("the operating rules section. Do NOT re-read files from the ritual.");
             sb.AppendLine();
         }
 
