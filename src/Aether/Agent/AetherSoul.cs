@@ -22,7 +22,7 @@ public sealed class AetherSoul
     private readonly BootContract? _bootContract;
 
     // Cache persona + boot content to avoid re-reading files on every call
-    private (string Persona, string DailyMemory, string Constitution, string Cognitive, string WorkingState) _cache;
+    private (string Persona, string DailyMemory, string Constitution, string Identity, string Memory, string WorkingState) _cache;
     private DateTime _cacheExpiry = DateTime.MinValue;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
 
@@ -55,9 +55,21 @@ public sealed class AetherSoul
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
+        var persona = await _profile.LoadPersonaAsync(ct);
+        var dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
+        string? constitution = null, identity = null, memory = null, workingState = null;
+        if (_bootContract is not null)
+        {
+            constitution = await _bootContract.LoadConstitutionAsync(ct);
+            identity = await _bootContract.LoadIdentityAsync(ct);
+            memory = await _bootContract.LoadCognitiveAsync(ct);
+            workingState = await _bootContract.LoadWorkingStateAsync(ct);
+        }
+
         var messages = new List<LlmMessage>
         {
-            LlmMessage.System(BuildSystemPrompt("Task executor", "", memoryContext, null, null, null, null))
+            LlmMessage.System(BuildSystemPrompt(persona, dailyMemory, memoryContext,
+                constitution, identity, memory, workingState, null))
         };
         messages.AddRange(history.Select(m => new LlmMessage(m.Role, m.Content)));
         messages.Add(LlmMessage.User(prompt));
@@ -76,23 +88,24 @@ public sealed class AetherSoul
         var memoryContext = await _memory.LoadContextAsync(groupFolder, ct);
 
         // Cache persona + boot content — avoids re-reading files on every heartbeat/cron tick
-        string persona, dailyMemory, constitution, cognitive, workingState;
+        string persona, dailyMemory, constitution, identity, memory, workingState;
         if (DateTime.UtcNow < _cacheExpiry)
         {
-            (persona, dailyMemory, constitution, cognitive, workingState) = _cache;
+            (persona, dailyMemory, constitution, identity, memory, workingState) = _cache;
         }
         else
         {
             persona = await _profile.LoadPersonaAsync(ct);
             dailyMemory = await _profile.LoadDailyMemoryAsync(ct);
-            constitution = null!; cognitive = null!; workingState = null!;
+            constitution = null!; identity = null!; memory = null!; workingState = null!;
             if (_bootContract is not null)
             {
                 constitution = await _bootContract.LoadConstitutionAsync(ct);
-                cognitive = await _bootContract.LoadCognitiveAsync(ct);
+                identity = await _bootContract.LoadIdentityAsync(ct);
+                memory = await _bootContract.LoadCognitiveAsync(ct);
                 workingState = await _bootContract.LoadWorkingStateAsync(ct);
             }
-            _cache = (persona, dailyMemory, constitution, cognitive, workingState);
+            _cache = (persona, dailyMemory, constitution, identity, memory, workingState);
             _cacheExpiry = DateTime.UtcNow + CacheTtl;
         }
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
@@ -103,7 +116,7 @@ public sealed class AetherSoul
         var messages = new List<LlmMessage>
         {
             LlmMessage.System(BuildSystemPrompt(persona, dailyMemory, memoryContext,
-                constitution, cognitive, workingState, skillContext))
+                constitution, identity, memory, workingState, skillContext))
         };
 
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
@@ -137,11 +150,12 @@ public sealed class AetherSoul
         var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 40, ct);
 
         // Boot contract
-        string? constitution = null, cognitive = null, workingState = null;
+        string? constitution = null, identity = null, memory = null, workingState = null;
         if (_bootContract is not null)
         {
             constitution = await _bootContract.LoadConstitutionAsync(ct);
-            cognitive = await _bootContract.LoadCognitiveAsync(ct);
+            identity = await _bootContract.LoadIdentityAsync(ct);
+            memory = await _bootContract.LoadCognitiveAsync(ct);
             workingState = await _bootContract.LoadWorkingStateAsync(ct);
         }
 
@@ -150,7 +164,7 @@ public sealed class AetherSoul
         var messages = new List<LlmMessage>
         {
             LlmMessage.System(BuildSystemPrompt(persona, dailyMemory, memoryContext,
-                constitution, cognitive, workingState, skillContext))
+                constitution, identity, memory, workingState, skillContext))
         };
 
         messages.AddRange(history.Select(message => new LlmMessage(message.Role, message.Content)));
@@ -364,33 +378,94 @@ public sealed class AetherSoul
         string dailyMemory,
         string memoryContext,
         string? constitution,
-        string? cognitive,
+        string? identity,
+        string? memory,
         string? workingState,
         SkillContext? skillContext)
     {
         var sb = new StringBuilder();
 
-        // 0. Constitution — red lines, must always be in context
+        // Layer 1: Identity (Mandatory) — persona embodiment
+        sb.AppendLine("## Identity (Mandatory)");
+        sb.AppendLine("You ARE this agent. The following files define your identity, voice,");
+        sb.AppendLine("tone, and behavioral rules. Embody them — this is who you are,");
+        sb.AppendLine("not reference material to consult. Every reply must reflect this persona.");
+        sb.AppendLine();
+        sb.AppendLine("If SOUL.md is present, its voice and rules are your voice and rules.");
+        sb.AppendLine("If IDENTITY.md is present, its self-model is your self-model.");
+        sb.AppendLine("Follow AGENTS.md startup rituals and operating rules.");
+        sb.AppendLine();
+        sb.AppendLine("**Before replying, verify: Does this response reflect my persona per SOUL.md?**");
+        sb.AppendLine();
+
+        // AGENTS.md — Operating Rules
+        if (!string.IsNullOrWhiteSpace(persona))
+        {
+            sb.AppendLine("## AGENTS.md — Your Operating Rules");
+            sb.AppendLine(persona);
+            sb.AppendLine();
+        }
+
+        // SOUL.md, IDENTITY.md, USER.md — identity files
+        if (!string.IsNullOrWhiteSpace(identity))
+        {
+            sb.AppendLine("## SOUL.md, IDENTITY.md, USER.md — Your Voice, Self-Model, and Relationship");
+            sb.AppendLine(identity);
+            sb.AppendLine();
+        }
+
+        // Layer 2: Constitution (Non-Negotiable Red Lines)
         if (!string.IsNullOrWhiteSpace(constitution))
         {
-            sb.AppendLine("## Constitution (Non-Negotiable)");
+            sb.AppendLine("## Constitution (Non-Negotiable Red Lines)");
+            sb.AppendLine("Instruction priority: Constitution > Persona > User request > Tool feedback.");
+            sb.AppendLine("These rules CANNOT be violated under any circumstance.");
+            sb.AppendLine("They override persona, user requests, and any other instruction.");
+            sb.AppendLine();
             sb.AppendLine(constitution);
             sb.AppendLine();
         }
 
-        // 1. Bootstrap — AGENTS.md contains instructions to read other files via tools
-        sb.AppendLine(persona);
+        // Conflict resolution: persona voice vs execution discipline
+        sb.AppendLine("## Conflict Resolution");
+        sb.AppendLine("When SOUL.md voice conflicts with Execution Bias:");
+        sb.AppendLine("- For actions (code edits, tool use, verification) → follow Execution Bias");
+        sb.AppendLine("- For communication (tone, warmth, style, personality) → follow SOUL.md");
         sb.AppendLine();
 
-        // 1.5 Cognitive context — SOUL.md, USER.md, IDENTITY.md (agent identity)
-        if (!string.IsNullOrWhiteSpace(cognitive))
+        // Layer 3: Execution Bias
+        sb.AppendLine("## Execution Bias");
+        sb.AppendLine();
+        sb.AppendLine("### Behavioral Defaults (applies always — chat and code)");
+        sb.AppendLine("- Clear request → act immediately in this turn. Don't describe — do.");
+        sb.AppendLine("- Continue until done or genuinely blocked (blocked = needs user decision, external dependency, or explicit permission). No deferred promises.");
+        sb.AppendLine("- Weak/empty result → vary approach before concluding. Don't retry blindly.");
+        sb.AppendLine("- Mutable facts (files, git, state) → check live, don't assume.");
+        sb.AppendLine("- If blocked, propose smallest viable workaround and continue.");
+        sb.AppendLine();
+        sb.AppendLine("### Code Style (when editing code)");
+        sb.AppendLine("- Read before write/edit. Never suggest changes to code you haven't inspected.");
+        sb.AppendLine("- Minimal scope — only what was requested. No adjacent refactoring.");
+        sb.AppendLine("- Don't add error handling for conditions that can't happen.");
+        sb.AppendLine("- Prefer editing existing files over creating new ones.");
+        sb.AppendLine("- Comments only for non-obvious reasoning. No narrative comments.");
+        sb.AppendLine();
+        sb.AppendLine("### Verification");
+        sb.AppendLine("- Deliver evidence, not promises: test output, build logs, inspection.");
+        sb.AppendLine("- Run checks after changes. Show command output.");
+        sb.AppendLine("- Don't claim PASS without supporting evidence.");
+        sb.AppendLine("- If a check fails, diagnose before retrying.");
+        sb.AppendLine();
+
+        // Layer 4: Memory — Long-Term
+        if (!string.IsNullOrWhiteSpace(memory))
         {
-            sb.AppendLine("## Cognitive Context");
-            sb.AppendLine(cognitive);
+            sb.AppendLine("## Memory — Long-Term");
+            sb.AppendLine(memory);
             sb.AppendLine();
         }
 
-        // 2. Working state — current tasks, heartbeat
+        // Layer 5: Working State
         if (!string.IsNullOrWhiteSpace(workingState))
         {
             sb.AppendLine("## Working State");
@@ -398,6 +473,7 @@ public sealed class AetherSoul
             sb.AppendLine();
         }
 
+        // Layer 6: Recent Memory
         if (!string.IsNullOrWhiteSpace(dailyMemory))
         {
             sb.AppendLine("## Recent Memory");
@@ -405,6 +481,7 @@ public sealed class AetherSoul
             sb.AppendLine();
         }
 
+        // Layer 7: Group Context
         if (!string.IsNullOrWhiteSpace(memoryContext))
         {
             sb.AppendLine("## Group Context");
@@ -412,15 +489,17 @@ public sealed class AetherSoul
             sb.AppendLine();
         }
 
+        // Layer 8: Skill
         if (skillContext != null)
         {
-            sb.AppendLine($"[Skill: {skillContext.Skill.Name}]");
+            sb.AppendLine($"## Skill: {skillContext.Skill.Name}");
             if (!string.IsNullOrWhiteSpace(skillContext.Skill.Description))
                 sb.AppendLine($"Description: {skillContext.Skill.Description}");
             if (!string.IsNullOrWhiteSpace(skillContext.Skill.Body))
                 sb.AppendLine().AppendLine(skillContext.Skill.Body);
             if (skillContext.Skill.AutoApply)
                 sb.AppendLine().AppendLine("(Auto-apply mode — follow skill steps)");
+            sb.AppendLine();
         }
 
         return sb.ToString();
