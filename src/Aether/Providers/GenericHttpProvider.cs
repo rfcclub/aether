@@ -17,7 +17,7 @@ public sealed class GenericHttpProvider : ILLMProvider
     public string Name => _options.Name;
     public string Model => _options.Model;
     public bool SupportsStreaming => false;
-    public bool SupportsTools => false;
+    public bool SupportsTools => true;
 
     public GenericHttpProvider(HttpClient client, GenericHttpOptions options)
     {
@@ -42,9 +42,10 @@ public sealed class GenericHttpProvider : ILLMProvider
             {
                 httpRequest.Headers.Authorization = new AuthenticationHeaderValue(parts[0], parts[1]);
             }
-            else
+            else if (!string.IsNullOrEmpty(_options.ApiKey))
             {
-                httpRequest.Headers.Add(_options.AuthHeader, _options.ApiKey);
+                // AuthHeader is a scheme name (e.g. "Bearer") — create proper Authorization header
+                httpRequest.Headers.Authorization = new AuthenticationHeaderValue(_options.AuthHeader, _options.ApiKey);
             }
         }
 
@@ -53,6 +54,22 @@ public sealed class GenericHttpProvider : ILLMProvider
             ["model"] = _options.Model,
             ["messages"] = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
         };
+
+        // Include tools if supported and provided
+        if (SupportsTools && request.Tools is { Count: > 0 })
+        {
+            body["tools"] = request.Tools.Select(t => new
+            {
+                type = "function",
+                function = new
+                {
+                    name = t.Name,
+                    description = t.Description,
+                    parameters = JsonSerializer.Deserialize<object>(t.ParametersJson)
+                }
+            }).ToArray();
+            body["tool_choice"] = "auto";
+        }
 
         httpRequest.Content = JsonContent.Create(body, options: JsonOptions);
 
@@ -122,7 +139,39 @@ public sealed class GenericHttpProvider : ILLMProvider
             {
                 content = contentElement.GetString() ?? "";
             }
-            return new LlmResponse(content, null);
+
+            // Parse tool calls if present
+            List<LlmToolCall>? toolCalls = null;
+            if (message.TryGetProperty("tool_calls", out var toolCallsElement) &&
+                toolCallsElement.ValueKind == JsonValueKind.Array)
+            {
+                toolCalls = new List<LlmToolCall>();
+                foreach (var tc in toolCallsElement.EnumerateArray())
+                {
+                    var fn = tc.GetProperty("function");
+                    var name = fn.GetProperty("name").GetString() ?? "";
+                    var argsJson = fn.GetProperty("arguments").GetString() ?? "{}";
+                    var id = "call_0";
+                    if (tc.TryGetProperty("id", out var idElement))
+                        id = idElement.GetString() ?? id;
+
+                    // Parse args JSON into dictionary
+                    var args = new Dictionary<string, string>();
+                    try
+                    {
+                        using var argsDoc = JsonDocument.Parse(argsJson);
+                        foreach (var prop in argsDoc.RootElement.EnumerateObject())
+                        {
+                            args[prop.Name] = prop.Value.ToString();
+                        }
+                    }
+                    catch { /* leave args empty if JSON parse fails */ }
+
+                    toolCalls.Add(new LlmToolCall(id, name, args));
+                }
+            }
+
+            return new LlmResponse(content, toolCalls);
         }
 
         // Try simple content field

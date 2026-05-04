@@ -44,7 +44,7 @@ public static class ProviderFactory
             ApiKey: entry.ApiKey ?? "",
             BaseUrl: baseUrl,
             Endpoint: "chat/completions",
-            AuthHeader: "Authorization");
+            AuthHeader: "Bearer");
         return new GenericHttpProvider(client, options);
     }
 
