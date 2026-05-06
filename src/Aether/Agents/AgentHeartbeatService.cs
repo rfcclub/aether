@@ -30,7 +30,7 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         _soul = soul;
         _config = config;
         _logger = logger;
-        _interval = interval ?? TimeSpan.FromMinutes(5);
+        _interval = interval ?? TimeSpan.FromMinutes(30);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

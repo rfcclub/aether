@@ -42,7 +42,12 @@ public sealed class AetherSoul
         => ProcessAsync(groupFolder, prompt, ct);
 
     public Task<AgentResponse> ProcessTaskAsync(string groupFolder, string prompt, string? workingStateOverride, CancellationToken ct = default)
-        => ProcessAsync(groupFolder, prompt, ct);
+    {
+        var fullPrompt = prompt;
+        if (!string.IsNullOrWhiteSpace(workingStateOverride))
+            fullPrompt = $"{prompt}\n\n## Working State\n{workingStateOverride}";
+        return ProcessAsync(groupFolder, fullPrompt, ct);
+    }
 
     public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct = default)
     {
