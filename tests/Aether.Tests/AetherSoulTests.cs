@@ -7,22 +7,18 @@ namespace Aether.Tests;
 
 public class AetherSoulTests
 {
-    private static (AetherSoul soul, FakeLlmProvider llm, FakeToolExecutor tools, FakeSessionManager sessions) CreateSoul(string llmResponse = "ack")
+    private static (AetherSoul soul, FakeLlmProvider llm, FakeToolExecutor tools) CreateSoul(string llmResponse = "ack")
     {
         var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse(llmResponse));
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
-        return (soul, provider, tools, sessions);
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
+        return (soul, provider, tools);
     }
 
     [Fact]
     public async Task ProcessAsync_SimplePrompt_ReturnsResponse()
     {
-        var (soul, llm, _, sessions) = CreateSoul("hello back");
+        var (soul, llm, _) = CreateSoul("hello back");
 
         var response = await soul.ProcessAsync("main", "hello");
 
@@ -34,7 +30,7 @@ public class AetherSoulTests
     [Fact]
     public async Task ProcessAsync_IncludesSystemPrompt()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
 
         await soul.ProcessAsync("main", "test");
 
@@ -45,7 +41,7 @@ public class AetherSoulTests
     [Fact]
     public async Task ProcessAsync_IncludesToolDefinitions()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
 
         await soul.ProcessAsync("main", "test");
 
@@ -64,12 +60,8 @@ public class AetherSoulTests
         var provider = new MultiResponseProvider(
             new LlmResponse("", new[] { new LlmToolCall("call-1", "read", new Dictionary<string, string> { ["path"] = "f.txt" }) }),
             new LlmResponse("final answer"));
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor(new ToolResult(true, "file contents"));
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "read file");
 
@@ -85,9 +77,7 @@ public class AetherSoulTests
         var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("done"));
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         skills.Register(new SkillDefinition("pdf", "process PDF documents", "", Array.Empty<string>(), false, "PDF skill body"));
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var memory = new FakeMemorySystem();
-        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), new FakeSessionManager(), skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, new FakeToolExecutor(), TestAgentProfile.NoOp());
 
         await soul.ProcessAsync("main", "merge these PDF files please");
 
@@ -103,12 +93,8 @@ public class AetherSoulTests
         var provider = new MultiResponseProvider(
             new LlmResponse("", new[] { new LlmToolCall("call-1", "read", new Dictionary<string, string>()) }),
             new LlmResponse("ok, I need a path"));
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "read a file");
 
@@ -127,12 +113,8 @@ public class AetherSoulTests
         // Access BuiltInTools via a provider call to verify all 6 tools have schemas
         // Create a soul and check that tool calls to each built-in pass validation
         var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("ok"));
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         // Valid tool calls for each built-in tool — all should execute (no validation errors)
         var validCalls = new Dictionary<string, Dictionary<string, string>>
@@ -166,12 +148,8 @@ public class AetherSoulTests
     public async Task ProcessStreamingAsync_TextResponse_YieldsAllTokens()
     {
         var provider = new FakeStreamingProvider("hello world");
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "say hi"))
@@ -192,12 +170,8 @@ public class AetherSoulTests
         var provider = new MultiResponseProvider(
             new LlmResponse("", new[] { toolCall }),
             new LlmResponse("streamed final answer"));
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor(new ToolResult(true, "file contents"));
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         // First streaming call returns a tool call. The second streaming call
         // (for tool result response) needs to be text-only.
@@ -210,7 +184,7 @@ public class AetherSoulTests
             // Second turn: final text response
             new LlmResponse("file read successfully"));
 
-        var soul2 = new AetherSoul(multiProvider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul2 = new AetherSoul(multiProvider, tools, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul2.ProcessStreamingAsync("main", "read f.txt"))
@@ -228,12 +202,8 @@ public class AetherSoulTests
     public async Task ProcessStreamingAsync_NoToolCalls_SavesToSession()
     {
         var provider = new FakeStreamingProvider("streaming response");
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "hello"))
@@ -252,7 +222,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_ThreeSections()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         Assert.Contains("You are Aether", system);
@@ -264,7 +234,7 @@ public class AetherSoulTests
     public async Task BuildSystemPrompt_CacheBoundaryMarker()
     {
         // CacheBoundaryMarker kept for backward compat — present in WorkingContext via BuildSystemPrompt
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
@@ -273,7 +243,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_NoForbiddenStrings()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         Assert.DoesNotContain("Constitution > Persona", system);
@@ -286,7 +256,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_SafetyGatePresent()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         Assert.Contains("self-harm", system);
@@ -298,7 +268,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_ExecutionBiasPreserved()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         Assert.Contains("Read before write/edit", system);
@@ -309,7 +279,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_AntiHallucinationPreserved()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         // Simplified system prompt relies on general rules rather than tool-specific instructions
@@ -320,11 +290,7 @@ public class AetherSoulTests
     public async Task ProcessTaskAsync_UsesNewSignature()
     {
         var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("task done"));
-        var memory = new FakeMemorySystem();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, new FakeToolExecutor(), TestAgentProfile.NoOp());
         var response = await soul.ProcessTaskAsync("main", "do task");
         Assert.Equal("task done", response.Content);
         var system = provider.LastRequest!.Messages[0].Content;
@@ -335,7 +301,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_IdentityContextContainsFileContent()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
 
         await soul.ProcessAsync("main", "test");
 
@@ -347,7 +313,7 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_IncludesCurrentDate()
     {
-        var (soul, llm, _, _) = CreateSoul("ok");
+        var (soul, llm, _) = CreateSoul("ok");
 
         await soul.ProcessAsync("main", "test");
 
@@ -362,9 +328,7 @@ public class AetherSoulTests
         var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("done"));
         var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
         skills.Register(new SkillDefinition("test-skill", "test skill", "", Array.Empty<string>(), false, "skill body content"));
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var memory = new FakeMemorySystem();
-        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), new FakeSessionManager(), skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, new FakeToolExecutor(), TestAgentProfile.NoOp());
 
         await soul.ProcessAsync("main", "do something");
 
@@ -376,12 +340,8 @@ public class AetherSoulTests
     public async Task ProcessStreamingAsync_UsesNewSignature()
     {
         var provider = new FakeStreamingProvider("streaming output");
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "hello"))
@@ -405,12 +365,8 @@ public class AetherSoulTests
             new LlmResponse("", new[] { toolCall }),
             new LlmResponse("I need a path argument"));
 
-        var memory = new FakeMemorySystem();
         var tools = new FakeToolExecutor();
-        var sessions = new FakeSessionManager();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
-        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var tokens = new List<string>();
         await foreach (var token in soul.ProcessStreamingAsync("main", "read a file"))

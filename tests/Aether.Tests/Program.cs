@@ -597,16 +597,15 @@ static async Task VerifyAetherSoulAsync(string root)
         await db.InitializeAsync(CancellationToken.None);
 
         var sessions = new SessionManager(db);
-        var memory = new FileMemory(memoryRoot);
         var provider = new FakeProvider("ack");
         var tools = new DisabledToolExecutor();
-        var soul = new AetherSoul(provider, memory, tools, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()), TestAgentProfile.NoOp());
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
         var response = await soul.ProcessAsync("main", "hello", CancellationToken.None);
 
         Require(response.Content == "ack", "AetherSoul must return provider content.");
         Require(provider.LastRequest is not null, "AetherSoul must call the LLM provider.");
-        Require(provider.LastRequest!.Messages.Any(m => m.Role == "system" && m.Content.Contains("global instructions", StringComparison.Ordinal)), "AetherSoul must include memory context.");
+        Require(provider.LastRequest!.Messages.Any(m => m.Role == "system" && m.Content.Contains("You are Aether", StringComparison.Ordinal)), "AetherSoul must include identity context.");
 
         var session = await sessions.GetOrCreateSessionAsync("main", CancellationToken.None);
         var history = await sessions.GetHistoryAsync(session.Id, maxMessages: 10, CancellationToken.None);
@@ -626,7 +625,7 @@ static async Task VerifyAetherSoulAsync(string root)
                 }),
             new LlmResponse("tool result final"));
         var toolExecutor = new CapturingToolExecutor(new ToolResult(true, "file contents"));
-        var toolSoul = new AetherSoul(toolProvider, memory, toolExecutor, sessions, new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>()), new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>()), TestAgentProfile.NoOp());
+        var toolSoul = new AetherSoul(toolProvider, toolExecutor, TestAgentProfile.NoOp());
 
         var toolResponse = await toolSoul.ProcessAsync("tools", "inspect notes", CancellationToken.None);
 

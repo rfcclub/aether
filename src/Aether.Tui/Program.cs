@@ -471,13 +471,9 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ILLMProvider>();
-        var memory = provider.GetRequiredService<FileMemory>();
         var tools = provider.GetRequiredService<ToolExecutor>();
-        var sessions = provider.GetRequiredService<SessionManager>();
-        var skills = provider.GetRequiredService<SkillRegistry>();
-        var skillTrigger = provider.GetRequiredService<SkillTrigger>();
         var profile = provider.GetRequiredService<AgentProfile>();
-        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile);
+        return new AetherSoul(llm, tools, profile);
     });
 
     services.AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance);

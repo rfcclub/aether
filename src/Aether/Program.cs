@@ -148,7 +148,7 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
         var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
         var profile = ResolveAgentProfile("aether", configuration);
-        var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
+        var soul = new AetherSoul(provider, toolExecutor, profile);
 
         var response = await soul.ProcessAsync(group, prompt, cts.Token);
         Console.WriteLine(response.Content);
@@ -318,8 +318,7 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
     var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
     var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
     var profile = ResolveAgentProfile("aether", configuration);
-    var soul = new AetherSoul(provider, memory, toolExecutor, sessions, skillRegistry, skillTrigger, profile);
-
+    var soul = new AetherSoul(provider, toolExecutor, profile);
     Console.WriteLine("╔══════════════════════════════════════╗");
     Console.WriteLine("║         Aether — Onboard REPL       ║");
     Console.WriteLine("╠══════════════════════════════════════╣");
@@ -744,15 +743,9 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
-        var memory = provider.GetRequiredService<FileMemory>();
         var tools = provider.GetRequiredService<ToolExecutor>();
-        var sessions = provider.GetRequiredService<SessionManager>();
-        var skills = provider.GetRequiredService<SkillRegistry>();
-        var skillTrigger = provider.GetRequiredService<SkillTrigger>();
         var profile = provider.GetRequiredService<AgentProfile>();
-        var bootContract = provider.GetRequiredService<BootContract>();
-        var contextAssembler = provider.GetRequiredService<ContextAssembler>();
-        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract, contextAssembler);
+        return new AetherSoul(llm, tools, profile);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

@@ -34,13 +34,9 @@ public sealed class AgentIntegrationTests : IDisposable
         File.WriteAllText(Path.Combine(_agentDir, "AGENTS.md"), "You are Maria. User is Thoor.");
         var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
         var llm = new FakeLlmProvider("test", "test-model", new LlmResponse("Hello, bệ hạ!"));
-        var memory = new FakeMemorySystem();
-        var sessions = new FakeSessionManager();
         var tools = new FakeToolExecutor();
-        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
-        var skillTrigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
 
-        var soul = new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile);
+        var soul = new AetherSoul(llm, tools, profile);
         var response = await soul.ProcessAsync("maria", "Hello!");
 
         Assert.Contains("Maria", llm.LastRequest!.Messages[0].Content);

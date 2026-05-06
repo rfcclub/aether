@@ -160,14 +160,9 @@ public partial class App : Application
         services.AddSingleton<AetherSoul>(provider =>
         {
             var llm = provider.GetRequiredService<ProviderRouter>();
-            var memory = provider.GetRequiredService<FileMemory>();
             var tools = provider.GetRequiredService<Aether.Agent.ToolExecutor>();
-            var sessions = provider.GetRequiredService<SessionManager>();
-            var skills = provider.GetRequiredService<SkillRegistry>();
-            var skillTrigger = provider.GetRequiredService<SkillTrigger>();
             var profile = provider.GetRequiredService<AgentProfile>();
-            var bootContract = provider.GetRequiredService<BootContract>();
-            return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract);
+            return new AetherSoul(llm, tools, profile);
         });
 
         services.AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance);

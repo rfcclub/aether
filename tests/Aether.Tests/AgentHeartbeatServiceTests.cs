@@ -54,12 +54,6 @@ public sealed class AgentHeartbeatServiceTests : IDisposable
     private static AetherSoul CreateSoul(string response = "ok")
     {
         var llm = new FakeLlmProvider("test", "test-model", new LlmResponse(response));
-        return new AetherSoul(llm,
-            new FakeMemorySystem(),
-            new FakeToolExecutor(),
-            new FakeSessionManager(),
-            new SkillRegistry(NullLogger<SkillRegistry>.Instance),
-            new SkillTrigger(NullLogger<SkillTrigger>.Instance),
-            TestAgentProfile.NoOp());
+        return new AetherSoul(llm, new FakeToolExecutor(), TestAgentProfile.NoOp());
     }
 }

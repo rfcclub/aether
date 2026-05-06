@@ -1,9 +1,6 @@
 using System.Text;
 using Aether.Agents;
-using Aether.Memory;
 using Aether.Providers;
-using Aether.Sessions;
-using Aether.Skills;
 using Aether.Tooling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,30 +12,22 @@ public sealed class AetherSoul
     private const int MaxToolIterations = 8;
     private readonly ILLMProvider _llm;
     private readonly ToolExecutor _tools;
-    private readonly SkillTrigger _skillTrigger;
     private readonly ILogger<AetherSoul> _logger;
 
     private WorkingContext _ctx;
 
     public AetherSoul(
         ILLMProvider llm,
-        FileMemory memory,
         ToolExecutor tools,
-        SessionManager sessions,
-        SkillRegistry skills,
-        SkillTrigger skillTrigger,
         AgentProfile profile,
-        BootContract? bootContract = null,
-        ContextAssembler? contextAssembler = null,
         ILogger<AetherSoul>? logger = null)
     {
         _llm = llm;
         _tools = tools;
-        _skillTrigger = skillTrigger;
         _logger = logger ?? NullLogger<AetherSoul>.Instance;
         _ctx = new WorkingContext(profile.AgentDirectory, BuiltInTools);
 
-        // Build system prompt with identity from profile files (loaded once, sync)
+        // Identity context loaded once, sync — stays resident in WorkingContext for session lifetime.
         var identity = profile.LoadIdentityContext();
         if (!string.IsNullOrWhiteSpace(identity))
             _ctx.SetSystemPrompt(BuildSystemPrompt(identity));
