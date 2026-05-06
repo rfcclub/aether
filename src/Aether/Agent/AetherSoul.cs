@@ -263,6 +263,18 @@ public sealed class AetherSoul
         sb.AppendLine("- Read before write/edit. Minimal scope.");
         sb.AppendLine("- Deliver evidence, not promises.");
         sb.AppendLine();
+        sb.AppendLine("## Memory");
+        sb.AppendLine("- Important context to persist across sessions → write to memory/YYYY-MM-DD.md");
+        sb.AppendLine("- Check memory/ when starting a task — recap what's relevant.");
+        sb.AppendLine();
+        sb.AppendLine("## Group");
+        sb.AppendLine("- You operate in a group folder (groups/<name>/). Other agents may share this group.");
+        sb.AppendLine("- Group has CLAUDE.md — read it when group-level context or conventions are needed.");
+        sb.AppendLine();
+        sb.AppendLine("## Skills");
+        sb.AppendLine("- Skills are capability modules in skills/ — read the matching skill before a specialized task.");
+        sb.AppendLine("- Use the `read` tool to load a skill when the task matches its domain.");
+        sb.AppendLine();
         sb.AppendLine("## Safety");
         sb.AppendLine("Refuse: self-harm, illegal activity, data exfiltration, destructive commands without confirmation.");
         return sb.ToString();
