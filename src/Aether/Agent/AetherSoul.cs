@@ -39,25 +39,46 @@ public sealed class AetherSoul
     /// Process a task prompt — minimal path, no persona loading.
     /// </summary>
     public Task<AgentResponse> ProcessTaskAsync(string groupFolder, string prompt, CancellationToken ct = default)
-        => ProcessAsync(groupFolder, prompt, ct);
+        => ProcessIsolatedAsync(prompt, ct);
 
     public Task<AgentResponse> ProcessTaskAsync(string groupFolder, string prompt, string? workingStateOverride, CancellationToken ct = default)
     {
         var fullPrompt = prompt;
         if (!string.IsNullOrWhiteSpace(workingStateOverride))
             fullPrompt = $"{prompt}\n\n## Working State\n{workingStateOverride}";
-        return ProcessAsync(groupFolder, fullPrompt, ct);
+        return ProcessIsolatedAsync(fullPrompt, ct);
     }
 
     public async Task<AgentResponse> ProcessAsync(string groupFolder, string prompt, CancellationToken ct = default)
     {
         _ctx.AddUser(prompt);
 
-        var response = await RunLlmToolLoopAsync(_ctx.Messages, ct);
+        var response = await RunLlmToolLoopAsync(_ctx.Messages, _ctx, ct);
 
         _ctx.AddAssistant(response.Content);
 
         return new AgentResponse(response.Content, _ctx.SessionId);
+    }
+
+    private async Task<AgentResponse> ProcessIsolatedAsync(string prompt, CancellationToken ct)
+    {
+        var originalCtx = _ctx;
+        var isolatedCtx = new WorkingContext(originalCtx.WorkspacePath, BuiltInTools);
+        if (originalCtx.Messages.Count > 0 && originalCtx.Messages[0].Role == "system")
+            isolatedCtx.SetSystemPrompt(originalCtx.Messages[0].Content);
+
+        _ctx = isolatedCtx;
+        try
+        {
+            _ctx.AddUser(prompt);
+            var response = await RunLlmToolLoopAsync(_ctx.Messages, _ctx, ct);
+            _ctx.AddAssistant(response.Content);
+            return new AgentResponse(response.Content, _ctx.SessionId);
+        }
+        finally
+        {
+            _ctx = originalCtx;
+        }
     }
 
     /// <summary>
@@ -178,7 +199,7 @@ public sealed class AetherSoul
         _ctx.AddAssistant(fullContent.ToString());
     }
 
-    private async Task<LlmResponse> RunLlmToolLoopAsync(IReadOnlyList<LlmMessage> messages, CancellationToken ct)
+    private async Task<LlmResponse> RunLlmToolLoopAsync(IReadOnlyList<LlmMessage> messages, WorkingContext ctx, CancellationToken ct)
     {
         var tools = BuiltInTools;
         for (var iteration = 0; iteration < MaxToolIterations; iteration++)
@@ -190,7 +211,6 @@ public sealed class AetherSoul
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("tool use") || ex.Message.Contains("tool"))
             {
-                // Model doesn't support tools — retry without them
                 if (tools is not null)
                 {
                     tools = null;
@@ -210,8 +230,8 @@ public sealed class AetherSoul
                 return response;
             }
 
-            _ctx.AddAssistantToolCalls(response.Content, response.ToolCalls);
-            messages = _ctx.Messages;
+            ctx.AddAssistantToolCalls(response.Content, response.ToolCalls);
+            messages = ctx.Messages;
             foreach (var toolCall in response.ToolCalls)
             {
                 ct.ThrowIfCancellationRequested();
@@ -222,15 +242,15 @@ public sealed class AetherSoul
                     var errors = ParameterValidator.Validate(toolCall, toolDef);
                     if (errors.Count > 0)
                     {
-                        _ctx.AddToolResult(toolCall.Id, toolCall.Name, ParameterValidator.FormatErrors(errors));
+                        ctx.AddToolResult(toolCall.Id, toolCall.Name, ParameterValidator.FormatErrors(errors));
                         continue;
                     }
                 }
 
                 var result = _tools.Execute(new ToolCall(toolCall.Name, toolCall.Arguments));
-                _ctx.AddToolResult(toolCall.Id, toolCall.Name, FormatToolResult(result));
+                ctx.AddToolResult(toolCall.Id, toolCall.Name, FormatToolResult(result));
             }
-            messages = _ctx.Messages;
+            messages = ctx.Messages;
         }
 
         throw new InvalidOperationException($"AetherSoul exceeded {MaxToolIterations} tool iterations.");
