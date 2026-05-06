@@ -116,6 +116,12 @@ internal sealed class FakeToolExecutor : ToolExecutor
         _defaultResult = defaultResult ?? new ToolResult(true, "ok");
     }
 
+    public override ToolResult Execute(ToolCall call)
+    {
+        Calls.Add(call);
+        return _defaultResult;
+    }
+
     public override Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
     {
         Calls.Add(call);
@@ -133,6 +139,9 @@ internal class FakeMemorySystem : FileMemory
     public FakeMemorySystem() : base(Path.Combine(Path.GetTempPath(), "aether-test-memory"))
     {
     }
+
+    public override string LoadContext(string groupFolder)
+        => "fake memory context";
 
     public override Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default) =>
         Task.FromResult("fake memory context");
@@ -164,6 +173,21 @@ internal sealed class FakeSessionManager : SessionManager
 {
     public FakeSessionManager() : base() { }
     public List<SessionMessage> SavedMessages { get; } = new();
+
+    public override Session GetOrCreateSession(string groupFolder)
+        => new Session("session-1", groupFolder, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+
+    public override void AppendMessage(string sessionId, SessionMessage message)
+        => SavedMessages.Add(message);
+
+    public override IReadOnlyList<SessionMessage> GetHistory(string sessionId, int maxMessages)
+        => Array.Empty<SessionMessage>();
+
+    public override Task<Session> CreateSessionAsync(string groupFolder, CancellationToken ct)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        return Task.FromResult(new Session(id, groupFolder, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+    }
 
     public override Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct)
     {
@@ -197,26 +221,26 @@ internal sealed class FakePipelineTracker : PipelineTracker
     public bool ThrowOnTrack { get; set; }
     public bool ThrowOnTransition { get; set; }
 
-    public new Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
+    public override Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
     {
         if (ThrowOnTrack) throw new InvalidOperationException("Simulated track failure");
         Tracked.Add(candidate);
         return Task.CompletedTask;
     }
 
-    public new Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
+    public override Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
     {
         if (ThrowOnTransition) throw new InvalidOperationException("Simulated transition failure");
         Transitions.Add((candidate, newState));
         return Task.CompletedTask;
     }
 
-    public new Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
+    public override Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
     {
         return Task.FromResult<IReadOnlyList<TrackedCandidate>>(Array.Empty<TrackedCandidate>());
     }
 
-    public new Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
+    public override Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
     {
         return Task.FromResult<IReadOnlyList<TrackedCandidate>>(Array.Empty<TrackedCandidate>());
     }
@@ -230,7 +254,7 @@ internal sealed class FakeBenchmarkGate : BenchmarkGate
     public bool Passes { get; set; } = true;
     public bool ThrowOnRun { get; set; }
 
-    public new Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
+    public override Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
     {
         if (ThrowOnRun) throw new InvalidOperationException("Simulated benchmark failure");
         return Task.FromResult(FixedResult ?? new BenchmarkResult(Passes, 0, "", ""));
@@ -286,7 +310,9 @@ internal sealed class FakeStreamingProvider : ILLMProvider
         for (var i = 0; i < words.Length; i += perChunk)
         {
             ct.ThrowIfCancellationRequested();
-            yield return string.Join(' ', words.Skip(i).Take(perChunk)) + " ";
+            var chunk = string.Join(' ', words.Skip(i).Take(perChunk));
+            if (i + perChunk < words.Length) chunk += " ";
+            yield return chunk;
         }
     }
 
@@ -333,7 +359,7 @@ internal static class TestAgentProfile
     {
         var dir = Path.Combine(Path.GetTempPath(), "aether-test-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "AGENTS.md"), "You are Aether. Be helpful.");
+        File.WriteAllText(Path.Combine(dir, "IDENTITY.md"), "You are Aether. Be helpful.");
         return new Aether.Agents.AgentProfile("aether", dir, new AgentConfig());
     }
 }

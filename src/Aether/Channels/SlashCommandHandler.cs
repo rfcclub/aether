@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Aether.Agent;
 using Aether.Config;
 using Aether.Memory;
 using Aether.Providers;
@@ -8,8 +10,12 @@ using Microsoft.Extensions.Logging;
 
 namespace Aether.Channels;
 
-public sealed class SlashCommandHandler 
+public sealed class SlashCommandHandler
 {
+    /// <summary>
+    /// Tracks agents that have a pending session reset prompt to inject on the next user turn.
+    /// </summary>
+    public static readonly ConcurrentDictionary<string, bool> PendingSessionReset = new(StringComparer.OrdinalIgnoreCase);
     private readonly IServiceProvider _rootServices;
     private readonly ProviderRouter? _providerRouter;
     private readonly ConfigLoader? _configLoader;
@@ -42,21 +48,32 @@ public sealed class SlashCommandHandler
             "/new" => await HandleNewAsync(ctx, ct),
             "/reset" => await HandleResetAsync(ctx, ct),
             "/model" => await HandleModelAsync(ctx, args, ct),
+            "/models" => HandleModelsAsync(ctx),
             "/context" => await HandleContextAsync(ctx, ct),
             "/compact" => await HandleCompactAsync(ctx, ct),
             _ => null
         };
     }
 
+    /// <summary>
+    /// Returns true if this slash command result was from /new or /reset
+    /// and the caller should also trigger an LLM greeting.
+    /// </summary>
+    public static bool ShouldAutoGreet(SlashCommandResult result) =>
+        result.AutoGreet;
+
     private async Task<SlashCommandResult> HandleNewAsync(SlashCommandContext ctx, CancellationToken ct)
     {
         var sessionMgr = _rootServices.GetRequiredService<SessionManager>();
-        var session = await sessionMgr.GetOrCreateSessionAsync(ctx.AgentName, ct);
+        var session = await sessionMgr.CreateSessionAsync(ctx.WorkspacePath, ct);
         var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(0);
 
+        PendingSessionReset[ctx.AgentName] = true;
+        _rootServices.GetService<AetherSoul>()?.Reset();
+
         _logger.LogInformation("New session {SessionId} created for agent {Agent}", session.Id, ctx.AgentName);
-        return new SlashCommandResult($"New session: {session.Id}");
+        return new SlashCommandResult($"New session: {session.Id}", AutoGreet: true);
     }
 
     private Task<SlashCommandResult> HandleResetAsync(SlashCommandContext ctx, CancellationToken ct)
@@ -64,8 +81,11 @@ public sealed class SlashCommandHandler
         var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(0);
 
+        PendingSessionReset[ctx.AgentName] = true;
+        _rootServices.GetService<AetherSoul>()?.Reset();
+
         _logger.LogInformation("Context cleared for {Agent}", ctx.AgentName);
-        return Task.FromResult(new SlashCommandResult("Context cleared."));
+        return Task.FromResult(new SlashCommandResult("Context cleared.", AutoGreet: true));
     }
 
     private async Task<SlashCommandResult> HandleModelAsync(SlashCommandContext ctx, string args, CancellationToken ct)
@@ -91,7 +111,7 @@ public sealed class SlashCommandHandler
             }
 
             sb.AppendLine();
-            sb.AppendLine("Usage: /model <model-id>");
+            sb.AppendLine("Usage: /model <provider>/<model>");
             return new SlashCommandResult(sb.ToString().TrimEnd());
         }
 
@@ -126,6 +146,36 @@ public sealed class SlashCommandHandler
         return new SlashCommandResult($"Model changed to: {newPrimary} [{resolvedProvider.Name}]\nSurvives restart.");
     }
 
+    private SlashCommandResult HandleModelsAsync(SlashCommandContext ctx)
+    {
+        var available = _providerRouter?.GetAvailableModels();
+        if (available is not { Count: > 0 })
+            return new SlashCommandResult("No models available.");
+
+        var current = _providerRouter?.EffectiveModel ?? "";
+        var sb = new System.Text.StringBuilder();
+
+        // Group by provider name
+        var grouped = available
+            .GroupBy(m => m.Provider, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in grouped)
+        {
+            sb.AppendLine($"[{group.Key}]");
+            foreach (var (_, model) in group)
+            {
+                var marker = string.Equals(model, current, StringComparison.OrdinalIgnoreCase) ? " *" : "";
+                sb.AppendLine($"  {model}{marker}");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("* = current | /model <provider>/<model> to switch");
+
+        return new SlashCommandResult(sb.ToString().TrimEnd());
+    }
+
     private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
     {
         var memory = _rootServices.GetRequiredService<FileMemory>();
@@ -135,7 +185,7 @@ public sealed class SlashCommandHandler
 
         var model = _providerRouter?.EffectiveModel ?? "none";
 
-        var session = await sessionMgr.GetOrCreateSessionAsync(ctx.AgentName, ct);
+        var session = await sessionMgr.GetOrCreateSessionAsync(ctx.WorkspacePath, ct);
         var history = await sessionMgr.GetHistoryAsync(session.Id, 500, ct);
 
         var sb = new System.Text.StringBuilder();

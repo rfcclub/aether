@@ -18,7 +18,7 @@ public class PipelineTracker
         _logger = logger;
     }
 
-    public async Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
+    public virtual async Task TrackAsync(PromotionCandidate candidate, CancellationToken ct = default)
     {
         var hash = HashContent(candidate.Content);
         var now = DateTime.UtcNow.ToString("O");
@@ -41,7 +41,7 @@ public class PipelineTracker
         _logger.LogInformation("Tracked candidate {Hash} as PROPOSED", hash);
     }
 
-    public async Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
+    public virtual async Task TransitionAsync(PromotionCandidate candidate, CandidateState newState, CancellationToken ct = default)
     {
         var hash = HashContent(candidate.Content);
         var now = DateTime.UtcNow.ToString("O");
@@ -65,7 +65,7 @@ public class PipelineTracker
         }
     }
 
-    public async Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<TrackedCandidate>> GetCandidatesAsync(CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var cmd = connection.CreateCommand();
@@ -79,7 +79,7 @@ public class PipelineTracker
         return await ReadCandidatesAsync(cmd, ct);
     }
 
-    public async Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<TrackedCandidate>> GetByStateAsync(CandidateState state, CancellationToken ct = default)
     {
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var cmd = connection.CreateCommand();

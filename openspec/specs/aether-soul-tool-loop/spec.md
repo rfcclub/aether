@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change llm-tool-call-loop. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Tool Loop Execution
 
 `AetherSoul.ProcessAsync` MUST execute all tool calls returned by the LLM and feed results back into the next LLM call, repeating until no tool calls are returned.
@@ -39,3 +41,28 @@ All intermediate `assistant` (tool_use) and `user` (tool_result) messages produc
 - **WHEN** the loop processes a tool call
 - **THEN** the tool_use message and the corresponding tool_result message are both appended to the session via `ISessionManager.AppendMessageAsync`
 
+### Requirement: Coherent system prompt structure
+
+`AetherSoul.BuildSystemPrompt()` SHALL produce a 3-section prompt (Identity Context, Behavior Instructions, Dynamic Context) with a cache boundary marker, as specified in `coherent-system-prompt`.
+
+#### Scenario: Three-section prompt built
+- **WHEN** `BuildSystemPrompt()` is called with valid context
+- **THEN** the output SHALL contain Identity Context, Behavior Instructions, and Dynamic Context sections separated by a cache boundary marker
+
+### Requirement: BuildSystemPrompt simplified parameters
+
+`BuildSystemPrompt()` SHALL accept reduced parameters: `identityContext` (string), `dynamicContext` (string), and optional `skillContext` (SkillContext?). The previous 8-parameter signature is removed.
+
+#### Scenario: New signature compiles
+- **WHEN** `BuildSystemPrompt(identityContext, dynamicContext, skillContext)` is called
+- **THEN** it SHALL return a valid system prompt string
+- **THEN** the method SHALL have exactly 3 parameters
+
+### Requirement: System prompt includes anti-hallucination directive
+
+The system prompt SHALL include the directive "CRITICAL — You MUST Use Tools To Read Files" requiring `read` tool use before describing file contents.
+
+#### Scenario: Anti-hallucination directive present
+- **WHEN** the system prompt is built
+- **THEN** it SHALL include "You MUST call the `read` tool to read it"
+- **THEN** it SHALL include "You are FORBIDDEN from describing, assuming, or fabricating file contents"

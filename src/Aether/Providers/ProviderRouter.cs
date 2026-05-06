@@ -504,8 +504,14 @@ public class ProviderRouter : ILLMProvider
     private IReadOnlyList<ILLMProvider> GetEndpointGroup(string providerName) =>
         _providers.Where(p => p.Name.StartsWith(providerName, StringComparison.OrdinalIgnoreCase)).ToList();
 
-    private int GetPriority(string providerName) =>
-        _options.ProviderPriorities.GetValueOrDefault(providerName.Split('-')[0], 999);
+    private int GetPriority(string providerName)
+    {
+        // Extract base provider name: "fireworks/kimi-k2p5" → "fireworks"
+        var baseName = providerName.Contains('/')
+            ? providerName[..providerName.IndexOf('/')]
+            : providerName;
+        return _options.ProviderPriorities.GetValueOrDefault(baseName, 999);
+    }
 
     // ── Model-to-Provider Resolution ──
 

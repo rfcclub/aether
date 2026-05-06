@@ -5,12 +5,66 @@ namespace Aether.Sessions;
 public class SessionManager
 {
     private readonly AetherDb _db;
+    // In-memory session store for MVP — avoids DB async overhead in agent loop.
+    private readonly Dictionary<string, Session> _sessions = new();
+    private readonly Dictionary<string, List<SessionMessage>> _messages = new();
 
     protected SessionManager() { _db = null!; }
 
     public SessionManager(AetherDb db)
     {
         _db = db;
+    }
+
+    // ── Sync API (used by agent loop) ──
+
+    public virtual Session GetOrCreateSession(string groupFolder)
+    {
+        if (_sessions.TryGetValue(groupFolder, out var existing))
+            return existing;
+
+        var session = new Session(Guid.NewGuid().ToString("N"), groupFolder,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        _sessions[groupFolder] = session;
+        return session;
+    }
+
+    public virtual void AppendMessage(string sessionId, SessionMessage message)
+    {
+        if (!_messages.TryGetValue(sessionId, out var list))
+            _messages[sessionId] = list = new List<SessionMessage>();
+        list.Add(message);
+    }
+
+    public virtual IReadOnlyList<SessionMessage> GetHistory(string sessionId, int maxMessages)
+    {
+        if (!_messages.TryGetValue(sessionId, out var list))
+            return Array.Empty<SessionMessage>();
+
+        return list.TakeLast(maxMessages).ToList();
+    }
+
+    // ── Async API (backward compat — delegates to DB) ──
+
+    public virtual async Task<Session> CreateSessionAsync(string groupFolder, CancellationToken ct = default)
+    {
+        await using var connection = await _db.OpenConnectionAsync(ct);
+
+        var now = DateTimeOffset.UtcNow;
+        var session = new Session(Guid.NewGuid().ToString("N"), groupFolder, now, now);
+
+        await using var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO sessions (id, group_folder, created_at, last_activity)
+            VALUES ($id, $groupFolder, $createdAt, $lastActivity);
+            """;
+        insert.Parameters.AddWithValue("$id", session.Id);
+        insert.Parameters.AddWithValue("$groupFolder", session.GroupFolder);
+        insert.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
+        insert.Parameters.AddWithValue("$lastActivity", session.LastActivity.ToString("O"));
+        await insert.ExecuteNonQueryAsync(ct);
+
+        return session;
     }
 
     public virtual async Task<Session> GetOrCreateSessionAsync(string groupFolder, CancellationToken ct = default)
@@ -58,6 +112,9 @@ public class SessionManager
 
     public virtual async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default)
     {
+        // Also write to in-memory store
+        AppendMessage(sessionId, message);
+
         await using var connection = await _db.OpenConnectionAsync(ct);
 
         string groupFolder;
@@ -95,6 +152,10 @@ public class SessionManager
 
     public virtual async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default)
     {
+        // Try in-memory first
+        var memHistory = GetHistory(sessionId, maxMessages);
+        if (memHistory.Count > 0) return memHistory;
+
         await using var connection = await _db.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """

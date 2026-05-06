@@ -71,7 +71,9 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
             }
 
             _logger.LogDebug("Heartbeat tick for {AgentName}", _profile.Name);
-            var response = await _soul.ProcessTaskAsync(_profile.Name, heartbeatContent, ct);
+            // Pass HEARTBEAT.md as working state (sanitized via ContextAssembler), not as raw prompt.
+            // Minimal prompt prevents the agent from treating the full file as step-by-step instructions.
+            var response = await _soul.ProcessTaskAsync(_profile.Name, "Heartbeat tick.", heartbeatContent, ct);
 
             if (!response.Content.Contains("HEARTBEAT_OK"))
             {

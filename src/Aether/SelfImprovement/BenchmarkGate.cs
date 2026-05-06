@@ -16,7 +16,7 @@ public class BenchmarkGate
         _logger = logger;
     }
 
-    public async Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
+    public virtual async Task<BenchmarkResult> RunTestsAsync(CancellationToken ct = default)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds));

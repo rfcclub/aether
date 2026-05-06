@@ -93,7 +93,7 @@ public class ProviderFactoryTests
 
         var provider = ProviderFactory.Create(entry, "test");
 
-        Assert.False(provider.SupportsTools);
+        Assert.True(provider.SupportsTools);
         Assert.Equal("test", provider.Name);
     }
 }

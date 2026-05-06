@@ -19,7 +19,8 @@ public sealed record LlmRequest(
 
 public sealed record LlmResponse(
     string Content,
-    IReadOnlyList<LlmToolCall>? ToolCalls = null);
+    IReadOnlyList<LlmToolCall>? ToolCalls = null,
+    string? Reasoning = null);
 
 public sealed record LlmTool(
     string Name,

@@ -127,9 +127,14 @@ public sealed class ToolIntegrationTests : IDisposable
         var readTool = new ReadTool(loggerFactory.CreateLogger<ReadTool>());
 
         var args = JsonDocument.Parse("""{"path": "/etc/passwd"}""").RootElement;
+        // Deny /etc to block outside paths — IsPathAllowed defaults to true
+        var sandbox = new SandboxContext(_workspace, new SpecToolsSection
+        {
+            File = new SpecFileTool { DeniedPaths = new List<string> { "/etc" } }
+        });
 
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => readTool.ExecuteAsync(args, _sandbox, CancellationToken.None));
+            () => readTool.ExecuteAsync(args, sandbox, CancellationToken.None));
         Assert.Contains("not permitted", ex.Message);
     }
 

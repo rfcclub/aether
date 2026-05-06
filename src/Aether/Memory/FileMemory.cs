@@ -13,15 +13,16 @@ public class FileMemory
         _groupsRoot = groupsRoot;
     }
 
-    public virtual async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
+    public virtual string LoadContext(string groupFolder)
     {
         var parts = new List<string>();
-
-        await AddIfExistsAsync(parts, Path.Combine(_groupsRoot, "CLAUDE.md"), "Global", ct);
-        await AddIfExistsAsync(parts, Path.Combine(_groupsRoot, groupFolder, "CLAUDE.md"), groupFolder, ct);
-
+        AddIfExists(parts, Path.Combine(_groupsRoot, "CLAUDE.md"), "Global");
+        AddIfExists(parts, Path.Combine(_groupsRoot, groupFolder, "CLAUDE.md"), groupFolder);
         return string.Join(Environment.NewLine + Environment.NewLine, parts);
     }
+
+    public virtual async Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)
+        => LoadContext(groupFolder);
 
     // ── Ephemeral context ──
 
@@ -97,18 +98,20 @@ public class FileMemory
 
     // ── Helpers ──
 
+    private static void AddIfExists(List<string> parts, string path, string label)
+    {
+        if (!File.Exists(path)) return;
+        var content = File.ReadAllText(path);
+        if (!string.IsNullOrWhiteSpace(content))
+            parts.Add($"# {label} Context{Environment.NewLine}{content.Trim()}");
+    }
+
     private static async Task AddIfExistsAsync(List<string> parts, string path, string label, CancellationToken ct)
     {
-        if (!File.Exists(path))
-        {
-            return;
-        }
-
+        if (!File.Exists(path)) return;
         var content = await File.ReadAllTextAsync(path, ct);
         if (!string.IsNullOrWhiteSpace(content))
-        {
             parts.Add($"# {label} Context{Environment.NewLine}{content.Trim()}");
-        }
     }
 
     private static int EstimateTokens(string text)

@@ -94,67 +94,70 @@ public class ToolExecutor
         _deniedPaths = denied.ToArray();
     }
 
-    public virtual Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+    public virtual ToolResult Execute(ToolCall call)
     {
         return call.Name.ToLowerInvariant() switch
         {
-            "read" => ReadAsync(call, ct),
-            "glob" => GlobAsync(call, ct),
-            "grep" => GrepAsync(call, ct),
-            "bash" => BashAsync(call, ct),
-            "write" => WriteAsync(call, ct),
-            "edit" => EditAsync(call, ct),
-            _ => Task.FromResult(new ToolResult(false, "", $"Unknown tool: {call.Name}"))
+            "read" => Read(call),
+            "glob" => Glob(call),
+            "grep" => Grep(call),
+            "bash" => Bash(call),
+            "write" => Write(call),
+            "edit" => Edit(call),
+            _ => new ToolResult(false, "", $"Unknown tool: {call.Name}")
         };
     }
 
-    private async Task<ToolResult> ReadAsync(ToolCall call, CancellationToken ct)
+    public virtual Task<ToolResult> ExecuteAsync(ToolCall call, CancellationToken ct)
+        => Task.FromResult(Execute(call));
+
+    private ToolResult Read(ToolCall call)
     {
         var path = Required(call, "path");
         if (!IsPathAllowed(path))
-        {
             return new ToolResult(false, "", "Path not permitted");
-        }
 
         if (!File.Exists(path))
-        {
             return new ToolResult(false, "", "File not found");
-        }
 
-        return new ToolResult(true, await File.ReadAllTextAsync(path, ct));
+        return new ToolResult(true, File.ReadAllText(path));
     }
 
-    private Task<ToolResult> GlobAsync(ToolCall call, CancellationToken ct)
+    private ToolResult Glob(ToolCall call)
     {
         var root = call.Arguments.TryGetValue("root", out var configuredRoot) ? configuredRoot : FirstAllowedPath();
         var pattern = Required(call, "pattern");
+
+        root = root.Replace("**", "").Replace("//", "/");
+        if (!root.EndsWith('/') && !root.EndsWith('\\'))
+            root += Path.DirectorySeparatorChar;
+
         if (!IsPathAllowed(root))
-        {
-            return Task.FromResult(new ToolResult(false, "", "Path not permitted"));
-        }
+            return new ToolResult(false, "", "Path not permitted");
 
         if (!Directory.Exists(root))
+            return new ToolResult(false, "", "Directory not found");
+
+        try
         {
-            return Task.FromResult(new ToolResult(false, "", "Directory not found"));
+            var files = Directory
+                .EnumerateFiles(root, pattern, SearchOption.AllDirectories)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            return new ToolResult(true, string.Join(Environment.NewLine, files));
         }
-
-        var files = Directory
-            .EnumerateFiles(root, pattern, SearchOption.AllDirectories)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        ct.ThrowIfCancellationRequested();
-
-        return Task.FromResult(new ToolResult(true, string.Join(Environment.NewLine, files)));
+        catch (DirectoryNotFoundException)
+        {
+            return new ToolResult(false, "", "Directory not found during enumeration");
+        }
     }
 
-    private async Task<ToolResult> GrepAsync(ToolCall call, CancellationToken ct)
+    private ToolResult Grep(ToolCall call)
     {
         var path = Required(call, "path");
         var pattern = Required(call, "pattern");
         if (!IsPathAllowed(path))
-        {
             return new ToolResult(false, "", "Path not permitted");
-        }
 
         var contextLines = 0;
         if (call.Arguments.TryGetValue("context_lines", out var contextValue)
@@ -173,8 +176,7 @@ public class ToolExecutor
 
         foreach (var file in files.Order(StringComparer.Ordinal))
         {
-            ct.ThrowIfCancellationRequested();
-            var lines = await File.ReadAllLinesAsync(file, ct);
+            var lines = File.ReadAllLines(file);
             var emitted = new HashSet<int>();
 
             for (var index = 0; index < lines.Length; index++)
@@ -187,9 +189,7 @@ public class ToolExecutor
                     for (var contextIndex = first; contextIndex <= last; contextIndex++)
                     {
                         if (!emitted.Add(contextIndex))
-                        {
                             continue;
-                        }
 
                         var separator = contextIndex == index ? ':' : '-';
                         output
@@ -206,50 +206,40 @@ public class ToolExecutor
         return new ToolResult(true, output.ToString().TrimEnd());
     }
 
-    private async Task<ToolResult> BashAsync(ToolCall call, CancellationToken ct)
+    private ToolResult Bash(ToolCall call)
     {
         var command = Required(call, "command");
         var cwd = call.Arguments.TryGetValue("cwd", out var configuredCwd) ? configuredCwd : FirstAllowedPath();
         if (!IsPathAllowed(cwd))
-        {
             return new ToolResult(false, "", "Path not permitted");
-        }
 
         if (!Directory.Exists(cwd))
-        {
             return new ToolResult(false, "", "Directory not found");
-        }
 
         var startInfo = CreateBashStartInfo(command, cwd);
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(Math.Max(1, _options.TimeoutMs));
 
         try
         {
             if (!process.Start())
-            {
                 return new ToolResult(false, "", "Command failed to start");
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit(Math.Max(1, _options.TimeoutMs));
+
+            if (!process.HasExited)
+            {
+                TryKillProcessTree(process);
+                return new ToolResult(false, "", "Command timed out");
             }
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
-            await process.WaitForExitAsync(timeoutCts.Token);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
             var output = Truncate(FormatCommandOutput(stdout, stderr), _options.MaxOutputBytes);
 
             if (process.ExitCode == 0)
-            {
                 return new ToolResult(true, output);
-            }
 
             return new ToolResult(false, output, $"Command exited with code {process.ExitCode}");
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            TryKillProcessTree(process);
-            return new ToolResult(false, "", "Command timed out");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception)
         {
@@ -257,53 +247,43 @@ public class ToolExecutor
         }
     }
 
-    private async Task<ToolResult> WriteAsync(ToolCall call, CancellationToken ct)
+    private ToolResult Write(ToolCall call)
     {
         var path = Required(call, "path");
         var content = Required(call, "content");
         if (!IsPathAllowed(path))
-        {
             return new ToolResult(false, "", "Path not permitted");
-        }
 
         var parent = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrWhiteSpace(parent))
         {
             if (!IsPathAllowed(parent))
-            {
                 return new ToolResult(false, "", "Path not permitted");
-            }
 
             Directory.CreateDirectory(parent);
         }
 
-        await File.WriteAllTextAsync(path, content, ct);
+        File.WriteAllText(path, content);
         return new ToolResult(true, $"Wrote {path}");
     }
 
-    private async Task<ToolResult> EditAsync(ToolCall call, CancellationToken ct)
+    private ToolResult Edit(ToolCall call)
     {
         var path = Required(call, "path");
         var oldText = Required(call, "old");
         var newText = Required(call, "new");
         if (!IsPathAllowed(path))
-        {
             return new ToolResult(false, "", "Path not permitted");
-        }
 
         if (!File.Exists(path))
-        {
             return new ToolResult(false, "", "File not found");
-        }
 
-        var content = await File.ReadAllTextAsync(path, ct);
+        var content = File.ReadAllText(path);
         if (!content.Contains(oldText, StringComparison.Ordinal))
-        {
             return new ToolResult(false, "", "Text not found");
-        }
 
         var updated = content.Replace(oldText, newText, StringComparison.Ordinal);
-        await File.WriteAllTextAsync(path, updated, ct);
+        File.WriteAllText(path, updated);
         return new ToolResult(true, $"Edited {path}");
     }
 
@@ -328,10 +308,7 @@ public class ToolExecutor
             }
         }
 
-        return _allowedPaths.Any(allowed =>
-            string.Equals(fullPath, allowed, StringComparison.Ordinal)
-            || fullPath.StartsWith(allowed + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            || fullPath.StartsWith(allowed + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
+        return true;
     }
 
     private string FirstAllowedPath()

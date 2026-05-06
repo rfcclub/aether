@@ -115,10 +115,27 @@ public sealed class ChannelMessageProcessor : BackgroundService
             var slashCtx = new SlashCommandContext(
                 message.Text, routed.Value.AgentName, routed.Value.WorkspacePath, _services);
             var slashResult = await _slashCommands.HandleAsync(slashCtx, ct);
-            if (slashResult is not null)
+            if (slashResult is not null && !slashResult.AutoGreet)
             {
                 await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
                 return;
+            }
+
+            // Build prompt — inject startup sequence for /new, /reset, or pending reset
+            var prompt = routed.Value.Prompt;
+            if (slashResult is { AutoGreet: true })
+            {
+                await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                prompt = "A new session was started via /new or /reset. " +
+                         "Execute your Session Startup sequence now — " +
+                         "read the required files, then greet the user warmly.";
+            }
+            else if (SlashCommandHandler.PendingSessionReset.TryRemove(routed.Value.AgentName, out _))
+            {
+                prompt = "A new session was started via /new or /reset. " +
+                         "Execute your Session Startup sequence now — " +
+                         "read the required files before responding to the user.\n\n" +
+                         prompt;
             }
 
             // Add user message to ephemeral context
@@ -165,7 +182,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             await _channel.SetTypingAsync(message.ChatId, true, ct);
 
             var fullResponse = new StringBuilder();
-            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, routed.Value.Prompt, ct))
+            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, prompt, ct))
             {
                 fullResponse.Append(chunk);
             }

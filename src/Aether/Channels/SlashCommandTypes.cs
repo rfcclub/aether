@@ -6,4 +6,4 @@ public sealed record SlashCommandContext(
     string WorkspacePath,
     IServiceProvider Services);
 
-public sealed record SlashCommandResult(string Text);
+public sealed record SlashCommandResult(string Text, bool AutoGreet = false);

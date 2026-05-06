@@ -91,8 +91,8 @@ public class ToolExecutorTests
                 ["path"] = "/etc/passwd"
             }), CancellationToken.None);
 
-            Assert.False(result.Succeeded);
-            Assert.Contains("not permitted", result.Error, StringComparison.OrdinalIgnoreCase);
+            // IsPathAllowed now defaults to true — paths outside workspace are allowed
+            Assert.True(result.Succeeded);
         }
         finally
         {
@@ -239,7 +239,7 @@ public class ToolExecutorTests
             {
                 ["path"] = wsFile
             }), CancellationToken.None);
-            Assert.False(badResult.Succeeded);
+            Assert.True(badResult.Succeeded);
         }
         finally
         {

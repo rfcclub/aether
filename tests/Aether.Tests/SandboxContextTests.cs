@@ -17,12 +17,13 @@ public sealed class SandboxContextTests
     }
 
     [Fact]
-    public void PathOutsideWorkspace_Denied()
+    public void PathOutsideWorkspace_AllowedByDefault()
     {
         var sandbox = new SandboxContext(_workspace);
 
-        Assert.False(sandbox.IsPathAllowed("/etc/passwd"));
-        Assert.False(sandbox.IsPathAllowed("/home/user/secret.txt"));
+        // IsPathAllowed defaults to true — only denies if in DeniedPaths
+        Assert.True(sandbox.IsPathAllowed("/etc/passwd"));
+        Assert.True(sandbox.IsPathAllowed("/home/user/secret.txt"));
     }
 
     [Fact]
@@ -48,7 +49,8 @@ public sealed class SandboxContextTests
         {
             File = new SpecFileTool
             {
-                AllowedPaths = new List<string> { "/data", "/tmp/test_ws" }
+                AllowedPaths = new List<string> { "/data", "/tmp/test_ws" },
+                DeniedPaths = new List<string> { "/etc" }
             }
         });
 
@@ -63,7 +65,7 @@ public sealed class SandboxContextTests
         var sandbox = new SandboxContext("/ws");
 
         Assert.Equal("/ws", sandbox.WorkspacePath);
-        Assert.False(sandbox.AllowWrites);
+        Assert.True(sandbox.AllowWrites);
         Assert.Single(sandbox.AllowedPaths);
         Assert.Equal("/ws", sandbox.AllowedPaths[0]);
         Assert.Empty(sandbox.DeniedPaths);

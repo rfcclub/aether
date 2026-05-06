@@ -40,9 +40,14 @@ public sealed class FileToolsTests : IDisposable
     {
         var tool = new ReadTool(NullLogger<ReadTool>.Instance);
         var args = JsonDocument.Parse($"{{\"path\":\"/etc/passwd\"}}").RootElement;
+        // Deny /etc to block outside paths — IsPathAllowed defaults to true
+        var sandbox = new SandboxContext(_workspace, new Aether.Config.SpecToolsSection
+        {
+            File = new Aether.Config.SpecFileTool { DeniedPaths = new List<string> { "/etc" } }
+        });
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => tool.ExecuteAsync(args, _sandbox, CancellationToken.None));
+            () => tool.ExecuteAsync(args, sandbox, CancellationToken.None));
     }
 
     [Fact]
@@ -67,9 +72,13 @@ public sealed class FileToolsTests : IDisposable
     {
         var tool = new WriteTool(NullLogger<WriteTool>.Instance);
         var args = JsonDocument.Parse($"{{\"path\":\"out.txt\",\"content\":\"test\"}}").RootElement;
+        var sandbox = new SandboxContext(_workspace, new Aether.Config.SpecToolsSection
+        {
+            File = new Aether.Config.SpecFileTool { AllowWrites = false }
+        });
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => tool.ExecuteAsync(args, _sandbox, CancellationToken.None));
+            () => tool.ExecuteAsync(args, sandbox, CancellationToken.None));
     }
 
     [Fact]

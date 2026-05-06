@@ -29,6 +29,15 @@ public sealed class TelegramChannel : IChannel, IDisposable
         _logger = logger;
     }
 
+    private static readonly BotCommand[] NativeCommands =
+    {
+        new() { Command = "new", Description = "Start a new session" },
+        new() { Command = "reset", Description = "Clear context" },
+        new() { Command = "model", Description = "Show or switch model" },
+        new() { Command = "context", Description = "Show context info" },
+        new() { Command = "compact", Description = "Compact context" },
+    };
+
     public async Task ConnectAsync(CancellationToken ct)
     {
         _client = new TelegramBotClient(_botToken);
@@ -36,6 +45,10 @@ public sealed class TelegramChannel : IChannel, IDisposable
 
         var me = await _client.GetMe(ct);
         _logger.LogInformation("Telegram channel connected as @{Username} (id={Id})", me.Username, me.Id);
+
+        await _client.SetMyCommands(NativeCommands, cancellationToken: ct);
+        _logger.LogInformation("Telegram native commands registered: {Commands}",
+            string.Join(", ", NativeCommands.Select(c => "/" + c.Command)));
 
         _pollingTask = Task.Run(() => PollLoopAsync(_cts.Token), _cts.Token);
     }
@@ -57,7 +70,10 @@ public sealed class TelegramChannel : IChannel, IDisposable
     public async Task SendMessageAsync(string chatId, string text, CancellationToken ct)
     {
         if (_client is null) throw new InvalidOperationException("Telegram channel is not connected.");
-        await TryMarkdownAsync(mode => _client.SendMessage(chatId, text, parseMode: mode, cancellationToken: ct), ct);
+        await TryMarkdownAsync(
+            mode => _client.SendMessage(chatId, text, parseMode: mode, cancellationToken: ct),
+            () => _client.SendMessage(chatId, text, cancellationToken: ct),
+            ct);
     }
 
     public async Task SendStreamingChunkAsync(string chatId, string chunk, int chunkIndex, CancellationToken ct)
@@ -67,11 +83,18 @@ public sealed class TelegramChannel : IChannel, IDisposable
         if (chunkIndex == 0)
         {
             var msgId = 0;
-            await TryMarkdownAsync(async mode =>
-            {
-                var msg = await _client.SendMessage(chatId, chunk, parseMode: mode, cancellationToken: ct);
-                msgId = msg.Id;
-            }, ct);
+            await TryMarkdownAsync(
+                async mode =>
+                {
+                    var msg = await _client.SendMessage(chatId, chunk, parseMode: mode, cancellationToken: ct);
+                    msgId = msg.Id;
+                },
+                async () =>
+                {
+                    var msg = await _client.SendMessage(chatId, chunk, cancellationToken: ct);
+                    msgId = msg.Id;
+                },
+                ct);
             if (msgId != 0)
             {
                 _streamingMessageIds[chatId] = msgId;
@@ -120,23 +143,23 @@ public sealed class TelegramChannel : IChannel, IDisposable
     // ── MarkdownV2 fallback helpers ──
 
     /// <summary>
-    /// Try sending with MarkdownV2, fall back to plain text on parse error.
+    /// Try sending with MarkdownV2, fall back to plain text (no parseMode) on parse error.
     /// </summary>
-    private async Task TryMarkdownAsync(Func<ParseMode, Task> action, CancellationToken ct)
+    private async Task TryMarkdownAsync(Func<ParseMode, Task> markdownAction, Func<Task> plainAction, CancellationToken ct)
     {
         try
         {
-            await action(ParseMode.MarkdownV2);
+            await markdownAction(ParseMode.MarkdownV2);
         }
         catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
         {
             _logger.LogWarning(ex, "MarkdownV2 parse failed, falling back to plain text");
-            await action(ParseMode.None);
+            await plainAction();
         }
     }
 
     /// <summary>
-    /// Edit a message with MarkdownV2, fall back to plain text on parse error.
+    /// Edit a message with MarkdownV2, fall back to plain text (no parseMode) on parse error.
     /// </summary>
     private async Task EditWithFallbackAsync(string chatId, int messageId, string text, CancellationToken ct)
     {
@@ -149,7 +172,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
         {
             try
             {
-                await _client!.EditMessageText(chatId, messageId, text, parseMode: ParseMode.None, cancellationToken: ct);
+                await _client!.EditMessageText(chatId, messageId, text, cancellationToken: ct);
                 _lastStreamingText[chatId] = text;
             }
             catch (Exception innerEx)
@@ -181,7 +204,10 @@ public sealed class TelegramChannel : IChannel, IDisposable
                     if (update.Message is not { } message) continue;
                     if (string.IsNullOrWhiteSpace(message.Text)) continue;
 
-                    var inbound = ConvertMessage(message);
+                    // Normalize bot-command entities to slash-prefix text for downstream handlers
+                    var text = NormalizeBotCommands(message);
+
+                    var inbound = ConvertMessage(message, text);
                     if (inbound is not null)
                         OnMessage?.Invoke(this, inbound.Value);
                 }
@@ -195,9 +221,27 @@ public sealed class TelegramChannel : IChannel, IDisposable
         }
     }
 
-    private static InboundMessage? ConvertMessage(Message message)
+    /// <summary>
+    /// Convert BotCommand entities (native Telegram command menu) to slash-prefix text.
+    /// Example: BotCommand("new") with text "/new@MyBot" → "/new"
+    /// </summary>
+    private static string NormalizeBotCommands(Message message)
     {
-        if (message.From is null || string.IsNullOrWhiteSpace(message.Text))
+        var entities = message.Entities ?? Array.Empty<MessageEntity>();
+        var text = message.Text ?? "";
+        foreach (var entity in entities)
+        {
+            if (entity.Type != MessageEntityType.BotCommand) continue;
+            var raw = text[entity.Offset..(entity.Offset + entity.Length)];
+            var atIdx = raw.IndexOf('@');
+            return atIdx > 0 ? raw[..atIdx] : raw;
+        }
+        return text;
+    }
+
+    private static InboundMessage? ConvertMessage(Message message, string normalizedText)
+    {
+        if (message.From is null || string.IsNullOrWhiteSpace(normalizedText))
             return null;
 
         return new InboundMessage(
@@ -205,7 +249,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
             ChannelName: "telegram",
             ChatId: message.Chat.Id.ToString(),
             SenderId: message.From.Username ?? message.From.Id.ToString(),
-            Text: message.Text,
+            Text: normalizedText,
             Timestamp: message.Date,
             IsFromBot: message.From.IsBot);
     }

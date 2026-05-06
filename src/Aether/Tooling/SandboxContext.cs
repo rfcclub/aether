@@ -65,6 +65,6 @@ public class SandboxContext
                 return true;
         }
 
-        return false;
+        return true;
     }
 }

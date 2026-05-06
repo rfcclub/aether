@@ -72,8 +72,15 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
             content = contentElement.GetString() ?? "";
         }
 
+        var reasoning = "";
+        if (message.TryGetProperty("reasoning_content", out var rcElement)
+            && rcElement.ValueKind != JsonValueKind.Null)
+        {
+            reasoning = rcElement.GetString() ?? "";
+        }
+
         var toolCalls = ParseToolCalls(message);
-        return new LlmResponse(content, toolCalls);
+        return new LlmResponse(content, toolCalls, reasoning.Length > 0 ? reasoning : null);
     }
 
     public virtual async IAsyncEnumerable<string> CompleteStreamingAsync(
@@ -137,8 +144,9 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
         await using var responseStream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(responseStream);
 
-        // Accumulators for tool calls across the stream
+        // Accumulators for tool calls and reasoning across the stream
         var fullContent = new StringBuilder();
+        var reasoningContent = new StringBuilder();
         var toolCallAccumulators = new Dictionary<int, (string Id, string Name, StringBuilder Arguments)>();
 
         string? line;
@@ -190,6 +198,15 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
                     fullContent.Append(token);
                     yield return new StreamEvent.TextToken(token);
                 }
+            }
+
+            // Reasoning content delta (Kimi, DeepSeek, etc.)
+            if (delta.TryGetProperty("reasoning_content", out var rcElement) &&
+                rcElement.ValueKind != JsonValueKind.Null)
+            {
+                var rc = rcElement.GetString() ?? "";
+                if (rc.Length > 0)
+                    reasoningContent.Append(rc);
             }
 
             // Tool call deltas
@@ -254,7 +271,8 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
 
         var finalResponse = new LlmResponse(
             fullContent.ToString(),
-            toolCalls.Count > 0 ? toolCalls : null);
+            toolCalls.Count > 0 ? toolCalls : null,
+            reasoningContent.Length > 0 ? reasoningContent.ToString() : null);
 
         yield return new StreamEvent.Response(finalResponse);
     }

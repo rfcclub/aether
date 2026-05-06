@@ -600,12 +600,12 @@ static async Task RunServeAsync(bool traceStartup)
 
     foreach (var (name, entry) in bootstrapConfig.Providers)
     {
-        builder.Services.AddSingleton<ILLMProvider>(provider =>
+        var providers = ProviderFactory.CreateAll(entry, name, null);
+        foreach (var p in providers)
         {
-            var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger("Aether.Providers");
-            return ProviderFactory.Create(entry, name, logger);
-        });
+            var captured = p;
+            builder.Services.AddSingleton<ILLMProvider>(_ => captured);
+        }
     }
 
     builder.Services.AddSingleton<ProviderHealthMonitor>();
@@ -734,6 +734,13 @@ static async Task RunServeAsync(bool traceStartup)
         return new WriteValidator(bootConfig);
     });
 
+    builder.Services.AddSingleton<ContextAssembler>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var tokenBudget = configuration.GetValue("agent:dynamic_token_budget", 4000);
+        return new ContextAssembler(tokenBudget);
+    });
+
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
@@ -744,7 +751,8 @@ static async Task RunServeAsync(bool traceStartup)
         var skillTrigger = provider.GetRequiredService<SkillTrigger>();
         var profile = provider.GetRequiredService<AgentProfile>();
         var bootContract = provider.GetRequiredService<BootContract>();
-        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract);
+        var contextAssembler = provider.GetRequiredService<ContextAssembler>();
+        return new AetherSoul(llm, memory, tools, sessions, skills, skillTrigger, profile, bootContract, contextAssembler);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

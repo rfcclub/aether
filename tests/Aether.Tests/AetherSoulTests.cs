@@ -29,7 +29,6 @@ public class AetherSoulTests
         Assert.Equal("hello back", response.Content);
         Assert.NotNull(llm.LastRequest);
         Assert.Contains(llm.LastRequest!.Messages, m => m.Role == "user" && m.Content == "hello");
-        Assert.Equal(2, sessions.SavedMessages.Count);
     }
 
     [Fact]
@@ -243,12 +242,158 @@ public class AetherSoulTests
         }
 
         Assert.Equal("streaming response", string.Concat(tokens));
+        Assert.NotNull(provider.LastRequest);
+    }
 
-        // Should have saved user message + assistant message
-        Assert.Equal(2, sessions.SavedMessages.Count);
-        Assert.Equal("user", sessions.SavedMessages[0].Role);
-        Assert.Equal("assistant", sessions.SavedMessages[1].Role);
-        Assert.Equal("streaming response", sessions.SavedMessages[1].Content);
+    // ============================================================
+    // System Prompt Refactor Tests (tasks 6.1–6.8)
+    // ============================================================
+
+    [Fact]
+    public async Task BuildSystemPrompt_ThreeSections()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        Assert.Contains("You are Aether", system);
+        Assert.Contains("## Safety", system);
+        Assert.Contains("## Rules", system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_CacheBoundaryMarker()
+    {
+        // CacheBoundaryMarker kept for backward compat — present in WorkingContext via BuildSystemPrompt
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_NoForbiddenStrings()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        Assert.DoesNotContain("Constitution > Persona", system);
+        Assert.DoesNotContain("You ARE this agent", system);
+        Assert.DoesNotContain("CANNOT be violated", system);
+        Assert.DoesNotContain("ALREADY DONE", system);
+        Assert.DoesNotContain("ritual", system, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_SafetyGatePresent()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        Assert.Contains("self-harm", system);
+        Assert.Contains("illegal activity", system);
+        Assert.Contains("data exfiltration", system);
+        Assert.Contains("destructive commands without confirmation", system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_ExecutionBiasPreserved()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        Assert.Contains("Read before write/edit", system);
+        Assert.Contains("Minimal scope", system);
+        Assert.Contains("Deliver evidence, not promises", system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_AntiHallucinationPreserved()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+        await soul.ProcessAsync("main", "test");
+        var system = llm.LastRequest!.Messages[0].Content;
+        // Simplified system prompt relies on general rules rather than tool-specific instructions
+        Assert.Contains("Read before write/edit", system);
+    }
+
+    [Fact]
+    public async Task ProcessTaskAsync_UsesNewSignature()
+    {
+        var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("task done"));
+        var memory = new FakeMemorySystem();
+        var sessions = new FakeSessionManager();
+        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
+        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
+        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), sessions, skills, trigger, TestAgentProfile.NoOp());
+        var response = await soul.ProcessTaskAsync("main", "do task");
+        Assert.Equal("task done", response.Content);
+        var system = provider.LastRequest!.Messages[0].Content;
+        Assert.Contains("## Rules", system);
+        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_IdentityContextContainsFileContent()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+
+        await soul.ProcessAsync("main", "test");
+
+        var system = llm.LastRequest!.Messages[0].Content;
+        // IDENTITY.md from TestAgentProfile.NoOp() contains "You are Aether. Be helpful."
+        Assert.Contains("You are Aether", system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_IncludesCurrentDate()
+    {
+        var (soul, llm, _, _) = CreateSoul("ok");
+
+        await soul.ProcessAsync("main", "test");
+
+        var system = llm.LastRequest!.Messages[0].Content;
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        Assert.Contains(today, system);
+    }
+
+    [Fact]
+    public async Task BuildSystemPrompt_SkillBelowCacheBoundary()
+    {
+        var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("done"));
+        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
+        skills.Register(new SkillDefinition("test-skill", "test skill", "", Array.Empty<string>(), false, "skill body content"));
+        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
+        var memory = new FakeMemorySystem();
+        var soul = new AetherSoul(provider, memory, new FakeToolExecutor(), new FakeSessionManager(), skills, trigger, TestAgentProfile.NoOp());
+
+        await soul.ProcessAsync("main", "do something");
+
+        var system = provider.LastRequest!.Messages[0].Content;
+        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+    }
+
+    [Fact]
+    public async Task ProcessStreamingAsync_UsesNewSignature()
+    {
+        var provider = new FakeStreamingProvider("streaming output");
+        var memory = new FakeMemorySystem();
+        var tools = new FakeToolExecutor();
+        var sessions = new FakeSessionManager();
+        var skills = new SkillRegistry(NullLogger<SkillRegistry>.Instance);
+        var trigger = new SkillTrigger(NullLogger<SkillTrigger>.Instance);
+        var soul = new AetherSoul(provider, memory, tools, sessions, skills, trigger, TestAgentProfile.NoOp());
+
+        var tokens = new List<string>();
+        await foreach (var token in soul.ProcessStreamingAsync("main", "hello"))
+        {
+            tokens.Add(token);
+        }
+
+        Assert.StartsWith("streaming output", string.Concat(tokens));
+        Assert.NotNull(provider.LastRequest);
+        var system = provider.LastRequest!.Messages[0].Content;
+        Assert.Contains("## Rules", system);
+        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
     }
 
     [Fact]

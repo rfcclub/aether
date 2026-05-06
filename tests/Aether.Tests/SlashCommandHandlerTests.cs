@@ -76,7 +76,7 @@ public sealed class SlashCommandHandlerTests
         var result = await handler.HandleAsync(Ctx("/new"), CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("session-1", result!.Text);
+        Assert.Contains("New session:", result!.Text);
     }
 
     // ── 2.5 /reset clears context without creating new session ──
@@ -215,7 +215,7 @@ public sealed class SlashCommandHandlerTests
             CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Contains("session-1", result!.Text);
+        Assert.Contains("New session:", result!.Text);
     }
 
     [Fact]
