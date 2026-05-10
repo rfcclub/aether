@@ -559,7 +559,7 @@ public class ProviderRouter : ILLMProvider
                 return provider;
         }
 
-        // 3. Prefix match: "openrouter/deepseek/r1" → provider named "openrouter"
+        // 3. Exact prefix match: "openrouter/deepseek/r1" → provider named "openrouter"
         var slashIdx = modelId.IndexOf('/');
         if (slashIdx > 0)
         {
@@ -567,6 +567,24 @@ public class ProviderRouter : ILLMProvider
             var match = _providers.FirstOrDefault(p =>
                 p.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase));
             if (match is not null) return match;
+
+            // 4. Hyphen-slug match: "fireworks-ai/accounts/..." → provider "fireworks"
+            //    Strip common suffixes like "-ai", "-llm" from the slug
+            var slug = prefix;
+            foreach (var suffix in new[] { "-ai", "-llm" })
+            {
+                if (slug.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    slug = slug[..^suffix.Length];
+                    break;
+                }
+            }
+            if (!string.Equals(slug, prefix, StringComparison.Ordinal))
+            {
+                var slugMatch = _providers.FirstOrDefault(p =>
+                    p.Name.Equals(slug, StringComparison.OrdinalIgnoreCase));
+                if (slugMatch is not null) return slugMatch;
+            }
         }
 
         return null;

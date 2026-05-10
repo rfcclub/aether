@@ -1,7 +1,11 @@
+using System.Text.Json;
 using Aether.Providers;
 using Aether.Agent;
 using Aether.Skills;
 using Microsoft.Extensions.Logging.Abstractions;
+using RegistryToolExecutor = Aether.Tooling.ToolExecutor;
+using ToolDefinition = Aether.Tooling.ToolDefinition;
+using ToolRegistry = Aether.Tooling.ToolRegistry;
 
 namespace Aether.Tests;
 
@@ -55,6 +59,54 @@ public class AetherSoulTests
     }
 
     [Fact]
+    public async Task ProcessAsync_WithRegistry_IncludesRegistryTools()
+    {
+        var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("ok"));
+        var registry = new ToolRegistry(NullLogger<ToolRegistry>.Instance);
+        RegisterNoopTool(registry, "read");
+        RegisterNoopTool(registry, "web_search");
+        RegisterNoopTool(registry, "web_fetch");
+        var executor = new RegistryToolExecutor(registry, NullLogger<RegistryToolExecutor>.Instance);
+        var soul = new AetherSoul(provider, executor, registry, TestAgentProfile.NoOp());
+
+        await soul.ProcessAsync("main", "test");
+
+        Assert.NotNull(provider.LastRequest!.Tools);
+        Assert.Contains(provider.LastRequest.Tools!, t => t.Name == "read");
+        Assert.Contains(provider.LastRequest.Tools!, t => t.Name == "web_search");
+        Assert.Contains(provider.LastRequest.Tools!, t => t.Name == "web_fetch");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_WithRegistry_DispatchesRegistryToolCall()
+    {
+        var provider = new MultiResponseProvider(
+            new LlmResponse("", new[] { new LlmToolCall("call-1", "web_fetch", new Dictionary<string, string> { ["url"] = "https://example.com" }) }),
+            new LlmResponse("final answer"));
+        var registry = new ToolRegistry(NullLogger<ToolRegistry>.Instance);
+        var called = false;
+        registry.Register("web_fetch", new ToolDefinition(
+            "web_fetch",
+            "Fetch URL",
+            JsonDocument.Parse("""{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}""").RootElement.Clone(),
+            (args, _) =>
+            {
+                called = true;
+                Assert.Equal("https://example.com", args.GetProperty("url").GetString());
+                return Task.FromResult<object>("fetched page");
+            }));
+        var executor = new RegistryToolExecutor(registry, NullLogger<RegistryToolExecutor>.Instance);
+        var soul = new AetherSoul(provider, executor, registry, TestAgentProfile.NoOp());
+
+        var response = await soul.ProcessAsync("main", "fetch example");
+
+        Assert.Equal("final answer", response.Content);
+        Assert.True(called);
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Contains(provider.Requests[1].Messages, m => m.Role == "tool" && m.Content.Contains("fetched page"));
+    }
+
+    [Fact]
     public async Task ProcessAsync_ToolCall_LoopsUntilFinalResponse()
     {
         var provider = new MultiResponseProvider(
@@ -69,6 +121,15 @@ public class AetherSoulTests
         Assert.Equal(2, provider.Requests.Count);
         Assert.Single(tools.Calls);
         Assert.Equal("read", tools.Calls[0].Name);
+    }
+
+    private static void RegisterNoopTool(ToolRegistry registry, string name)
+    {
+        registry.Register(name, new ToolDefinition(
+            name,
+            $"No-op {name}",
+            JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone(),
+            (_, _) => Task.FromResult<object>("ok")));
     }
 
     [Fact]

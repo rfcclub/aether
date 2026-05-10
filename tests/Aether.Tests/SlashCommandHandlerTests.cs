@@ -1,9 +1,11 @@
 using System.Linq;
+using System.Text.Json;
 using Aether.Agent;
 using Aether.Channels;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Sessions;
+using Aether.Tooling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -15,7 +17,8 @@ public sealed class SlashCommandHandlerTests
         FakeMemorySystem? memory = null,
         SessionManager? sessions = null,
         Action<string>? onModelChanged = null,
-        ProviderRouter? router = null)
+        ProviderRouter? router = null,
+        ToolRegistry? tools = null)
     {
         var mem = memory ?? new FakeMemorySystem();
         var sessionMgr = sessions ?? new FakeSessionManager();
@@ -23,6 +26,8 @@ public sealed class SlashCommandHandlerTests
         var services = new ServiceCollection();
         services.AddSingleton<FileMemory>(mem);
         services.AddSingleton<SessionManager>(sessionMgr);
+        if (tools is not null)
+            services.AddSingleton<ToolRegistry>(tools);
         if (router is not null)
             services.AddSingleton<ProviderRouter>(router);
         var provider = services.BuildServiceProvider();
@@ -51,6 +56,33 @@ public sealed class SlashCommandHandlerTests
         var handler = CreateHandler();
         var result = await handler.HandleAsync(Ctx("/foobar"), CancellationToken.None);
         Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ToolsCommand_ReturnsToolAudit()
+    {
+        var registry = new ToolRegistry(NullLogger<ToolRegistry>.Instance);
+        registry.Register("read", new ToolDefinition(
+            "read",
+            "Read",
+            JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone(),
+            (_, _) => Task.FromResult<object>("ok")));
+        registry.Register("exec", new ToolDefinition(
+            "exec",
+            "Exec",
+            JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone(),
+            (_, _) => Task.FromResult<object>("ok"),
+            ToolRisk.Exec,
+            Enabled: false,
+            DisabledReason: "disabled in tests"));
+        var handler = CreateHandler(tools: registry);
+
+        var result = await handler.HandleAsync(Ctx("/tools"), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Contains("Visible tools: 1", result!.Text);
+        Assert.Contains("Enabled: read", result.Text);
+        Assert.Contains("exec: disabled in tests", result.Text);
     }
 
     // ── 2.3 Known slash command returns non-null ──

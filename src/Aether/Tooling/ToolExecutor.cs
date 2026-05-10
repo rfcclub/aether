@@ -37,6 +37,15 @@ public class ToolExecutor
             return new ToolResult(false, null, $"Tool '{name}' not found");
         }
 
+        if (!tool.Enabled)
+        {
+            var reason = string.IsNullOrWhiteSpace(tool.DisabledReason)
+                ? $"Tool '{name}' not permitted"
+                : tool.DisabledReason;
+            _logger.LogWarning("Tool disabled: {ToolName} ({Reason})", name, reason);
+            return new ToolResult(false, null, reason);
+        }
+
         try
         {
             _logger.LogDebug("Executing tool: {ToolName}", name);

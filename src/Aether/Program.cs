@@ -459,11 +459,10 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddSingleton<ToolRegistry>();
     builder.Services.AddSingleton<ToolExecutor>();
+    builder.Services.AddSingleton<Aether.Tooling.ToolExecutor>();
 
     // Tool ecosystem — built-in tool implementations
     builder.Services.AddHttpClient<TavilyWebSearchProvider>();
-    builder.Services.AddSingleton<TavilyWebSearchProvider>(provider =>
-        provider.GetRequiredService<TavilyWebSearchProvider>());
     builder.Services.AddHttpClient<WebFetchTool>();
     builder.Services.AddSingleton<ReadTool>();
     builder.Services.AddSingleton<WriteTool>();
@@ -471,6 +470,13 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<GlobTool>();
     builder.Services.AddSingleton<GrepTool>();
     builder.Services.AddSingleton<BashTool>();
+    builder.Services.AddSingleton<SkillListTool>();
+    builder.Services.AddSingleton<SkillReadTool>();
+    builder.Services.AddSingleton<MemoryReadTool>();
+    builder.Services.AddSingleton<MemoryWriteTool>();
+    builder.Services.AddSingleton<MemorySearchTool>();
+    builder.Services.AddSingleton<SessionStatusTool>();
+    builder.Services.AddSingleton<SessionResetTool>();
 
     // Register all IToolImplementation instances for tool-code bridge
     builder.Services.AddSingleton<IEnumerable<IToolImplementation>>(provider =>
@@ -483,6 +489,13 @@ static async Task RunServeAsync(bool traceStartup)
             provider.GetRequiredService<GlobTool>(),
             provider.GetRequiredService<GrepTool>(),
             provider.GetRequiredService<BashTool>(),
+            provider.GetRequiredService<SkillListTool>(),
+            provider.GetRequiredService<SkillReadTool>(),
+            provider.GetRequiredService<MemoryReadTool>(),
+            provider.GetRequiredService<MemoryWriteTool>(),
+            provider.GetRequiredService<MemorySearchTool>(),
+            provider.GetRequiredService<SessionStatusTool>(),
+            provider.GetRequiredService<SessionResetTool>(),
         };
     });
 
@@ -493,7 +506,8 @@ static async Task RunServeAsync(bool traceStartup)
         var logger = provider.GetRequiredService<ILogger<ToolStartupRegistration>>();
         var webFetchTool = provider.GetRequiredService<WebFetchTool>();
         var impls = provider.GetRequiredService<IEnumerable<IToolImplementation>>();
-        return new ToolStartupRegistration(registry, impls, webFetchTool, logger);
+        var searchProvider = provider.GetService<TavilyWebSearchProvider>();
+        return new ToolStartupRegistration(registry, impls, webFetchTool, logger, searchProvider);
     });
     builder.Services.AddSingleton<SlashCommandHandler>();
     builder.Services.AddSingleton<SkillRegistry>();
@@ -743,9 +757,11 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
-        var tools = provider.GetRequiredService<ToolExecutor>();
+        var tools = provider.GetRequiredService<Aether.Tooling.ToolExecutor>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var profile = provider.GetRequiredService<AgentProfile>();
-        return new AetherSoul(llm, tools, profile);
+        var logger = provider.GetRequiredService<ILogger<AetherSoul>>();
+        return new AetherSoul(llm, tools, registry, profile, logger);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

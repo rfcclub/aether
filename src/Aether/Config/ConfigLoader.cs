@@ -43,8 +43,23 @@ public sealed class ConfigLoader
         var providers = LoadProvidersFromAppSettings();
 
         // Layer 2: ~/.aether/config.json — global providers + agents registry
-        var (globalProviders, agents, meta, wizard) = await LoadGlobalConfigAsync(ct);
+        var (globalProviders, agents, meta, wizard, defaultsModel) = await LoadGlobalConfigAsync(ct);
         providers = MergeProviders(providers, globalProviders);
+
+        // Layer 2.5: Merge agents.defaults model config into agents (OpenClaw compat)
+        if (defaultsModel is not null)
+        {
+            foreach (var (name, entry) in agents.ToList())
+            {
+                var model = entry.Model;
+                if (string.IsNullOrEmpty(model.Primary) && !string.IsNullOrEmpty(defaultsModel.Primary))
+                    model = model with { Primary = defaultsModel.Primary };
+                if (model.Fallbacks.Count == 0 && defaultsModel.Fallbacks.Count > 0)
+                    model = model with { Fallbacks = new List<string>(defaultsModel.Fallbacks) };
+                if (model != entry.Model)
+                    agents[name] = entry with { Model = model };
+            }
+        }
 
         // Layer 3: Per-agent {workspace}/.aether.json — agent spec config
         var agentSpecs = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
@@ -165,16 +180,18 @@ public sealed class ConfigLoader
 
     private async Task<(Dictionary<string, SpecProviderEntry> providers,
         Dictionary<string, AgentEntryConfig> agents,
-        MetaSection meta, WizardSection wizard)> LoadGlobalConfigAsync(CancellationToken ct)
+        MetaSection meta, WizardSection wizard,
+        AgentModelConfig? defaultsModel)> LoadGlobalConfigAsync(CancellationToken ct)
     {
         var providers = new Dictionary<string, SpecProviderEntry>(StringComparer.OrdinalIgnoreCase);
         var agents = new Dictionary<string, AgentEntryConfig>(StringComparer.OrdinalIgnoreCase);
         var meta = new MetaSection();
         var wizard = new WizardSection();
+        AgentModelConfig? defaultsModel = null;
 
         var path = Path.Combine(_aetherDir, "config.json");
         if (!File.Exists(path))
-            return (providers, agents, meta, wizard);
+            return (providers, agents, meta, wizard, defaultsModel);
 
         try
         {
@@ -208,6 +225,13 @@ public sealed class ConfigLoader
                     var entry = ParseAgentEntry(prop.Name, prop.Value);
                     if (entry is not null)
                         agents[prop.Name] = entry;
+                }
+
+                // Extract agents.defaults as shared model baseline (OpenClaw compat)
+                if (agents.TryGetValue("defaults", out var defaultsEntry))
+                {
+                    defaultsModel = defaultsEntry.Model;
+                    agents.Remove("defaults");
                 }
             }
 
@@ -243,7 +267,7 @@ public sealed class ConfigLoader
             _logger.LogWarning(ex, "Failed to load ~/.aether/config.json");
         }
 
-        return (providers, agents, meta, wizard);
+        return (providers, agents, meta, wizard, defaultsModel);
     }
 
     private static SpecProviderEntry ParseLegacyProvider(JsonElement el, string type, string defaultBaseUrl)
@@ -325,7 +349,8 @@ public sealed class ConfigLoader
             BaseUrl = overrides.BaseUrl ?? base_.BaseUrl,
             MaxTokens = overrides.MaxTokens,
             Temperature = overrides.Temperature,
-            TimeoutSeconds = overrides.TimeoutSeconds
+            TimeoutSeconds = overrides.TimeoutSeconds,
+            Models = overrides.Models is { Count: > 0 } ? overrides.Models : base_.Models
         };
     }
 

@@ -1,9 +1,12 @@
 using System.Text;
+using System.Text.Json;
 using Aether.Agents;
 using Aether.Providers;
 using Aether.Tooling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RegistryToolExecutor = Aether.Tooling.ToolExecutor;
+using ToolRegistry = Aether.Tooling.ToolRegistry;
 
 namespace Aether.Agent;
 
@@ -11,7 +14,9 @@ public sealed class AetherSoul
 {
     private const int MaxToolIterations = 8;
     private readonly ILLMProvider _llm;
-    private readonly ToolExecutor _tools;
+    private readonly ToolExecutor? _legacyTools;
+    private readonly RegistryToolExecutor? _registryTools;
+    private readonly ToolRegistry? _toolRegistry;
     private readonly ILogger<AetherSoul> _logger;
 
     private WorkingContext _ctx;
@@ -23,9 +28,28 @@ public sealed class AetherSoul
         ILogger<AetherSoul>? logger = null)
     {
         _llm = llm;
-        _tools = tools;
+        _legacyTools = tools;
         _logger = logger ?? NullLogger<AetherSoul>.Instance;
         _ctx = new WorkingContext(profile.AgentDirectory, BuiltInTools);
+
+        // Identity context loaded once, sync — stays resident in WorkingContext for session lifetime.
+        var identity = profile.LoadIdentityContext();
+        if (!string.IsNullOrWhiteSpace(identity))
+            _ctx.SetSystemPrompt(BuildSystemPrompt(identity));
+    }
+
+    public AetherSoul(
+        ILLMProvider llm,
+        RegistryToolExecutor tools,
+        ToolRegistry toolRegistry,
+        AgentProfile profile,
+        ILogger<AetherSoul>? logger = null)
+    {
+        _llm = llm;
+        _registryTools = tools;
+        _toolRegistry = toolRegistry;
+        _logger = logger ?? NullLogger<AetherSoul>.Instance;
+        _ctx = new WorkingContext(profile.AgentDirectory, GetToolDefinitions());
 
         // Identity context loaded once, sync — stays resident in WorkingContext for session lifetime.
         var identity = profile.LoadIdentityContext();
@@ -105,7 +129,7 @@ public sealed class AetherSoul
             var isFallback = false;
             var textContent = new StringBuilder();
 
-            var toolsToUse = BuiltInTools;
+            var toolsToUse = GetToolDefinitions();
 
             while (true)
             {
@@ -188,8 +212,8 @@ public sealed class AetherSoul
                     }
                 }
 
-                var result = _tools.Execute(new ToolCall(toolCall.Name, toolCall.Arguments));
-                _ctx.AddToolResult(toolCall.Id, toolCall.Name, FormatToolResult(result));
+                var result = await ExecuteToolCallAsync(toolCall, ct);
+                _ctx.AddToolResult(toolCall.Id, toolCall.Name, result);
             }
             messages = new List<LlmMessage>(_ctx.Messages);
             // Continue loop to stream the LLM's response to tool results
@@ -201,7 +225,7 @@ public sealed class AetherSoul
 
     private async Task<LlmResponse> RunLlmToolLoopAsync(IReadOnlyList<LlmMessage> messages, WorkingContext ctx, CancellationToken ct)
     {
-        var tools = BuiltInTools;
+        var tools = GetToolDefinitions();
         for (var iteration = 0; iteration < MaxToolIterations; iteration++)
         {
             LlmResponse response;
@@ -247,13 +271,66 @@ public sealed class AetherSoul
                     }
                 }
 
-                var result = _tools.Execute(new ToolCall(toolCall.Name, toolCall.Arguments));
-                ctx.AddToolResult(toolCall.Id, toolCall.Name, FormatToolResult(result));
+                var result = await ExecuteToolCallAsync(toolCall, ct);
+                ctx.AddToolResult(toolCall.Id, toolCall.Name, result);
             }
             messages = ctx.Messages;
         }
 
         throw new InvalidOperationException($"AetherSoul exceeded {MaxToolIterations} tool iterations.");
+    }
+
+    private IReadOnlyList<LlmTool> GetToolDefinitions()
+    {
+        if (_toolRegistry is null)
+            return BuiltInTools;
+
+        var definitions = _toolRegistry.ListDefinitions(includeDisabled: false);
+        if (definitions.Count == 0)
+            return BuiltInTools;
+
+        return definitions.Select(ToLlmTool).ToList();
+    }
+
+    private static LlmTool ToLlmTool(Aether.Tooling.ToolDefinition definition)
+    {
+        var schema = definition.ParametersSchema.ValueKind == JsonValueKind.Undefined
+            ? "{}"
+            : definition.ParametersSchema.GetRawText();
+        return new LlmTool(definition.Name, definition.Description, schema, schema);
+    }
+
+    private async Task<string> ExecuteToolCallAsync(LlmToolCall toolCall, CancellationToken ct)
+    {
+        if (_registryTools is not null)
+        {
+            var argsJson = JsonSerializer.Serialize(toolCall.Arguments);
+            var result = await _registryTools.ExecuteAsync(toolCall.Name, argsJson, ct);
+            return FormatRegistryToolResult(result);
+        }
+
+        if (_legacyTools is not null)
+        {
+            var result = _legacyTools.Execute(new ToolCall(toolCall.Name, toolCall.Arguments));
+            return FormatToolResult(result);
+        }
+
+        return $"Tool failed: no tool executor configured for {toolCall.Name}";
+    }
+
+    private static string FormatRegistryToolResult(Aether.Tooling.ToolResult result)
+    {
+        if (!result.Success)
+            return string.IsNullOrWhiteSpace(result.Error)
+                ? "Tool failed."
+                : $"Tool failed: {result.Error}";
+
+        return result.Data switch
+        {
+            null => string.Empty,
+            string text => text,
+            _ => JsonSerializer.Serialize(result.Data, new JsonSerializerOptions { WriteIndented = false })
+        };
     }
 
     private static string FormatToolResult(ToolResult result)

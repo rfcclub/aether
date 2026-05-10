@@ -49,9 +49,12 @@ public sealed class ToolStartupRegistration : IHostedService
                     var sandbox = ToolSandboxAccessor.Current
                                   ?? new SandboxContext(Directory.GetCurrentDirectory());
                     return await impl.ExecuteAsync(args, sandbox, ct);
-                }));
+                },
+                RiskFor(impl.Name)));
             _logger.LogInformation("Registered built-in tool: {ToolName}", impl.Name);
         }
+
+        RegisterShellAliases(implMap);
 
         // Register web_search tool
         var searchSchema = JsonDocument.Parse("""
@@ -63,7 +66,7 @@ public sealed class ToolStartupRegistration : IHostedService
                 },
                 "required": ["query"]
             }
-            """).RootElement;
+            """).RootElement.Clone();
 
         _registry.Register("web_search", new ToolDefinition(
             "web_search",
@@ -93,7 +96,8 @@ public sealed class ToolStartupRegistration : IHostedService
                     sb.AppendLine();
                 }
                 return sb.ToString().TrimEnd();
-            }));
+            },
+            ToolRisk.Network));
 
         // Register web_fetch tool
         var fetchSchema = JsonDocument.Parse("""
@@ -104,7 +108,7 @@ public sealed class ToolStartupRegistration : IHostedService
                 },
                 "required": ["url"]
             }
-            """).RootElement;
+            """).RootElement.Clone();
 
         _registry.Register("web_fetch", new ToolDefinition(
             "web_fetch",
@@ -114,7 +118,8 @@ public sealed class ToolStartupRegistration : IHostedService
             {
                 var url = args.GetProperty("url").GetString()!;
                 return await _webFetchTool.ExecuteAsync(url, ct);
-            }));
+            },
+            ToolRisk.Network));
 
         _logger.LogInformation("Registered web tools: web_search, web_fetch");
 
@@ -122,6 +127,43 @@ public sealed class ToolStartupRegistration : IHostedService
     }
 
     public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
+
+    private void RegisterShellAliases(IReadOnlyDictionary<string, IToolImplementation> implMap)
+    {
+        if (!implMap.TryGetValue("bash", out var bash))
+            return;
+
+        _registry.Register("shell", new ToolDefinition(
+            "shell",
+            "Compatibility alias for bash. Execute a shell command in the active workspace.",
+            bash.ParametersSchema,
+            async (args, ct) =>
+            {
+                var sandbox = ToolSandboxAccessor.Current
+                              ?? new SandboxContext(Directory.GetCurrentDirectory());
+                return await bash.ExecuteAsync(args, sandbox, ct);
+            },
+            ToolRisk.Exec));
+
+        _registry.Register("exec", new ToolDefinition(
+            "exec",
+            "Compatibility alias for bash, disabled by default unless command-exec aliases are explicitly enabled.",
+            bash.ParametersSchema,
+            (_, _) => Task.FromResult<object>("exec alias disabled by policy."),
+            ToolRisk.Exec,
+            Enabled: false,
+            DisabledReason: "exec alias is disabled by default; use bash/shell or enable it explicitly."));
+
+        _logger.LogInformation("Registered compatibility aliases: shell, exec(disabled)");
+    }
+
+    private static ToolRisk RiskFor(string toolName) => toolName.ToLowerInvariant() switch
+    {
+        "bash" or "shell" or "exec" => ToolRisk.Exec,
+        "write" or "edit" or "memory_write" or "session_reset" => ToolRisk.Write,
+        "web_search" or "web_fetch" => ToolRisk.Network,
+        _ => ToolRisk.Read
+    };
 }
 
 /// <summary>

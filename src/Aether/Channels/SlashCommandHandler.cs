@@ -5,6 +5,7 @@ using Aether.Memory;
 using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
+using Aether.Tooling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -49,6 +50,7 @@ public sealed class SlashCommandHandler
             "/reset" => await HandleResetAsync(ctx, ct),
             "/model" => await HandleModelAsync(ctx, args, ct),
             "/models" => HandleModelsAsync(ctx),
+            "/tools" => HandleTools(),
             "/context" => await HandleContextAsync(ctx, ct),
             "/compact" => await HandleCompactAsync(ctx, ct),
             _ => null
@@ -176,6 +178,40 @@ public sealed class SlashCommandHandler
         return new SlashCommandResult(sb.ToString().TrimEnd());
     }
 
+    private SlashCommandResult HandleTools()
+    {
+        var registry = _rootServices.GetService<ToolRegistry>();
+        if (registry is null)
+            return new SlashCommandResult("Tool registry is not available.");
+
+        var audit = registry.Audit();
+        var visible = audit.Where(t => t.Enabled).ToList();
+        var disabled = audit.Where(t => !t.Enabled).ToList();
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Visible tools: {visible.Count}");
+        if (visible.Count > 0)
+            sb.AppendLine($"Enabled: {string.Join(", ", visible.Select(t => t.Name))}");
+        if (disabled.Count > 0)
+        {
+            sb.AppendLine("Disabled:");
+            foreach (var tool in disabled)
+                sb.AppendLine($"  {tool.Name}: {tool.DisabledReason ?? "disabled"}");
+        }
+
+        var visibleNames = visible.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missing = OpenClawParityCandidates
+            .Where(name => !visibleNames.Contains(name))
+            .ToList();
+        if (missing.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Missing OpenClaw parity candidates: {string.Join(", ", missing)}");
+        }
+
+        return new SlashCommandResult(sb.ToString().TrimEnd());
+    }
+
     private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)
     {
         var memory = _rootServices.GetRequiredService<FileMemory>();
@@ -214,4 +250,20 @@ public sealed class SlashCommandHandler
         if (string.IsNullOrEmpty(text)) return 0;
         return Math.Max(1, text.Length / 4);
     }
+
+    private static readonly string[] OpenClawParityCandidates =
+    {
+        "message",
+        "sessions_spawn",
+        "sessions_send",
+        "sessions_history",
+        "subagents",
+        "cron",
+        "nodes",
+        "image_generate",
+        "video_generate",
+        "music_generate",
+        "pdf",
+        "tts"
+    };
 }
