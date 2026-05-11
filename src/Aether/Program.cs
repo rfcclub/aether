@@ -7,6 +7,7 @@ using Aether.Cli;
 using Aether.Config;
 using Aether.Data;
 using Aether.Memory;
+using Aether.Plugins;
 using Aether.Providers;
 using Microsoft.Extensions.DependencyInjection;
 using Aether.Routing;
@@ -754,6 +755,25 @@ static async Task RunServeAsync(bool traceStartup)
         return new ContextAssembler(tokenBudget);
     });
 
+    // ── Plugin system ──
+    builder.Services.AddSingleton<Aether.Plugins.PluginLoader>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var pluginsPath = configuration["plugins:path"] ?? "plugins";
+        var logger = provider.GetRequiredService<ILogger<Aether.Plugins.PluginLoader>>();
+        return new Aether.Plugins.PluginLoader(pluginsPath, logger);
+    });
+
+    builder.Services.AddSingleton<Aether.Plugins.HookEngine>(provider =>
+    {
+        var pluginLoader = provider.GetRequiredService<Aether.Plugins.PluginLoader>();
+        var pluginResult = pluginLoader.LoadAllAsync().GetAwaiter().GetResult();
+        var diHooks = provider.GetServices<IHook>();
+        var allHooks = diHooks.Concat(pluginResult.Hooks).ToList();
+        var logger = provider.GetRequiredService<ILogger<Aether.Plugins.HookEngine>>();
+        return new Aether.Plugins.HookEngine(allHooks, logger);
+    });
+
     builder.Services.AddSingleton<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
@@ -761,7 +781,8 @@ static async Task RunServeAsync(bool traceStartup)
         var registry = provider.GetRequiredService<ToolRegistry>();
         var profile = provider.GetRequiredService<AgentProfile>();
         var logger = provider.GetRequiredService<ILogger<AetherSoul>>();
-        return new AetherSoul(llm, tools, registry, profile, logger);
+        var hooks = provider.GetService<Aether.Plugins.HookEngine>();
+        return new AetherSoul(llm, tools, registry, profile, logger, hooks);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>
@@ -850,7 +871,43 @@ static async Task RunServeAsync(bool traceStartup)
         }
     }
 
-    await host.RunAsync();
+    // ── OnAgentStart hook ──
+    var hooks = host.Services.GetService<Aether.Plugins.HookEngine>();
+    if (hooks is not null)
+    {
+        var profile = host.Services.GetRequiredService<AgentProfile>();
+        var isFirstBoot = !Directory.Exists(Path.Combine(profile.AgentDirectory, "memory"));
+        await hooks.RunAllAsync(HookPoint.OnAgentStart, new OnAgentStartContext
+        {
+            AgentName = profile.Name,
+            WorkspacePath = profile.AgentDirectory,
+            IsFirstBoot = isFirstBoot,
+            AgentVersion = "3.0.0"
+        }, CancellationToken.None);
+    }
+
+    // ── OnAgentStop hook on shutdown ──
+    var shutdownCts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        if (hooks is not null)
+        {
+            var profile = host.Services.GetRequiredService<AgentProfile>();
+            hooks.RunAllAsync(HookPoint.OnAgentStop, new HookContext
+            {
+                AgentName = profile.Name,
+                WorkspacePath = profile.AgentDirectory
+            }, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        shutdownCts.Cancel();
+    };
+
+    try
+    {
+        await host.RunAsync(shutdownCts.Token);
+    }
+    catch (OperationCanceledException) { }
 }
 
 internal sealed class AetherHostMarker;

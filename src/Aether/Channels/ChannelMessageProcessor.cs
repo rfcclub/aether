@@ -2,6 +2,7 @@ using System.Text;
 using Aether.Agent;
 using Aether.Config;
 using Aether.Memory;
+using Aether.Plugins;
 using Aether.Providers;
 using Aether.Routing;
 using Microsoft.Extensions.Configuration;
@@ -26,6 +27,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly ConfigLoader _configLoader;
     private readonly SlashCommandHandler _slashCommands;
     private readonly FileMemory _memory;
+    private readonly HookEngine? _hooks;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -36,7 +38,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
         ConfigLoader configLoader,
         SlashCommandHandler slashCommands,
         FileMemory memory,
-        ILogger<ChannelMessageProcessor> logger)
+        ILogger<ChannelMessageProcessor> logger,
+        HookEngine? hooks = null)
     {
         _channel = channel;
         _router = router;
@@ -45,6 +48,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         _configLoader = configLoader;
         _slashCommands = slashCommands;
         _memory = memory;
+        _hooks = hooks;
         _logger = logger;
     }
 
@@ -90,6 +94,24 @@ public sealed class ChannelMessageProcessor : BackgroundService
     {
         try
         {
+            // ── OnMessageReceived hook ──
+            if (_hooks is not null)
+            {
+                var msgCtx = new OnMessageReceivedContext
+                {
+                    ChatId = message.ChatId,
+                    SenderId = message.SenderId,
+                    ChannelName = _channel.Name,
+                    Text = message.Text,
+                    WorkspacePath = ""
+                };
+                var msgResult = await _hooks.RunAsync(HookPoint.OnMessageReceived, msgCtx, ct);
+                if (!msgResult.Success || msgCtx.Dropped)
+                    return;
+                if (msgCtx.OverrideText is not null)
+                    message = message with { Text = msgCtx.OverrideText };
+            }
+
             // Access control — gate before routing
             var access = await _channelAccess.CheckAccessAsync(message.SenderId, ct);
             switch (access)
@@ -190,6 +212,26 @@ public sealed class ChannelMessageProcessor : BackgroundService
             // Add assistant response to ephemeral context
             var responseText = fullResponse.ToString();
             _memory.AddToContext($"Assistant: {responseText}", 0.5f);
+
+            // ── OnMessageSent hook ──
+            if (_hooks is not null)
+            {
+                var sentCtx = new OnMessageSentContext
+                {
+                    ChatId = message.ChatId,
+                    Text = responseText,
+                    AgentName = routed.Value.AgentName,
+                    WorkspacePath = routed.Value.WorkspacePath
+                };
+                await _hooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, ct);
+                if (sentCtx.Suppress)
+                {
+                    await _channel.SetTypingAsync(message.ChatId, false, ct);
+                    return;
+                }
+                if (sentCtx.OverrideText is not null)
+                    responseText = sentCtx.OverrideText;
+            }
 
             await _channel.SetTypingAsync(message.ChatId, false, ct);
             await _channel.SendMessageAsync(message.ChatId, responseText, ct);
