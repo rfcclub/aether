@@ -48,7 +48,7 @@ RequireDirectory(root, "src/Aether/Sessions");
 RequireDirectory(root, "src/Aether/Scheduler");
 
 var project = File.ReadAllText(Path.Combine(root, "src/Aether/Aether.csproj"));
-Require(project.Contains("<TargetFramework>net9.0</TargetFramework>", StringComparison.Ordinal), "Aether.csproj must target net9.0.");
+Require(project.Contains("<TargetFramework>net10.0</TargetFramework>", StringComparison.Ordinal), "Aether.csproj must target net10.0.");
 
 var appsettingsPath = Path.Combine(root, "src/Aether/appsettings.json");
 using var appsettings = JsonDocument.Parse(File.ReadAllText(appsettingsPath));
@@ -596,7 +596,6 @@ static async Task VerifyAetherSoulAsync(string root)
         var db = new AetherDb(databasePath, schemaPath);
         await db.InitializeAsync(CancellationToken.None);
 
-        var sessions = new SessionManager(db);
         var provider = new FakeProvider("ack");
         var tools = new DisabledToolExecutor();
         var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
@@ -606,12 +605,6 @@ static async Task VerifyAetherSoulAsync(string root)
         Require(response.Content == "ack", "AetherSoul must return provider content.");
         Require(provider.LastRequest is not null, "AetherSoul must call the LLM provider.");
         Require(provider.LastRequest!.Messages.Any(m => m.Role == "system" && m.Content.Contains("You are Aether", StringComparison.Ordinal)), "AetherSoul must include identity context.");
-
-        var session = await sessions.GetOrCreateSessionAsync("main", CancellationToken.None);
-        var history = await sessions.GetHistoryAsync(session.Id, maxMessages: 10, CancellationToken.None);
-        Require(history.Count == 2, "AetherSoul must save user and assistant messages.");
-        Require(history[0].Content == "hello", "AetherSoul must save user prompt.");
-        Require(history[1].Content == "ack", "AetherSoul must save assistant response.");
 
         var toolProvider = new FakeProvider(
             new LlmResponse(

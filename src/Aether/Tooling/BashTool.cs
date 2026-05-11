@@ -39,16 +39,7 @@ public sealed class BashTool : IToolImplementation
 
         var timeout = sandbox.BashTimeoutSeconds > 0 ? sandbox.BashTimeoutSeconds : 60;
 
-        var psi = new ProcessStartInfo
-        {
-            FileName = "/bin/bash",
-            ArgumentList = { "-c", command },
-            WorkingDirectory = sandbox.WorkspacePath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var psi = CreateShellStartInfo(command, sandbox.WorkspacePath);
 
         using var process = new Process { StartInfo = psi };
         var stdout = new System.Text.StringBuilder();
@@ -104,6 +95,33 @@ public sealed class BashTool : IToolImplementation
     {
         public override string ToString() =>
             ExitCode == 0 ? Output : $"[exit {ExitCode}]\n{Output}";
+    }
+
+    private static ProcessStartInfo CreateShellStartInfo(string command, string workingDirectory)
+    {
+        var psi = new ProcessStartInfo
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            psi.FileName = "cmd.exe";
+            psi.ArgumentList.Add("/C");
+            psi.ArgumentList.Add(command);
+        }
+        else
+        {
+            psi.FileName = "/bin/bash";
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(command);
+        }
+
+        return psi;
     }
 }
 

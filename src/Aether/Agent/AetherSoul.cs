@@ -311,7 +311,7 @@ public sealed class AetherSoul
 
         if (_legacyTools is not null)
         {
-            var result = _legacyTools.Execute(new ToolCall(toolCall.Name, toolCall.Arguments));
+            var result = await _legacyTools.ExecuteAsync(new ToolCall(toolCall.Name, toolCall.Arguments), ct);
             return FormatToolResult(result);
         }
 

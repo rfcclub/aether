@@ -362,7 +362,12 @@ public sealed class ConfigLoader
         // Agent providers override global by name
         var merged = new Dictionary<string, SpecProviderEntry>(globalProviders, StringComparer.OrdinalIgnoreCase);
         foreach (var (key, value) in spec.Providers)
-            merged[key] = value;
+        {
+            if (merged.TryGetValue(key, out var existing))
+                merged[key] = MergeProviderFields(existing, value);
+            else
+                merged[key] = value;
+        }
         return spec with { Providers = merged };
     }
 

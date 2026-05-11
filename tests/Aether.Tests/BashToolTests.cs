@@ -33,7 +33,10 @@ public sealed class BashToolTests
     public async Task CommandWithError_ReturnsStderrAndExitCode()
     {
         var tool = new BashTool(NullLogger<BashTool>.Instance);
-        var args = JsonDocument.Parse($"{{\"command\":\"ls /nonexistent_path_xyz\"}}").RootElement;
+        var command = OperatingSystem.IsWindows()
+            ? "dir nonexistent_path_xyz_for_aether"
+            : "ls /nonexistent_path_xyz";
+        var args = JsonDocument.Parse($$"""{"command": "{{command}}"}""").RootElement;
 
         var result = await tool.ExecuteAsync(args, _sandbox, CancellationToken.None);
         var bashResult = Assert.IsType<BashTool.BashResult>(result);

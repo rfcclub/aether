@@ -87,7 +87,10 @@ public sealed class ToolIntegrationTests : IDisposable
         // Write a test file first
         File.WriteAllText(Path.Combine(_workspace, "hello.txt"), "hello");
 
-        var args = JsonDocument.Parse("""{"command": "ls *.txt && cat hello.txt"}""").RootElement;
+        var command = OperatingSystem.IsWindows()
+            ? "dir /b *.txt && type hello.txt"
+            : "ls *.txt && cat hello.txt";
+        var args = JsonDocument.Parse($$"""{"command": "{{command}}"}""").RootElement;
         var result = (BashTool.BashResult)await bashTool.ExecuteAsync(args, _sandbox, CancellationToken.None);
 
         Assert.Equal(0, result.ExitCode);

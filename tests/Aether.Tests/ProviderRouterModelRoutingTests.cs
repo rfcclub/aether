@@ -224,4 +224,72 @@ public sealed class ProviderRouterModelRoutingTests : IDisposable
 
         Assert.NotNull(result);
     }
+
+
+    // ── Provider-slug resolution (fireworks-ai/... → fireworks) ──
+
+    [Fact]
+    public void ResolveModelToProvider_HyphenSlug_ResolvesToProvider()
+    {
+        var fireworks = new FakeLlmProvider("fireworks", "accounts/fireworks/routers/kimi-k2p6-turbo");
+        var router = CreateRouter(new[] { fireworks });
+
+        var result = router.ResolveModelToProvider("fireworks-ai/accounts/fireworks/routers/kimi-k2p6-turbo");
+
+        Assert.NotNull(result);
+        Assert.Equal("fireworks", result!.Name);
+    }
+
+    [Fact]
+    public void ResolveModelToProvider_ExactPrefix_TakesPrecedenceOverSlug()
+    {
+        var openrouter = new FakeLlmProvider("openrouter", "some-model");
+        var router = CreateRouter(new[] { openrouter });
+
+        var result = router.ResolveModelToProvider("openrouter/deepseek/deepseek-r1:free");
+
+        Assert.NotNull(result);
+        Assert.Equal("openrouter", result!.Name);
+    }
+
+    [Fact]
+    public void ResolveModelToProvider_UnknownSlug_ReturnsNull()
+    {
+        var fireworks = new FakeLlmProvider("fireworks", "model");
+        var router = CreateRouter(new[] { fireworks });
+
+        var result = router.ResolveModelToProvider("unknown-slug/some-model");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ResolveModelToProvider_AILStripped()
+    {
+        // "google-ai/model" → strip "-ai" → "google"
+        var google = new FakeLlmProvider("google", "gemini-2.5-flash");
+        var router = CreateRouter(new[] { google });
+
+        var result = router.ResolveModelToProvider("google-ai/gemini-2.5-flash");
+
+        Assert.NotNull(result);
+        Assert.Equal("google", result!.Name);
+    }
+
+    [Fact]
+    public async Task ModelChain_FallsBackThroughFullChain()
+    {
+        var primary = new FakeLlmProvider("fireworks", "accounts/fireworks/routers/kimi", throwOnCall: true);
+        var fallback = new FakeLlmProvider("openrouter", "deepseek-r1");
+
+        var router = CreateRouter(
+            new ILLMProvider[] { primary, fallback },
+            modelChain: new[] { "fireworks-ai/accounts/fireworks/routers/kimi", "openrouter/deepseek/deepseek-r1:free" });
+
+        var response = await router.CompleteAsync(SimpleRequest, CancellationToken.None);
+
+        Assert.NotNull(response);
+        Assert.Equal("deepseek-r1", fallback.Model);
+    }
+
 }

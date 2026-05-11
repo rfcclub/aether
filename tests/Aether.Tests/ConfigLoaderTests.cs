@@ -295,4 +295,187 @@ public sealed class ConfigLoaderTests : IDisposable
         var result = await loader.LoadAsync();
         Assert.NotNull(result);
     }
+
+
+    // ── agents.defaults: inherit primary from defaults ──
+
+    [Fact]
+    public async Task Agent_InheritsPrimaryFromDefaults()
+    {
+        WriteAetherConfig("""
+        {
+            "agents": {
+                "defaults": { "model": { "primary": "fireworks-ai/accounts/fireworks/models/deepseek" } },
+                "default": { "name": "default", "workspace": "/tmp/ws" }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync(agentName: "default");
+
+        var agent = result.Agents["default"];
+        Assert.Equal("fireworks-ai/accounts/fireworks/models/deepseek", agent.Model.Primary);
+    }
+
+    [Fact]
+    public async Task Agent_InheritsFallbacksFromDefaults()
+    {
+        WriteAetherConfig("""
+        {
+            "agents": {
+                "defaults": { "model": { "fallbacks": ["openrouter/backup-a", "openrouter/backup-b"] } },
+                "default": { "name": "default", "workspace": "/tmp/ws" }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync(agentName: "default");
+
+        var agent = result.Agents["default"];
+        Assert.Equal(2, agent.Model.Fallbacks.Count);
+        Assert.Equal("openrouter/backup-a", agent.Model.Fallbacks[0]);
+        Assert.Equal("openrouter/backup-b", agent.Model.Fallbacks[1]);
+    }
+
+    [Fact]
+    public async Task Agent_OverrideTakesPrecedenceOverDefaults()
+    {
+        WriteAetherConfig("""
+        {
+            "agents": {
+                "defaults": { "model": { "primary": "default-model", "fallbacks": ["default-fb"] } },
+                "maria": { "name": "maria", "workspace": "/tmp/ws", "model": { "primary": "maria-model" } }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync(agentName: "maria");
+
+        var agent = result.Agents["maria"];
+        // Primary: agent overrides
+        Assert.Equal("maria-model", agent.Model.Primary);
+        // Fallbacks: agent has none, inherits from defaults
+        Assert.Single(agent.Model.Fallbacks);
+        Assert.Equal("default-fb", agent.Model.Fallbacks[0]);
+    }
+
+    [Fact]
+    public async Task Defaults_NotInAgentsDict()
+    {
+        WriteAetherConfig("""
+        {
+            "agents": {
+                "defaults": { "model": { "primary": "x" } },
+                "default": { "name": "default", "workspace": "/tmp/ws" }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync();
+
+        Assert.False(result.Agents.ContainsKey("defaults"));
+        Assert.True(result.Agents.ContainsKey("default"));
+    }
+
+    [Fact]
+    public async Task Defaults_WithNoAgents_DoesNotCrash()
+    {
+        WriteAetherConfig("""
+        {
+            "agents": {
+                "defaults": { "model": { "primary": "x", "fallbacks": ["y"] } }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync();
+
+        Assert.Empty(result.Agents);
+    }
+
+    // ── Models list preserved through merge ──
+
+    [Fact]
+    public async Task ProviderMerge_PreservesModelsFromOverrides()
+    {
+        var wsPath = Path.Combine(_aetherDir, "workspaces", "default");
+        Directory.CreateDirectory(wsPath);
+
+        // Global has models list, agent provider also has models list
+        WriteAetherConfig($$"""
+        {
+            "providers": {
+                "fireworks": { "type": "openai", "model": "old-model", "models": ["old-a"] }
+            },
+            "agents": {
+                "default": { "name": "default", "workspace": "{{wsPath.Replace("\\", "\\\\")}}" }
+            }
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(wsPath, ".aether.json"), """
+        {
+            "providers": {
+                "fireworks": { "type": "openai", "model": "new-model", "models": ["new-a", "new-b"] }
+            }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync(agentName: "default");
+
+        var spec = result.AgentSpecs["default"];
+        Assert.True(spec.Providers.TryGetValue("fireworks", out var fw));
+        Assert.Equal("new-model", fw!.Model);
+        Assert.NotNull(fw.Models);
+        Assert.Equal(2, fw.Models!.Count);
+        Assert.Contains("new-a", fw.Models);
+    }
+
+    [Fact]
+    public async Task ProviderMerge_PreservesBaseModels_WhenOverridesEmpty()
+    {
+        var wsPath = Path.Combine(_aetherDir, "workspaces", "default");
+        Directory.CreateDirectory(wsPath);
+
+        WriteAetherConfig($$"""
+        {
+            "providers": {
+                "fireworks": { "type": "openai", "model": "fw-model", "models": ["fw-a", "fw-b"] }
+            },
+            "agents": {
+                "default": { "name": "default", "workspace": "{{wsPath.Replace("\\", "\\\\")}}" }
+            }
+        }
+        """);
+
+        // Agent spec has no providers section at all
+        File.WriteAllText(Path.Combine(wsPath, ".aether.json"), """
+        {
+            "agent": { "name": "default" }
+        }
+        """);
+
+        var config = new ConfigurationBuilder().Build();
+        var loader = new ConfigLoader(config, _aetherDir, NullLogger<ConfigLoader>.Instance);
+        var result = await loader.LoadAsync(agentName: "default");
+
+        var spec = result.AgentSpecs["default"];
+        Assert.True(spec.Providers.TryGetValue("fireworks", out var fw));
+        Assert.NotNull(fw!.Models);
+        Assert.Equal(2, fw.Models!.Count);
+        Assert.Contains("fw-a", fw.Models);
+    }
+
 }

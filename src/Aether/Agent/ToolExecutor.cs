@@ -224,8 +224,6 @@ public class ToolExecutor
             if (!process.Start())
                 return new ToolResult(false, "", "Command failed to start");
 
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
             process.WaitForExit(Math.Max(1, _options.TimeoutMs));
 
             if (!process.HasExited)
@@ -234,6 +232,8 @@ public class ToolExecutor
                 return new ToolResult(false, "", "Command timed out");
             }
 
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
             var output = Truncate(FormatCommandOutput(stdout, stderr), _options.MaxOutputBytes);
 
             if (process.ExitCode == 0)
@@ -292,9 +292,6 @@ public class ToolExecutor
         // Sandbox type "none" disables all path restrictions
         if (_sandboxDisabled) return true;
 
-        _logger?.LogWarning("ToolExecutor IsPathAllowed: DENIED path='{Path}' sandboxDisabled={SandboxDisabled} allowedPaths=[{Allowed}] deniedPaths=[{Denied}]",
-            path, _sandboxDisabled, string.Join(", ", _allowedPaths), string.Join(", ", _deniedPaths));
-
         var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
         // Check denied paths first — they take precedence over allowed paths
@@ -308,7 +305,23 @@ public class ToolExecutor
             }
         }
 
-        return true;
+        if (_allowedPaths.Length == 0)
+            return true;
+
+        foreach (var allowed in _allowedPaths)
+        {
+            if (string.Equals(fullPath, allowed, StringComparison.Ordinal)
+                || fullPath.StartsWith(allowed + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || fullPath.StartsWith(allowed + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        _logger?.LogWarning("ToolExecutor IsPathAllowed: DENIED path='{Path}' sandboxDisabled={SandboxDisabled} allowedPaths=[{Allowed}] deniedPaths=[{Denied}]",
+            path, _sandboxDisabled, string.Join(", ", _allowedPaths), string.Join(", ", _deniedPaths));
+
+        return false;
     }
 
     private string FirstAllowedPath()
