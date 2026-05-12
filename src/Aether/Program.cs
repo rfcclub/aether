@@ -17,6 +17,9 @@ using Aether.Workspace;
 using Aether.Sessions;
 using Aether.Skills;
 using Aether.Tooling;
+using Aether.Ui;
+using Aether.Ui.Handlers;
+using Aether.Ui.Renderers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -451,12 +454,18 @@ static async Task RunServeAsync(bool traceStartup)
         var logger = provider.GetRequiredService<ILogger<MessageRouter>>();
         return new MessageRouter(configLoader, logger);
     });
-    builder.Services.AddSingleton<SessionManager>();
+    builder.Services.AddSingleton<SessionManager>(provider =>
+    {
+        var db = provider.GetRequiredService<AetherDb>();
+        var hooks = provider.GetService<Aether.Plugins.HookEngine>();
+        return new SessionManager(db, hooks);
+    });
     builder.Services.AddSingleton<FileMemory>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var groupsPath = configuration["groups:path"] ?? "groups";
-        return new FileMemory(groupsPath);
+        var hooks = provider.GetService<Aether.Plugins.HookEngine>();
+        return new FileMemory(groupsPath, hooks);
     });
     builder.Services.AddSingleton<ToolRegistry>();
     builder.Services.AddSingleton<ToolExecutor>();
@@ -511,6 +520,11 @@ static async Task RunServeAsync(bool traceStartup)
         return new ToolStartupRegistration(registry, impls, webFetchTool, logger, searchProvider);
     });
     builder.Services.AddSingleton<SlashCommandHandler>();
+    builder.Services.AddSingleton<IUiCallbackHandler, ModelSelectionHandler>();
+    builder.Services.AddSingleton<CallbackRouter>();
+    builder.Services.AddSingleton<TelegramUiRenderer>();
+    builder.Services.AddSingleton<WebSocketUiRenderer>();
+    builder.Services.AddSingleton<TuiUiRenderer>();
     builder.Services.AddSingleton<SkillRegistry>();
     builder.Services.AddSingleton<SkillParser>();
     builder.Services.AddSingleton<SkillTrigger>();
@@ -679,7 +693,15 @@ static async Task RunServeAsync(bool traceStartup)
         return new AgentMemoryBridge(profile.AgentDirectory, config);
     });
 
-    builder.Services.AddHostedService<AgentHeartbeatService>();
+    builder.Services.AddHostedService(provider =>
+    {
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var soul = provider.GetRequiredService<AetherSoul>();
+        var config = provider.GetRequiredService<AgentConfig>();
+        var logger = provider.GetRequiredService<ILogger<AgentHeartbeatService>>();
+        var hooks = provider.GetService<Aether.Plugins.HookEngine>();
+        return new AgentHeartbeatService(profile, soul, config, logger, hooks: hooks);
+    });
 
     // Cron scheduler — recurring tasks from ~/.aether/cron/*.md
     builder.Services.AddHostedService(provider =>
@@ -767,9 +789,18 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<Aether.Plugins.HookEngine>(provider =>
     {
         var pluginLoader = provider.GetRequiredService<Aether.Plugins.PluginLoader>();
-        var pluginResult = pluginLoader.LoadAllAsync().GetAwaiter().GetResult();
+        var (pluginResult, manifestPairs) = pluginLoader.LoadAllAsync().GetAwaiter().GetResult();
         var diHooks = provider.GetServices<IHook>();
         var allHooks = diHooks.Concat(pluginResult.Hooks).ToList();
+
+        // Register plugin assets (tools, skills, cron) into registries
+        var toolRegistry = provider.GetRequiredService<ToolRegistry>();
+        var skillRegistry = provider.GetRequiredService<SkillRegistry>();
+        var cronScheduler = provider.GetService<CronSchedulerService>();
+        var assetLogger = provider.GetRequiredService<ILogger<Aether.Plugins.PluginAssetRegistrar>>();
+        var registrar = new Aether.Plugins.PluginAssetRegistrar(toolRegistry, skillRegistry, cronScheduler, assetLogger);
+        registrar.RegisterAsync(pluginResult, manifestPairs, CancellationToken.None).GetAwaiter().GetResult();
+
         var logger = provider.GetRequiredService<ILogger<Aether.Plugins.HookEngine>>();
         return new Aether.Plugins.HookEngine(allHooks, logger);
     });

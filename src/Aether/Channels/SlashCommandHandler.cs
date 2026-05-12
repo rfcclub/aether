@@ -6,6 +6,8 @@ using Aether.Providers;
 using Aether.Routing;
 using Aether.Sessions;
 using Aether.Tooling;
+using Aether.Ui;
+using Aether.Ui.Handlers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -20,18 +22,21 @@ public sealed class SlashCommandHandler
     private readonly IServiceProvider _rootServices;
     private readonly ProviderRouter? _providerRouter;
     private readonly ConfigLoader? _configLoader;
+    private readonly ModelSelectionHandler? _modelHandler;
     private readonly ILogger<SlashCommandHandler> _logger;
 
     public SlashCommandHandler(
         IServiceProvider rootServices,
         ILogger<SlashCommandHandler> logger,
         ProviderRouter? providerRouter = null,
-        ConfigLoader? configLoader = null)
+        ConfigLoader? configLoader = null,
+        ModelSelectionHandler? modelHandler = null)
     {
         _rootServices = rootServices;
         _logger = logger;
         _providerRouter = providerRouter ?? rootServices.GetService<ProviderRouter>();
         _configLoader = configLoader ?? rootServices.GetService<ConfigLoader>();
+        _modelHandler = modelHandler ?? rootServices.GetService<ModelSelectionHandler>();
     }
 
     public async Task<SlashCommandResult?> HandleAsync(SlashCommandContext ctx, CancellationToken ct)
@@ -49,7 +54,7 @@ public sealed class SlashCommandHandler
             "/new" => await HandleNewAsync(ctx, ct),
             "/reset" => await HandleResetAsync(ctx, ct),
             "/model" => await HandleModelAsync(ctx, args, ct),
-            "/models" => HandleModelsAsync(ctx),
+            "/models" => await HandleModelsAsync(ctx),
             "/tools" => HandleTools(),
             "/context" => await HandleContextAsync(ctx, ct),
             "/compact" => await HandleCompactAsync(ctx, ct),
@@ -92,6 +97,36 @@ public sealed class SlashCommandHandler
 
     private async Task<SlashCommandResult> HandleModelAsync(SlashCommandContext ctx, string args, CancellationToken ct)
     {
+        // If interactive handler is available, delegate to it
+        if (_modelHandler is not null && _providerRouter is not null)
+        {
+            if (string.IsNullOrWhiteSpace(args))
+            {
+                // /model — show provider list
+                var doc = await _modelHandler.HandleAsync(
+                    new UiCallback { Namespace = "model", Action = "browse" },
+                    _rootServices, ctx.AgentName);
+                if (doc is not null)
+                {
+                    return new SlashCommandResult("Models:") { InteractiveUi = doc };
+                }
+            }
+            else
+            {
+                // /model <provider>/<model> — direct switch
+                var modelId = args.Trim();
+                var doc = await _modelHandler.HandleAsync(
+                    new UiCallback { Namespace = "model", Action = "select", Data = modelId },
+                    _rootServices, ctx.AgentName);
+                if (doc is not null)
+                {
+                    return new SlashCommandResult($"Model changed to: {modelId}")
+                        { InteractiveUi = doc };
+                }
+            }
+        }
+
+        // Fallback: text-only /model (no interactive handler available)
         // No args: show current model + available models
         if (string.IsNullOrWhiteSpace(args))
         {
@@ -117,10 +152,9 @@ public sealed class SlashCommandHandler
             return new SlashCommandResult(sb.ToString().TrimEnd());
         }
 
-        // Switch model
+        // Switch model (text-only fallback)
         var newPrimary = args.Trim();
 
-        // Verify model resolves to a provider
         var resolvedProvider = _providerRouter?.ResolveModelToProvider(newPrimary);
         if (resolvedProvider is null)
         {
@@ -129,7 +163,6 @@ public sealed class SlashCommandHandler
             return new SlashCommandResult($"Unknown model: {newPrimary}\nAvailable: {models}");
         }
 
-        // Update in-memory chain
         if (_providerRouter is not null)
         {
             var existing = _providerRouter.ModelChain?.Skip(1).ToList() ?? new List<string>();
@@ -138,7 +171,6 @@ public sealed class SlashCommandHandler
             _providerRouter.ModelChain = newChain;
         }
 
-        // Persist to config.json so it survives restart
         if (_configLoader is not null)
         {
             await _configLoader.UpdateAgentModelAsync(ctx.AgentName, newPrimary, ct);
@@ -148,8 +180,21 @@ public sealed class SlashCommandHandler
         return new SlashCommandResult($"Model changed to: {newPrimary} [{resolvedProvider.Name}]\nSurvives restart.");
     }
 
-    private SlashCommandResult HandleModelsAsync(SlashCommandContext ctx)
+    private async Task<SlashCommandResult> HandleModelsAsync(SlashCommandContext ctx)
     {
+        // If interactive handler is available, use it
+        if (_modelHandler is not null && _providerRouter is not null)
+        {
+            var doc = await _modelHandler.HandleAsync(
+                new UiCallback { Namespace = "model", Action = "browse" },
+                _rootServices, ctx.AgentName);
+            if (doc is not null)
+            {
+                return new SlashCommandResult("Models:") { InteractiveUi = doc };
+            }
+        }
+
+        // Text-only fallback
         var available = _providerRouter?.GetAvailableModels();
         if (available is not { Count: > 0 })
             return new SlashCommandResult("No models available.");
@@ -157,7 +202,6 @@ public sealed class SlashCommandHandler
         var current = _providerRouter?.EffectiveModel ?? "";
         var sb = new System.Text.StringBuilder();
 
-        // Group by provider name
         var grouped = available
             .GroupBy(m => m.Provider, StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);

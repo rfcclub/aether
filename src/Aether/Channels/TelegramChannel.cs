@@ -1,8 +1,11 @@
+using Aether.Ui;
+using Aether.Ui.Renderers;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace Aether.Channels;
 
@@ -10,6 +13,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
 {
     private readonly string _botToken;
     private readonly ILogger<TelegramChannel> _logger;
+    private readonly TelegramUiRenderer _uiRenderer = new();
     private TelegramBotClient? _client;
     private CancellationTokenSource? _cts;
     private Task? _pollingTask;
@@ -22,6 +26,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
     public bool IsConnected => _client is not null;
 
     public event EventHandler<InboundMessage>? OnMessage;
+    public event Func<UiCallback, Task<UiDocument?>>? OnUiCallback;
 
     public TelegramChannel(string botToken, ILogger<TelegramChannel> logger)
     {
@@ -131,6 +136,128 @@ public sealed class TelegramChannel : IChannel, IDisposable
         _lastStreamingText.Remove(chatId);
     }
 
+    // ── Interactive UI ──
+
+    public async Task<string?> SendInteractiveAsync(string chatId, UiDocument doc)
+    {
+        if (_client is null) return null;
+
+        var (text, markup) = ((string, InlineKeyboardMarkup))_uiRenderer.Render(doc);
+        Message msg;
+        try
+        {
+            msg = await _client.SendMessage(chatId, text, replyMarkup: markup,
+                parseMode: ParseMode.MarkdownV2, cancellationToken: CancellationToken.None);
+        }
+        catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
+        {
+            msg = await _client.SendMessage(chatId, text, replyMarkup: markup,
+                cancellationToken: CancellationToken.None);
+        }
+
+        return msg.Id.ToString();
+    }
+
+    public async Task EditInteractiveAsync(string chatId, string messageId, UiDocument doc)
+    {
+        if (_client is null) return;
+
+        var (text, markup) = ((string, InlineKeyboardMarkup))_uiRenderer.Render(doc);
+
+        if (!int.TryParse(messageId, out var msgId)) return;
+
+        try
+        {
+            await _client.EditMessageText(chatId, msgId, text,
+                parseMode: ParseMode.MarkdownV2, cancellationToken: CancellationToken.None);
+            await _client.EditMessageReplyMarkup(chatId, msgId, markup,
+                cancellationToken: CancellationToken.None);
+        }
+        catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
+        {
+            try
+            {
+                await _client.EditMessageText(chatId, msgId, text,
+                    cancellationToken: CancellationToken.None);
+                await _client.EditMessageReplyMarkup(chatId, msgId, markup,
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception innerEx)
+            {
+                _logger.LogWarning(innerEx, "Failed to edit interactive message {MsgId}", messageId);
+            }
+        }
+        catch (ApiRequestException ex) when (ex.Message.Contains("message to edit not found") ||
+                                              ex.Message.Contains("MESSAGE_ID_INVALID"))
+        {
+            _logger.LogDebug("Interactive message {MsgId} deleted, sending new message", messageId);
+            await SendInteractiveAsync(chatId, doc);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to edit interactive message {MsgId}", messageId);
+        }
+    }
+
+    // ── Callback handling ──
+
+    private async Task HandleCallbackQueryAsync(CallbackQuery query)
+    {
+        if (query.Data is null) return;
+        if (query.Message?.Chat.Id is not { } chatId) return;
+
+        // Fire OnUiCallback
+        if (OnUiCallback is null)
+        {
+            await _client!.AnswerCallbackQuery(query.Id, "Not supported",
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        var callback = ParseCallbackData(query.Data);
+        if (callback is null)
+        {
+            await _client!.AnswerCallbackQuery(query.Id, "Invalid action",
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        // Show a brief loading indicator
+        await _client!.AnswerCallbackQuery(query.Id, cancellationToken: CancellationToken.None);
+
+        // Route the callback
+        var result = await OnUiCallback(callback);
+
+        if (result is not null && query.Message is not null)
+        {
+            await EditInteractiveAsync(chatId.ToString(), query.Message.Id.ToString(), result);
+        }
+    }
+
+    private static UiCallback? ParseCallbackData(string data)
+    {
+        if (string.IsNullOrWhiteSpace(data) || data == "noop")
+            return null;
+
+        // Format: "namespace:action:data" — data can contain colons
+        var firstColon = data.IndexOf(':');
+        if (firstColon < 0) return null;
+
+        var ns = data[..firstColon];
+        var rest = data[(firstColon + 1)..];
+
+        var secondColon = rest.IndexOf(':');
+        if (secondColon < 0)
+        {
+            return new UiCallback { Namespace = ns, Action = rest };
+        }
+
+        var action = rest[..secondColon];
+        var actionData = rest[(secondColon + 1)..];
+
+        return new UiCallback { Namespace = ns, Action = action, Data = actionData };
+    }
+
     public async Task SetTypingAsync(string chatId, bool isTyping, CancellationToken ct)
     {
         if (_client is null) return;
@@ -196,11 +323,19 @@ public sealed class TelegramChannel : IChannel, IDisposable
             try
             {
                 var updates = await _client!.GetUpdates(offset, timeout: 30,
-                    allowedUpdates: new[] { UpdateType.Message }, cancellationToken: ct);
+                    allowedUpdates: new[] { UpdateType.Message, UpdateType.CallbackQuery },
+                    cancellationToken: ct);
 
                 foreach (var update in updates)
                 {
                     offset = update.Id + 1;
+
+                    if (update.CallbackQuery is { } callbackQuery)
+                    {
+                        _ = HandleCallbackQueryAsync(callbackQuery);
+                        continue;
+                    }
+
                     if (update.Message is not { } message) continue;
                     if (string.IsNullOrWhiteSpace(message.Text)) continue;
 

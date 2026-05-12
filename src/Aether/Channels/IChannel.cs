@@ -1,3 +1,5 @@
+using Aether.Ui;
+
 namespace Aether.Channels;
 
 public interface IChannel
@@ -26,4 +28,31 @@ public interface IChannel
     /// Signal that the stream is complete and the final message should be sent/saved.
     /// </summary>
     Task SendStreamingCompleteAsync(string chatId, string fullText, CancellationToken ct);
+
+    // ── Interactive UI ──
+
+    /// <summary>
+    /// Fired when a user interacts with an interactive message (e.g., taps an inline keyboard button).
+    /// The handler receives the parsed callback and returns an optional updated UiDocument,
+    /// or null to acknowledge without editing the message.
+    /// </summary>
+    event Func<UiCallback, Task<UiDocument?>>? OnUiCallback;
+
+    /// <summary>
+    /// Send an interactive message to a chat. Returns the channel-specific message identifier,
+    /// or null if the channel does not support interactive messages.
+    /// </summary>
+    Task<string?> SendInteractiveAsync(string chatId, UiDocument doc)
+    {
+        return Task.FromResult<string?>(null);
+    }
+
+    /// <summary>
+    /// Edit an existing interactive message in-place. If the message no longer exists
+    /// (e.g., user deleted it), the channel should fall back to sending a new message.
+    /// </summary>
+    Task EditInteractiveAsync(string chatId, string messageId, UiDocument doc)
+    {
+        return Task.CompletedTask;
+    }
 }

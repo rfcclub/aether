@@ -1,10 +1,12 @@
 using System.Text;
 using Aether.Agent;
+using Aether.Agents;
 using Aether.Config;
 using Aether.Memory;
 using Aether.Plugins;
 using Aether.Providers;
 using Aether.Routing;
+using Aether.Ui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -28,6 +30,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly SlashCommandHandler _slashCommands;
     private readonly FileMemory _memory;
     private readonly HookEngine? _hooks;
+    private readonly CallbackRouter? _callbackRouter;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -39,7 +42,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
         SlashCommandHandler slashCommands,
         FileMemory memory,
         ILogger<ChannelMessageProcessor> logger,
-        HookEngine? hooks = null)
+        HookEngine? hooks = null,
+        CallbackRouter? callbackRouter = null)
     {
         _channel = channel;
         _router = router;
@@ -49,6 +53,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
         _slashCommands = slashCommands;
         _memory = memory;
         _hooks = hooks;
+        _callbackRouter = callbackRouter;
         _logger = logger;
     }
 
@@ -66,6 +71,17 @@ public sealed class ChannelMessageProcessor : BackgroundService
         {
             _ = Task.Run(() => HandleMessageAsync(message, stoppingToken), stoppingToken);
         };
+
+        // Wire interactive callback routing
+        if (_callbackRouter is not null)
+        {
+            _channel.OnUiCallback += async (callback) =>
+            {
+                // agentId is resolved from the callback context — for now use a default
+                // In the future, callback could carry agent context
+                return await _callbackRouter.RouteAsync(callback, _services, "");
+            };
+        }
 
         try
         {
@@ -133,13 +149,43 @@ public sealed class ChannelMessageProcessor : BackgroundService
             var routed = await _router.RouteAsync(message, ct);
             if (routed is null) return;
 
+            HookEngine? requestHooks = _hooks;
+            if (_hooks is not null)
+            {
+                var routedCtx = new OnMessageRoutedContext
+                {
+                    AgentName = routed.Value.AgentName,
+                    WorkspacePath = routed.Value.WorkspacePath,
+                    SessionId = "",
+                    Message = message,
+                    ResolvedAgentName = routed.Value.AgentName
+                };
+                var routedResult = await _hooks.RunAsync(HookPoint.OnMessageRouted, routedCtx, ct);
+                if (!routedResult.Success)
+                    return;
+                if (routedCtx.RerouteToAgent && routedCtx.RerouteAgentName is not null)
+                    routed = routed.Value with { AgentName = routedCtx.RerouteAgentName };
+            }
+
+            var agentSpec = _configLoader.GetAgentSpec(routed.Value.AgentName);
+            var agentConfig = _configLoader.GetAgentConfig(routed.Value.AgentName);
+            if (agentSpec?.Plugins is not null && _hooks is not null)
+                requestHooks = _hooks.FilterForAgent(agentSpec.Plugins);
+
             // Slash commands — handle before LLM scope
             var slashCtx = new SlashCommandContext(
                 message.Text, routed.Value.AgentName, routed.Value.WorkspacePath, _services);
             var slashResult = await _slashCommands.HandleAsync(slashCtx, ct);
             if (slashResult is not null && !slashResult.AutoGreet)
             {
-                await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                if (slashResult.InteractiveUi is not null)
+                {
+                    await _channel.SendInteractiveAsync(message.ChatId, slashResult.InteractiveUi);
+                }
+                else
+                {
+                    await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                }
                 return;
             }
 
@@ -168,8 +214,6 @@ public sealed class ChannelMessageProcessor : BackgroundService
             using var scope = _services.CreateScope();
 
             // Apply per-agent provider config before LLM call
-            var agentSpec = _configLoader.GetAgentSpec(routed.Value.AgentName);
-            var agentConfig = _configLoader.GetAgentConfig(routed.Value.AgentName);
             if (agentSpec is not null)
             {
                 var providerRouter = scope.ServiceProvider.GetService<ProviderRouter>();
@@ -199,7 +243,15 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     routed.Value.WorkspacePath, agentSpec.Tools, sandboxType);
             }
 
-            var soul = scope.ServiceProvider.GetRequiredService<AetherSoul>();
+            var soul = requestHooks == _hooks
+                ? scope.ServiceProvider.GetRequiredService<AetherSoul>()
+                : new AetherSoul(
+                    scope.ServiceProvider.GetRequiredService<ProviderRouter>(),
+                    scope.ServiceProvider.GetRequiredService<Aether.Tooling.ToolExecutor>(),
+                    scope.ServiceProvider.GetRequiredService<Aether.Tooling.ToolRegistry>(),
+                    scope.ServiceProvider.GetRequiredService<AgentProfile>(),
+                    scope.ServiceProvider.GetRequiredService<ILogger<AetherSoul>>(),
+                    requestHooks);
 
             await _channel.SetTypingAsync(message.ChatId, true, ct);
 
@@ -214,7 +266,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             _memory.AddToContext($"Assistant: {responseText}", 0.5f);
 
             // ── OnMessageSent hook ──
-            if (_hooks is not null)
+            if (requestHooks is not null)
             {
                 var sentCtx = new OnMessageSentContext
                 {
@@ -223,7 +275,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     AgentName = routed.Value.AgentName,
                     WorkspacePath = routed.Value.WorkspacePath
                 };
-                await _hooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, ct);
+                await requestHooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, ct);
                 if (sentCtx.Suppress)
                 {
                     await _channel.SetTypingAsync(message.ChatId, false, ct);
