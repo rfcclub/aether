@@ -520,7 +520,8 @@ static async Task RunServeAsync(bool traceStartup)
         return new ToolStartupRegistration(registry, impls, webFetchTool, logger, searchProvider);
     });
     builder.Services.AddSingleton<SlashCommandHandler>();
-    builder.Services.AddSingleton<IUiCallbackHandler, ModelSelectionHandler>();
+    builder.Services.AddSingleton<ModelSelectionHandler>();
+    builder.Services.AddSingleton<IUiCallbackHandler, ModelSelectionHandler>(p => p.GetRequiredService<ModelSelectionHandler>());
     builder.Services.AddSingleton<CallbackRouter>();
     builder.Services.AddSingleton<TelegramUiRenderer>();
     builder.Services.AddSingleton<WebSocketUiRenderer>();
