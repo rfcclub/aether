@@ -215,7 +215,7 @@ public class ModelSelectionHandler : IUiCallbackHandler
         var effectiveModel = router.EffectiveModel;
         if (string.Equals(modelId, effectiveModel, StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return new UiDocument { Text = $"Already using **{ShortModelName(modelId)}**" };
         }
 
         var existing = router.ModelChain?.Skip(1).ToList() ?? new List<string>();
@@ -229,9 +229,12 @@ public class ModelSelectionHandler : IUiCallbackHandler
 
         logger?.LogInformation("Model switched to {Model} for {Agent}", modelId, agentId);
 
-        // Return to provider's model list
+        // Confirmation with no keyboard — menu closes
         var baseProvider = BaseProvider(provider.Name, provider.Model);
-        return BuildModelList(router, baseProvider, agentId);
+        return new UiDocument
+        {
+            Text = $"✅ Switched to **{ShortModelName(modelId)}** ({baseProvider})"
+        };
     }
 
     private static async Task<UiDocument?> ResetToDefaultAsync(
