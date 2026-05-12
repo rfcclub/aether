@@ -33,10 +33,10 @@ public interface IChannel
 
     /// <summary>
     /// Fired when a user interacts with an interactive message (e.g., taps an inline keyboard button).
-    /// The handler receives the parsed callback and returns an optional updated UiDocument,
+    /// Parameters: chatId, parsed callback. Returns an optional updated UiDocument,
     /// or null to acknowledge without editing the message.
     /// </summary>
-    event Func<UiCallback, Task<UiDocument?>>? OnUiCallback;
+    event Func<string, UiCallback, Task<UiDocument?>>? OnUiCallback;
 
     /// <summary>
     /// Send an interactive message to a chat. Returns the channel-specific message identifier,

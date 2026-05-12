@@ -26,7 +26,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
     public bool IsConnected => _client is not null;
 
     public event EventHandler<InboundMessage>? OnMessage;
-    public event Func<UiCallback, Task<UiDocument?>>? OnUiCallback;
+    public event Func<string, UiCallback, Task<UiDocument?>>? OnUiCallback;
 
     public TelegramChannel(string botToken, ILogger<TelegramChannel> logger)
     {
@@ -225,8 +225,8 @@ public sealed class TelegramChannel : IChannel, IDisposable
         // Show a brief loading indicator
         await _client!.AnswerCallbackQuery(query.Id, cancellationToken: CancellationToken.None);
 
-        // Route the callback
-        var result = await OnUiCallback(callback);
+        // Route the callback with chatId so processor can resolve agent context
+        var result = await OnUiCallback(chatId.ToString(), callback);
 
         if (result is not null && query.Message is not null)
         {

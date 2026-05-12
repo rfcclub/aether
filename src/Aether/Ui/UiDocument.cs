@@ -6,6 +6,8 @@ public sealed record UiDocument
     public List<UiSection> Sections { get; init; } = new();
     public UiLayout Layout { get; init; } = UiLayout.List;
     public string CallbackNamespace { get; init; } = "";
+    /// <summary>Opaque context string passed through to page callbacks (e.g., provider name).</summary>
+    public string PageContext { get; init; } = "";
 }
 
 public sealed record UiSection

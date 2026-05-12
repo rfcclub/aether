@@ -47,7 +47,7 @@ public sealed class WebSocketChannel : IChannel, IDisposable
     public bool IsConnected => _listener is not null;
 
     public event EventHandler<InboundMessage>? OnMessage;
-    public event Func<Ui.UiCallback, Task<Ui.UiDocument?>>? OnUiCallback;
+    public event Func<string, Ui.UiCallback, Task<Ui.UiDocument?>>? OnUiCallback;
 
     /// <summary>
     /// The actual port the listener is bound to. Useful when passing port 0 for tests.

@@ -75,11 +75,15 @@ public sealed class ChannelMessageProcessor : BackgroundService
         // Wire interactive callback routing
         if (_callbackRouter is not null)
         {
-            _channel.OnUiCallback += async (callback) =>
+            _channel.OnUiCallback += async (chatId, callback) =>
             {
-                // agentId is resolved from the callback context — for now use a default
-                // In the future, callback could carry agent context
-                return await _callbackRouter.RouteAsync(callback, _services, "");
+                // Resolve agent from chat via an empty inbound message route lookup
+                // We create a minimal message just to resolve the agent binding
+                var dummy = new InboundMessage("", _channel.Name, chatId, "", "", DateTime.MinValue, false);
+                var routed = await _router.RouteAsync(dummy, CancellationToken.None);
+                var agentId = routed?.AgentName ?? "";
+
+                return await _callbackRouter.RouteAsync(callback, _services, agentId);
             };
         }
 

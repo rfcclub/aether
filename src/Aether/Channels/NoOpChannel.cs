@@ -9,7 +9,7 @@ public sealed class NoOpChannel : IChannel
 
 #pragma warning disable CS0067
     public event EventHandler<InboundMessage>? OnMessage;
-    public event Func<UiCallback, Task<UiDocument?>>? OnUiCallback;
+    public event Func<string, UiCallback, Task<UiDocument?>>? OnUiCallback;
 #pragma warning restore CS0067
 
     public Task ConnectAsync(CancellationToken ct) => Task.CompletedTask;

@@ -20,7 +20,7 @@ public class TelegramUiRenderer : IUiRenderer
             RenderSection(doc.Sections[0], ns, rows);
 
             var totalPages = doc.Sections.Count;
-            RenderPaginationRow(0, totalPages, ns, rows);
+            RenderPaginationRow(0, totalPages, ns, doc.PageContext, rows);
         }
         else
         {
@@ -83,17 +83,20 @@ public class TelegramUiRenderer : IUiRenderer
     }
 
     private static void RenderPaginationRow(int currentPage, int totalPages, string ns,
-        List<List<InlineKeyboardButton>> rows)
+        string pageContext, List<List<InlineKeyboardButton>> rows)
     {
+        // Page callback data: page:{context}:{pageNum}
+        var pagePrefix = string.IsNullOrEmpty(pageContext) ? "page" : $"page:{pageContext}";
+
         var prevButton = currentPage > 0
-            ? InlineKeyboardButton.WithCallbackData("◀️", $"{ns}:page:{currentPage - 1}")
+            ? InlineKeyboardButton.WithCallbackData("◀️", $"{ns}:{pagePrefix}:{currentPage - 1}")
             : InlineKeyboardButton.WithCallbackData("·", "noop");
 
         var infoButton = InlineKeyboardButton.WithCallbackData(
             $"Page {currentPage + 1}/{totalPages}", "noop");
 
         var nextButton = currentPage < totalPages - 1
-            ? InlineKeyboardButton.WithCallbackData("▶️", $"{ns}:page:{currentPage + 1}")
+            ? InlineKeyboardButton.WithCallbackData("▶️", $"{ns}:{pagePrefix}:{currentPage + 1}")
             : InlineKeyboardButton.WithCallbackData("·", "noop");
 
         rows.Add(new List<InlineKeyboardButton> { prevButton, infoButton, nextButton });
