@@ -1,4 +1,5 @@
 using System.Text;
+using Aether.Plugins;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
@@ -14,6 +15,7 @@ public class SqliteMemorySystem : IDisposable
     private readonly string _dbPath;
     private readonly string _memoryFilePath;
     private readonly ILogger<SqliteMemorySystem> _logger;
+    private readonly HookEngine? _hooks;
     private readonly List<ContextEntry> _ephemeral = new();
     private SqliteConnection? _connection;
 
@@ -23,11 +25,12 @@ public class SqliteMemorySystem : IDisposable
     private const float MinConfidence = 0.7f;
     private const int MinEvidence = 3;
 
-    public SqliteMemorySystem(string dbPath, string memoryFilePath, ILogger<SqliteMemorySystem> logger)
+    public SqliteMemorySystem(string dbPath, string memoryFilePath, ILogger<SqliteMemorySystem> logger, HookEngine? hooks = null)
     {
         _dbPath = dbPath;
         _memoryFilePath = memoryFilePath;
         _logger = logger;
+        _hooks = hooks;
     }
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -249,6 +252,19 @@ public class SqliteMemorySystem : IDisposable
 
     public async Task<bool> TryPromoteAsync(PromotionCandidate candidate, CancellationToken ct = default)
     {
+        if (_hooks is not null)
+        {
+            var ctx = new OnMemoryWriteContext
+            {
+                MemoryLayer = "durable",
+                Content = candidate.Content,
+                Confidence = candidate.Confidence
+            };
+            var result = await _hooks.RunAsync(HookPoint.OnMemoryPromote, ctx, ct);
+            if (!result.Success || ctx.Denied)
+                return false;
+        }
+
         // Validation gates per spec
         if (candidate.Confidence < MinConfidence || candidate.EvidenceCount < MinEvidence)
         {

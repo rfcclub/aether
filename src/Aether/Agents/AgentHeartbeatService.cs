@@ -1,4 +1,5 @@
 using Aether.Agent;
+using Aether.Plugins;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +16,10 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
     private readonly AetherSoul _soul;
     private readonly AgentConfig _config;
     private readonly ILogger<AgentHeartbeatService> _logger;
+    private readonly HookEngine? _hooks;
     private readonly TimeSpan _interval;
+    private int _tickNumber;
+    private DateTimeOffset? _lastTickAt;
     private Timer? _timer;
     private CancellationTokenSource? _cts;
 
@@ -24,12 +28,14 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         AetherSoul soul,
         AgentConfig config,
         ILogger<AgentHeartbeatService> logger,
-        TimeSpan? interval = null)
+        TimeSpan? interval = null,
+        HookEngine? hooks = null)
     {
         _profile = profile;
         _soul = soul;
         _config = config;
         _logger = logger;
+        _hooks = hooks;
         _interval = interval ?? TimeSpan.FromMinutes(30);
     }
 
@@ -63,11 +69,29 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
     {
         try
         {
+            var now = DateTimeOffset.UtcNow;
+            var tickNumber = Interlocked.Increment(ref _tickNumber);
+            var timeSinceLastTick = _lastTickAt is null ? TimeSpan.Zero : now - _lastTickAt.Value;
+            _lastTickAt = now;
+
             var heartbeatContent = await _profile.LoadFileAsync(_config.HeartbeatFile!, ct);
             if (heartbeatContent is null)
             {
                 _logger.LogDebug("No heartbeat file found for {AgentName}", _profile.Name);
                 return;
+            }
+
+            if (_hooks is not null)
+            {
+                var ctx = new OnHeartbeatTickContext
+                {
+                    AgentName = _profile.Name,
+                    WorkspacePath = _profile.AgentDirectory,
+                    TickNumber = tickNumber,
+                    TimeSinceLastTick = timeSinceLastTick,
+                    HeartbeatContent = heartbeatContent
+                };
+                await _hooks.RunAllAsync(HookPoint.OnHeartbeatTick, ctx, ct);
             }
 
             _logger.LogDebug("Heartbeat tick for {AgentName}", _profile.Name);

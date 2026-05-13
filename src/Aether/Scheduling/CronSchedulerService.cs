@@ -60,6 +60,14 @@ public sealed class CronSchedulerService : BackgroundService
         }
     }
 
+    public void AddTask(string key, CronTaskDefinition definition)
+    {
+        var nextFire = GetNextOccurrence(definition.Schedule);
+        _tasks[key] = new CronTaskState(definition, nextFire);
+        _logger.LogInformation("Cron task '{Key}' registered: {Schedule} → next fire at {Next}",
+            key, definition.Schedule, nextFire.ToLocalTime());
+    }
+
     private async Task LoadAllTasksAsync(CancellationToken ct)
     {
         if (!Directory.Exists(_cronDir)) return;

@@ -25,7 +25,7 @@ public class PluginLoaderTests
             await File.WriteAllTextAsync(Path.Combine(pluginDir, "plugin.json"), json);
 
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             Assert.Single(result.Manifests);
             Assert.Equal("test-plugin", result.Manifests[0].Name);
@@ -49,7 +49,7 @@ public class PluginLoaderTests
                 """{"version": "1.0.0"}""");
 
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             Assert.Empty(result.Manifests);
         }
@@ -68,7 +68,7 @@ public class PluginLoaderTests
             Directory.CreateDirectory(Path.Combine(pluginsDir, "not-a-plugin"));
 
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             Assert.Empty(result.Manifests);
         }
@@ -85,7 +85,7 @@ public class PluginLoaderTests
         try
         {
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             Assert.Empty(result.Hooks);
             Assert.Empty(result.Manifests);
@@ -100,7 +100,7 @@ public class PluginLoaderTests
     public async Task MissingPluginsDirectory_ReturnsEmpty()
     {
         var loader = new PluginLoader("/nonexistent/path/plugins");
-        var result = await loader.LoadAllAsync();
+        var (result, _) = await loader.LoadAllAsync();
 
         Assert.Empty(result.Manifests);
     }
@@ -129,7 +129,7 @@ public class PluginLoaderTests
                 JsonSerializer.Serialize(mainManifest));
 
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             Assert.Equal(2, result.Manifests.Count);
             Assert.Equal("dep-plugin", result.Manifests[0].Name);
@@ -170,7 +170,7 @@ public class PluginLoaderTests
                 JsonSerializer.Serialize(manifestB));
 
             var loader = new PluginLoader(pluginsDir);
-            var result = await loader.LoadAllAsync();
+            var (result, _) = await loader.LoadAllAsync();
 
             // Should load at least one without throwing
             Assert.True(result.Manifests.Count >= 1);

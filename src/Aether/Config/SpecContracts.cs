@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Aether.Plugins;
 
 namespace Aether.Config;
 
@@ -18,6 +19,7 @@ public sealed record AgentSpecConfig
     public Dictionary<string, SpecChannelEntry> Channels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public SpecLoggingSection Logging { get; init; } = new();
     public SpecKairosSection Kairos { get; init; } = new();
+    public AgentPluginConfig? Plugins { get; set; }
 }
 
 public sealed record SpecKairosSection

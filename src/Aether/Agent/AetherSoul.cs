@@ -320,6 +320,27 @@ public sealed class AetherSoul
 
     private async Task<LlmResponse> RunLlmToolLoopAsync(IReadOnlyList<LlmMessage> messages, WorkingContext ctx, CancellationToken ct)
     {
+        if (_hooks is not null)
+        {
+            var sysPrompt = ctx.Messages.FirstOrDefault(m => m.Role == "system")?.Content ?? "";
+            var preCtx = new PreLlmCallContext
+            {
+                AgentName = _agentName,
+                WorkspacePath = ctx.WorkspacePath,
+                SessionId = ctx.SessionId,
+                SystemPrompt = sysPrompt,
+                Messages = messages,
+                ModelName = _llm.Model,
+                ProviderName = _llm.Name
+            };
+            var preResult = await _hooks.RunAsync(HookPoint.PreLlmCall, preCtx, ct);
+            if (!preResult.Success)
+                return new LlmResponse($"[Hook blocked: {preResult.StopReason}]");
+            if (preCtx.SystemPrompt != sysPrompt)
+                ctx.SetSystemPrompt(preCtx.SystemPrompt);
+            messages = ctx.Messages;
+        }
+
         var tools = GetToolDefinitions();
         for (var iteration = 0; iteration < MaxToolIterations; iteration++)
         {
@@ -346,6 +367,20 @@ public sealed class AetherSoul
 
             if (response.ToolCalls is not { Count: > 0 })
             {
+                if (_hooks is not null)
+                {
+                    var postCtx = new PostLlmCallContext
+                    {
+                        AgentName = _agentName,
+                        WorkspacePath = ctx.WorkspacePath,
+                        SessionId = ctx.SessionId,
+                        Response = response,
+                        Latency = TimeSpan.Zero
+                    };
+                    await _hooks.RunAllAsync(HookPoint.PostLlmCall, postCtx, ct);
+                    if (postCtx.OverrideContent is not null)
+                        response = response with { Content = postCtx.OverrideContent };
+                }
                 return response;
             }
 
@@ -366,7 +401,52 @@ public sealed class AetherSoul
                     }
                 }
 
+                if (_hooks is not null)
+                {
+                    var preToolCtx = new PreToolUseContext
+                    {
+                        AgentName = _agentName,
+                        WorkspacePath = ctx.WorkspacePath,
+                        SessionId = ctx.SessionId,
+                        ToolName = toolCall.Name,
+                        Arguments = JsonSerializer.SerializeToElement(toolCall.Arguments),
+                        RawArguments = JsonSerializer.Serialize(toolCall.Arguments),
+                        Risk = ToolRisk.Read
+                    };
+                    var preToolResult = await _hooks.RunAsync(HookPoint.PreToolUse, preToolCtx, ct);
+                    if (preToolCtx.Denied)
+                    {
+                        ctx.AddToolResult(toolCall.Id, toolCall.Name,
+                            $"Tool '{toolCall.Name}' blocked: {preToolCtx.DenyReason ?? "policy"}");
+                        continue;
+                    }
+                    if (!preToolResult.Success)
+                    {
+                        ctx.AddToolResult(toolCall.Id, toolCall.Name,
+                            $"Tool aborted: {preToolResult.StopReason}");
+                        continue;
+                    }
+                }
+
                 var result = await ExecuteToolCallAsync(toolCall, ct);
+
+                if (_hooks is not null)
+                {
+                    var postToolCtx = new PostToolUseContext
+                    {
+                        AgentName = _agentName,
+                        WorkspacePath = ctx.WorkspacePath,
+                        SessionId = ctx.SessionId,
+                        ToolName = toolCall.Name,
+                        Arguments = JsonSerializer.SerializeToElement(toolCall.Arguments),
+                        Result = result,
+                        Success = !result.StartsWith("Tool failed:")
+                    };
+                    await _hooks.RunAllAsync(HookPoint.PostToolUse, postToolCtx, ct);
+                    if (postToolCtx.OverrideResult is not null)
+                        result = postToolCtx.OverrideResult.ToString()!;
+                }
+
                 ctx.AddToolResult(toolCall.Id, toolCall.Name, result);
             }
             messages = ctx.Messages;

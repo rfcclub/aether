@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Aether.Providers;
 using Aether.Agent;
+using Aether.Plugins;
 using Aether.Skills;
 using Microsoft.Extensions.Logging.Abstractions;
 using RegistryToolExecutor = Aether.Tooling.ToolExecutor;
@@ -441,6 +442,120 @@ public class AetherSoulTests
         // Second request should include the validation error tool result
         Assert.Equal(2, provider.Requests.Count);
         Assert.Contains(provider.Requests[1].Messages, m => m.Role == "tool" && m.Content.Contains("Tool validation failed"));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_HookCanModifySystemPrompt()
+    {
+        var provider = new FakeLlmProvider("fake", "fake-model", new LlmResponse("ok"));
+        var hooks = new HookEngine(new[]
+        {
+            new TestHook("modify-system", HookPoint.PreLlmCall, ctx =>
+            {
+                if (ctx is PreLlmCallContext pre)
+                    pre.SystemPrompt = "MODIFIED";
+            })
+        });
+        var soul = new AetherSoul(provider, new FakeToolExecutor(), TestAgentProfile.NoOp(), hooks: hooks);
+
+        await soul.ProcessAsync("main", "test");
+
+        Assert.Equal("MODIFIED", provider.LastRequest!.Messages.First(m => m.Role == "system").Content);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_HookCanDenyTool()
+    {
+        var toolCall = new LlmToolCall("call-1", "read", new Dictionary<string, string> { ["path"] = "f.txt" });
+        var provider = new MultiResponseProvider(
+            new LlmResponse("", new[] { toolCall }),
+            new LlmResponse("final answer"));
+        var tools = new FakeToolExecutor(new ToolResult(true, "file contents"));
+        var hooks = new HookEngine(new[]
+        {
+            new TestHook("deny-read", HookPoint.PreToolUse, ctx =>
+            {
+                if (ctx is PreToolUseContext pre && pre.ToolName == "read")
+                {
+                    pre.Denied = true;
+                    pre.DenyReason = "test policy";
+                }
+            })
+        });
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp(), hooks: hooks);
+
+        var response = await soul.ProcessAsync("main", "read file");
+
+        Assert.Equal("final answer", response.Content);
+        Assert.Empty(tools.Calls);
+        Assert.Contains(provider.Requests[1].Messages,
+            m => m.Role == "tool" && m.Content.Contains("blocked") && m.Content.Contains("test policy"));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_HookCanOverrideToolResult()
+    {
+        var toolCall = new LlmToolCall("call-1", "read", new Dictionary<string, string> { ["path"] = "f.txt" });
+        var provider = new MultiResponseProvider(
+            new LlmResponse("", new[] { toolCall }),
+            new LlmResponse("final answer"));
+        var tools = new FakeToolExecutor(new ToolResult(true, "original contents"));
+        var hooks = new HookEngine(new[]
+        {
+            new TestHook("override-result", HookPoint.PostToolUse, ctx =>
+            {
+                if (ctx is PostToolUseContext post && post.ToolName == "read")
+                    post.OverrideResult = "hook override";
+            })
+        });
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp(), hooks: hooks);
+
+        var response = await soul.ProcessAsync("main", "read file");
+
+        Assert.Equal("final answer", response.Content);
+        Assert.Single(tools.Calls);
+        Assert.Contains(provider.Requests[1].Messages,
+            m => m.Role == "tool" && m.Content == "hook override");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_NullHookEngine_KeepsToolBehavior()
+    {
+        var toolCall = new LlmToolCall("call-1", "read", new Dictionary<string, string> { ["path"] = "f.txt" });
+        var provider = new MultiResponseProvider(
+            new LlmResponse("", new[] { toolCall }),
+            new LlmResponse("final answer"));
+        var tools = new FakeToolExecutor(new ToolResult(true, "file contents"));
+        var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
+
+        var response = await soul.ProcessAsync("main", "read file");
+
+        Assert.Equal("final answer", response.Content);
+        Assert.Single(tools.Calls);
+        Assert.Contains(provider.Requests[1].Messages, m => m.Role == "tool" && m.Content == "file contents");
+    }
+}
+
+internal sealed class TestHook : IHook
+{
+    private readonly Action<HookContext> _execute;
+
+    public TestHook(string name, HookPoint subscribesTo, Action<HookContext> execute, int priority = 0)
+    {
+        Name = name;
+        SubscribesTo = subscribesTo;
+        Priority = priority;
+        _execute = execute;
+    }
+
+    public string Name { get; }
+    public HookPoint SubscribesTo { get; }
+    public int Priority { get; }
+
+    public Task<HookResult> ExecuteAsync(HookContext context, CancellationToken ct)
+    {
+        _execute(context);
+        return Task.FromResult(HookResult.Continue);
     }
 }
 

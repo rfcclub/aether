@@ -24,6 +24,26 @@ public class HookEngine
 
     public bool HasHooks => _hooks.Count > 0;
 
+    public HookEngine FilterForAgent(AgentPluginConfig config)
+    {
+        var enabled = new HashSet<string>(config.Enabled, StringComparer.OrdinalIgnoreCase);
+        var disabled = new HashSet<string>(config.Disabled, StringComparer.OrdinalIgnoreCase);
+
+        var hooks = _hooks.Where(h =>
+            enabled.Count > 0
+                ? enabled.Contains(h.Name)
+                : !disabled.Contains(h.Name));
+
+        if (config.HookOverrides.Count > 0)
+        {
+            hooks = hooks.Select(h => config.HookOverrides.TryGetValue(h.Name, out var priority)
+                ? new PriorityOverrideHook(h, priority)
+                : h);
+        }
+
+        return new HookEngine(hooks, _logger);
+    }
+
     /// <summary>
     /// Execute all hooks subscribed to the given point in priority order.
     /// Stops on first non-success result (short-circuit).
@@ -111,3 +131,20 @@ public class HookEngine
 }
 
 public record HookInfo(string Name, HookPoint SubscribesTo, int Priority);
+
+internal sealed class PriorityOverrideHook : IHook
+{
+    private readonly IHook _inner;
+
+    public PriorityOverrideHook(IHook inner, int priority)
+    {
+        _inner = inner;
+        Priority = priority;
+    }
+
+    public string Name => _inner.Name;
+    public HookPoint SubscribesTo => _inner.SubscribesTo;
+    public int Priority { get; }
+    public Task<HookResult> ExecuteAsync(HookContext context, CancellationToken ct)
+        => _inner.ExecuteAsync(context, ct);
+}

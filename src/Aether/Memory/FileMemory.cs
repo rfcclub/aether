@@ -1,16 +1,20 @@
+using Aether.Plugins;
+
 namespace Aether.Memory;
 
 public class FileMemory
 {
     private readonly string _groupsRoot;
+    private readonly HookEngine? _hooks;
     private readonly List<ContextEntry> _context = new();
     private readonly object _lock = new();
 
     protected FileMemory() { _groupsRoot = Path.GetTempPath(); }
 
-    public FileMemory(string groupsRoot)
+    public FileMemory(string groupsRoot, HookEngine? hooks = null)
     {
         _groupsRoot = groupsRoot;
+        _hooks = hooks;
     }
 
     public virtual string LoadContext(string groupFolder)
@@ -29,6 +33,21 @@ public class FileMemory
     public virtual void AddToContext(string content, float priority = 0.5f)
     {
         if (string.IsNullOrEmpty(content)) return;
+        if (_hooks is not null)
+        {
+            var ctx = new OnMemoryWriteContext
+            {
+                MemoryLayer = "file",
+                Content = content,
+                Confidence = priority
+            };
+            var result = _hooks.RunAsync(HookPoint.OnMemoryWrite, ctx, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (!result.Success || ctx.Denied)
+                return;
+        }
+
         lock (_lock)
         {
             _context.Add(new ContextEntry(content, priority, DateTime.UtcNow));

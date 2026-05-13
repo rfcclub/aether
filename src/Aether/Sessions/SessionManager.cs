@@ -1,19 +1,22 @@
 using Aether.Data;
+using Aether.Plugins;
 
 namespace Aether.Sessions;
 
 public class SessionManager
 {
     private readonly AetherDb _db;
+    private readonly HookEngine? _hooks;
     // In-memory session store for MVP — avoids DB async overhead in agent loop.
     private readonly Dictionary<string, Session> _sessions = new();
     private readonly Dictionary<string, List<SessionMessage>> _messages = new();
 
     protected SessionManager() { _db = null!; }
 
-    public SessionManager(AetherDb db)
+    public SessionManager(AetherDb db, HookEngine? hooks = null)
     {
         _db = db;
+        _hooks = hooks;
     }
 
     // ── Sync API (used by agent loop) ──
@@ -64,6 +67,7 @@ public class SessionManager
         insert.Parameters.AddWithValue("$lastActivity", session.LastActivity.ToString("O"));
         await insert.ExecuteNonQueryAsync(ct);
 
+        await FireSessionStartAsync(session, isNewSession: true, ct);
         return session;
     }
 
@@ -85,11 +89,13 @@ public class SessionManager
             await using var reader = await find.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
             {
-                return new Session(
+                var existing = new Session(
                     Id: reader.GetString(0),
                     GroupFolder: reader.GetString(1),
                     CreatedAt: DateTimeOffset.Parse(reader.GetString(2)),
                     LastActivity: DateTimeOffset.Parse(reader.GetString(3)));
+                await FireSessionStartAsync(existing, isNewSession: false, ct);
+                return existing;
             }
         }
 
@@ -107,7 +113,35 @@ public class SessionManager
         insert.Parameters.AddWithValue("$lastActivity", session.LastActivity.ToString("O"));
         await insert.ExecuteNonQueryAsync(ct);
 
+        await FireSessionStartAsync(session, isNewSession: true, ct);
         return session;
+    }
+
+    public virtual async Task CompactSessionAsync(
+        string sessionId,
+        int targetTokens,
+        string? summary = null,
+        CancellationToken ct = default)
+    {
+        if (!_messages.TryGetValue(sessionId, out var messages))
+            return;
+
+        var tokensBefore = EstimateTokens(messages);
+
+        while (messages.Count > 0 && EstimateTokens(messages) > targetTokens)
+            messages.RemoveAt(0);
+
+        if (_hooks is not null)
+        {
+            var ctx = new OnSessionCompactContext
+            {
+                SessionId = sessionId,
+                TokensBefore = tokensBefore,
+                TokensAfter = EstimateTokens(messages),
+                Summary = summary
+            };
+            await _hooks.RunAllAsync(HookPoint.OnSessionCompact, ctx, ct);
+        }
     }
 
     public virtual async Task AppendMessageAsync(string sessionId, SessionMessage message, CancellationToken ct = default)
@@ -206,4 +240,21 @@ public class SessionManager
 
         return sessions;
     }
+
+    private async Task FireSessionStartAsync(Session session, bool isNewSession, CancellationToken ct)
+    {
+        if (_hooks is null) return;
+
+        var ctx = new OnSessionStartContext
+        {
+            AgentName = session.GroupFolder,
+            WorkspacePath = session.GroupFolder,
+            SessionId = session.Id,
+            IsNewSession = isNewSession
+        };
+        await _hooks.RunAllAsync(HookPoint.OnSessionStart, ctx, ct);
+    }
+
+    private static int EstimateTokens(IEnumerable<SessionMessage> messages)
+        => Math.Max(1, messages.Sum(m => m.Content.Length) / 4);
 }

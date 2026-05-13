@@ -22,6 +22,8 @@ public sealed class AetherCli
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    private readonly PluginCli _pluginCli;
+
     public AetherCli(
         string aetherDir,
         AgentWorkspaceScaffolder scaffolder,
@@ -32,6 +34,8 @@ public sealed class AetherCli
         _scaffolder = scaffolder;
         _authProfiles = authProfiles;
         _logger = logger;
+        _pluginCli = new PluginCli(aetherDir,
+            NullLogger<PluginCli>.Instance);
     }
 
     public RootCommand BuildRootCommand()
@@ -39,12 +43,15 @@ public sealed class AetherCli
         var root = new RootCommand("Aether — agent framework CLI");
 
         root.AddCommand(BuildAgentCommand());
+        root.AddCommand(BuildPluginCommand());
         root.AddCommand(BuildAccessCommand());
         root.AddCommand(BuildIntegrityCommand());
         root.AddCommand(BuildRestartCommand());
 
         return root;
     }
+
+    private Command BuildPluginCommand() => _pluginCli.BuildPluginCommand();
 
     private Command BuildAgentCommand()
     {

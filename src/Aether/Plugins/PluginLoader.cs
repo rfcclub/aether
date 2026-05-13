@@ -20,12 +20,12 @@ public class PluginLoader
         _logger = logger ?? NullLogger<PluginLoader>.Instance;
     }
 
-    public async Task<PluginLoadResult> LoadAllAsync(CancellationToken ct = default)
+    public async Task<(PluginLoadResult Result, IReadOnlyList<(PluginManifest Manifest, string Dir)> ManifestPairs)> LoadAllAsync(CancellationToken ct = default)
     {
         if (!Directory.Exists(_pluginsPath))
         {
             _logger.LogInformation("Plugins directory '{Path}' not found — no plugins loaded", _pluginsPath);
-            return Empty;
+            return (Empty, Array.Empty<(PluginManifest, string)>());
         }
 
         var manifestDirs = new List<(PluginManifest Manifest, string Dir)>();
@@ -42,11 +42,12 @@ public class PluginLoader
         if (manifestDirs.Count == 0)
         {
             _logger.LogInformation("No valid plugins found in '{Path}'", _pluginsPath);
-            return Empty;
+            return (Empty, Array.Empty<(PluginManifest, string)>());
         }
 
         var ordered = TopologicalSort(manifestDirs);
-        return await LoadPluginsAsync(ordered, ct);
+        var result = await LoadPluginsAsync(ordered, ct);
+        return (result, ordered.AsReadOnly());
     }
 
     private async Task<PluginLoadResult> LoadPluginsAsync(

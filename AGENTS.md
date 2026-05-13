@@ -4,7 +4,7 @@
 
 ## Codex-One Boot
 
-When working with Thoor and continuity or project orientation matters, read `/home/thoor/work/codex-one/BOOT.md` and follow its boot path before claiming continuity readiness.
+When working with Thoor and continuity or project orientation matters, read `/home/thoor/codex-one/BOOT.md` and follow its boot path before claiming continuity readiness.
 
 Codex-One is the continuity body for Codex working with Thoor. It is not a separate model name, and it should stay operational rather than ceremonial.
 
