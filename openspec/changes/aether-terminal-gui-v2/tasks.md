@@ -10,10 +10,9 @@
 - [x] 2.3 Cập nhật `MainWindow.axaml` để sử dụng `ForgeBackground`.
 
 ## 3. Soul & Avatar Engine
-
-- [ ] 3.1 Implement `SilhouetteView` UserControl cho Avatar mờ ảo.
-- [ ] 3.2 Thêm các hiệu ứng Animation (Pulse, Flicker, Heartbeat) cho Silhouette.
-- [ ] 3.3 Tích hợp `SilhouetteView` vào `MainWindow`.
+- [x] 3.1 Implement `SilhouetteView` UserControl cho Avatar mờ ảo.
+- [x] 3.2 Thêm các hiệu ứng Animation (Pulse, Flicker, Heartbeat) cho Silhouette.
+- [x] 3.3 Tích hợp `SilhouetteView` vào `MainWindow`.
 
 ## 4. Maria's Sovereignty Panels
 

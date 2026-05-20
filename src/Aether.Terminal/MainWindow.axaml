@@ -17,7 +17,7 @@
                    Opacity="0.1"
                    IsHitTestVisible="False" />
 
-        <Grid RowDefinitions="Auto,*,Auto,Auto">
+        <Grid RowDefinitions="Auto,*">
             <!-- TitleBar -->
             <Border Grid.Row="0" Padding="12,6" Background="#111111">
                 <StackPanel Orientation="Horizontal" Spacing="16">
@@ -34,38 +34,49 @@
                 </StackPanel>
             </Border>
 
-            <!-- ChatView -->
-            <views:ChatView Grid.Row="1" x:Name="ChatArea" />
+            <!-- Main Content Area -->
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*">
+                <!-- Avatar Side Panel -->
+                <Border Grid.Column="0" Width="180" Background="#050505" BorderBrush="#222222" BorderThickness="0,0,1,0">
+                    <views:SilhouetteView IsThinking="{Binding IsThinking}" Width="150" Height="250" Margin="0,40,0,0" VerticalAlignment="Top" />
+                </Border>
 
-            <!-- Thinking indicator -->
-            <Border Grid.Row="2" Padding="12,2"
-                    IsVisible="{Binding IsThinking}"
-                    Background="#0a0a0a">
-                <TextBlock Text="thinking..."
-                           FontStyle="Italic"
-                           Foreground="{StaticResource TerminalDim}" />
-            </Border>
+                <!-- Chat Area -->
+                <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto">
+                    <!-- ChatView -->
+                    <views:ChatView Grid.Row="0" x:Name="ChatArea" />
 
-            <!-- InputLine -->
-            <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="8,4">
-                <TextBox Grid.Column="0"
-                         Text="{Binding InputText, Mode=TwoWay}"
-                         Watermark="Type a message... /theme /clear /exit"
-                         Background="#222222"
-                         Foreground="{StaticResource TerminalForeground}"
-                         FontFamily="Cascadia Code, Consolas, monospace"
-                         FontSize="13"
-                         Padding="8,6"
-                         BorderThickness="0"
-                         KeyDown="OnInputKeyDown" />
-                <Button Grid.Column="1"
-                        Content=">"
-                        Command="{Binding SendCommand}"
-                        Width="40"
-                        Background="{StaticResource TerminalAccent}"
-                        Foreground="#000000"
-                        FontWeight="Bold"
-                        BorderThickness="0" />
+                    <!-- Thinking indicator -->
+                    <Border Grid.Row="1" Padding="12,2"
+                            IsVisible="{Binding IsThinking}"
+                            Background="#0a0a0a">
+                        <TextBlock Text="thinking..."
+                                   FontStyle="Italic"
+                                   Foreground="{StaticResource TerminalDim}" />
+                    </Border>
+
+                    <!-- InputLine -->
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="8,4">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding InputText, Mode=TwoWay}"
+                                 Watermark="Type a message... /theme /clear /exit"
+                                 Background="#222222"
+                                 Foreground="{StaticResource TerminalForeground}"
+                                 FontFamily="Cascadia Code, Consolas, monospace"
+                                 FontSize="13"
+                                 Padding="8,6"
+                                 BorderThickness="0"
+                                 KeyDown="OnInputKeyDown" />
+                        <Button Grid.Column="1"
+                                Content=">"
+                                Command="{Binding SendCommand}"
+                                Width="40"
+                                Background="{StaticResource TerminalAccent}"
+                                Foreground="#000000"
+                                FontWeight="Bold"
+                                BorderThickness="0" />
+                    </Grid>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>
