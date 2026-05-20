@@ -20,22 +20,26 @@
         <Grid RowDefinitions="Auto,*">
             <!-- TitleBar -->
             <Border Grid.Row="0" Padding="12,6" Background="#111111">
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <TextBlock Text="AETHER"
-                               FontWeight="Bold"
-                               FontSize="15"
-                               Foreground="{StaticResource TerminalAccent}" />
-                    <TextBlock Text="{Binding AgentName}"
-                               Foreground="{StaticResource TerminalDim}" />
-                    <TextBlock Text="{Binding ModelName}"
-                               Foreground="{StaticResource TerminalDim}" />
-                    <TextBlock Text="{Binding StatusText}"
-                               Foreground="{StaticResource TerminalDim}" />
-                </StackPanel>
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16">
+                        <TextBlock Text="AETHER"
+                                   FontWeight="Bold"
+                                   FontSize="15"
+                                   Foreground="{StaticResource TerminalAccent}" />
+                        <TextBlock Text="{Binding AgentName}"
+                                   Foreground="{StaticResource TerminalDim}" />
+                        <TextBlock Text="{Binding ModelName}"
+                                   Foreground="{StaticResource TerminalDim}" />
+                        <TextBlock Text="{Binding StatusText}"
+                                   Foreground="{StaticResource TerminalDim}" />
+                    </StackPanel>
+
+                    <views:SoulIndicators Grid.Column="1" VerticalAlignment="Center" />
+                </Grid>
             </Border>
 
             <!-- Main Content Area -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,*">
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto">
                 <!-- Avatar Side Panel -->
                 <Border Grid.Column="0" Width="180" Background="#050505" BorderBrush="#222222" BorderThickness="0,0,1,0">
                     <views:SilhouetteView IsThinking="{Binding IsThinking}" Width="150" Height="250" Margin="0,40,0,0" VerticalAlignment="Top" />
@@ -77,6 +81,14 @@
                                 BorderThickness="0" />
                     </Grid>
                 </Grid>
+
+                <!-- Right Sovereignty Sidebar -->
+                <Border Grid.Column="2" Width="220" Background="#050505" BorderBrush="#222222" BorderThickness="1,0,0,0">
+                    <Grid RowDefinitions="*,*">
+                        <views:GoalDashboard Grid.Row="0" />
+                        <views:ContinuityView Grid.Row="1" />
+                    </Grid>
+                </Border>
             </Grid>
         </Grid>
     </Grid>

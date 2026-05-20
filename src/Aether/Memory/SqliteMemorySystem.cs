@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Aether.Plugins;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -149,6 +150,14 @@ public class SqliteMemorySystem : IDisposable
     {
         EnsureConnection();
 
+        // Sanitize query for FTS5: remove special characters that cause syntax errors
+        // Keep alphanumeric, spaces, and common search characters
+        var sanitized = Regex.Replace(query, @"[^\w\s\u0080-\uFFFF]", " ").Trim();
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return Array.Empty<SearchResult>();
+        }
+
         await using var cmd = _connection!.CreateCommand();
         cmd.CommandText = """
             SELECT m.session_id,
@@ -161,7 +170,7 @@ public class SqliteMemorySystem : IDisposable
             ORDER BY score
             LIMIT $limit
             """;
-        cmd.Parameters.AddWithValue("$query", query);
+        cmd.Parameters.AddWithValue("$query", sanitized);
         cmd.Parameters.AddWithValue("$limit", limit);
 
         var results = new List<SearchResult>();

@@ -77,6 +77,7 @@ public partial class App : Application
         services.AddSingleton<SkillParser>();
         services.AddSingleton<SkillTrigger>();
         services.AddSingleton<SkillEvolution>();
+        services.AddSingleton<GoalStore>();
 
         // Agent profile
         var agentCfg = new AgentConfig
@@ -95,7 +96,7 @@ public partial class App : Application
         {
             var agentName = config["assistant:name"] ?? "Aether";
             var agentsRoot = config["agent:root"] ?? ".";
-            return new AgentProfile(agentName, agentsRoot, agentCfg);
+            return new AgentProfile(agentName, agentsRoot, agentCfg, new AgentModelConfig());
         });
 
         // ── Dynamic provider registration ──
@@ -171,10 +172,12 @@ public partial class App : Application
         services.AddSingleton<TerminalViewModel>(sp =>
         {
             var soul = sp.GetRequiredService<AetherSoul>();
+            var profile = sp.GetRequiredService<AgentProfile>();
+            var goalStore = sp.GetRequiredService<GoalStore>();
             var agentName = config["assistant:name"] ?? "Aether";
             var model = config["llm:model"] ?? "unknown";
             var logger = sp.GetRequiredService<ILogger<TerminalViewModel>>();
-            return new TerminalViewModel(soul, ".", agentName, model, logger);
+            return new TerminalViewModel(soul, goalStore, profile, ".", agentName, model, logger);
         });
 
         return services.BuildServiceProvider();

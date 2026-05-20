@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.Tooling;
@@ -167,11 +168,22 @@ public sealed class GlobTool : FileToolBase
     public override Task<object> ExecuteAsync(JsonElement args, SandboxContext sandbox, CancellationToken ct)
     {
         var pattern = args.GetProperty("pattern").GetString()!;
+        var normalizedPattern = pattern.Replace('\\', '/');
 
-        var matches = System.IO.Directory.GetFiles(
-            sandbox.WorkspacePath,
-            pattern,
-            SearchOption.AllDirectories);
+        var matches = Directory.EnumerateFiles(
+                sandbox.WorkspacePath,
+                "*",
+                SearchOption.AllDirectories)
+            .Where(path => sandbox.IsPathAllowed(path))
+            .Where(path =>
+            {
+                if (ct.IsCancellationRequested)
+                    return false;
+
+                var relativePath = Path.GetRelativePath(sandbox.WorkspacePath, path)
+                    .Replace('\\', '/');
+                return GlobMatches(normalizedPattern, relativePath);
+            });
 
         var relative = matches
             .Select(m => Path.GetRelativePath(sandbox.WorkspacePath, m))
@@ -179,6 +191,21 @@ public sealed class GlobTool : FileToolBase
             .ToList();
 
         return Task.FromResult<object>(string.Join("\n", relative));
+    }
+
+    private static bool GlobMatches(string pattern, string relativePath)
+    {
+        if (pattern is "" or "**")
+            return true;
+
+        var regex = "^" + Regex.Escape(pattern)
+            .Replace(@"\*\*/", "(?:.*/)?", StringComparison.Ordinal)
+            .Replace(@"\*\*", ".*", StringComparison.Ordinal)
+            .Replace(@"\*", @"[^/]*", StringComparison.Ordinal)
+            .Replace(@"\?", @"[^/]", StringComparison.Ordinal)
+            + "$";
+
+        return Regex.IsMatch(relativePath, regex, RegexOptions.CultureInvariant);
     }
 }
 

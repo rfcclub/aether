@@ -16,11 +16,12 @@ public class TelegramUiRenderer : IUiRenderer
 
         if (doc.Layout == UiLayout.Paged && doc.Sections.Count > 0)
         {
-            // Paged: each section is a page. Render page 0, add pagination row.
+            // Paged: render the current section and add a compact pagination row.
             RenderSection(doc.Sections[0], ns, rows);
 
-            var totalPages = doc.Sections.Count;
-            RenderPaginationRow(0, totalPages, ns, doc.PageContext, rows);
+            var totalPages = Math.Max(doc.TotalPages, doc.Sections.Count);
+            var currentPage = Math.Clamp(doc.PageIndex, 0, totalPages - 1);
+            RenderPaginationRow(currentPage, totalPages, ns, doc.PageContext, rows);
         }
         else
         {

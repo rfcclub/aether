@@ -26,6 +26,11 @@ public sealed class WorkingContext
         _messages.Add(LlmMessage.System(_systemPrompt));
     }
 
+    public void SetSessionId(string sessionId)
+    {
+        SessionId = sessionId;
+    }
+
     public void SetSystemPrompt(string prompt)
     {
         _systemPrompt = prompt;

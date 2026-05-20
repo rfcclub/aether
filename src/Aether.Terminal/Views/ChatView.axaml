@@ -1,32 +1,114 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:models="clr-namespace:Aether.Terminal.Models"
+             xmlns:views="clr-namespace:Aether.Terminal.Views"
+             xmlns:md="clr-namespace:Markdown.Avalonia;assembly=Markdown.Avalonia"
+             xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
              x:Class="Aether.Terminal.Views.ChatView">
+    <UserControl.Resources>
+        <views:MessageTemplateSelector x:Key="MessageTemplateSelector">
+            <!-- User Template -->
+            <DataTemplate x:Key="User">
+                <Border HorizontalAlignment="Right"
+                        MaxWidth="600"
+                        Background="{StaticResource ForgeUserBubble}"
+                        BorderBrush="{StaticResource ForgeAmber}"
+                        BorderThickness="0,0,2,0"
+                        CornerRadius="4,0,0,4"
+                        Padding="12,8"
+                        Margin="40,4,4,4">
+                    <StackPanel>
+                        <TextBlock Text="USER_SOURCE" 
+                                   FontSize="9" 
+                                   Foreground="{StaticResource ForgeDim}" 
+                                   HorizontalAlignment="Right"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding Content}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#e0ffe0" />
+                        <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}"
+                                   FontSize="8"
+                                   Foreground="{StaticResource ForgeDim}"
+                                   HorizontalAlignment="Right"
+                                   Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- Assistant Template -->
+            <DataTemplate x:Key="Assistant">
+                <Border HorizontalAlignment="Left"
+                        MaxWidth="800"
+                        Background="Transparent"
+                        BorderBrush="{StaticResource ForgeAmber}"
+                        BorderThickness="2,0,0,0"
+                        Padding="16,8"
+                        Margin="4,8,40,8">
+                    <StackPanel>
+                        <Grid ColumnDefinitions="Auto, *">
+                            <TextBlock Grid.Column="0" 
+                                       Text="MARIA_FORGE" 
+                                       FontSize="10" 
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource ForgeAmber}" 
+                                       Margin="0,0,0,6"/>
+                            <TextBlock Grid.Column="1" 
+                                       Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource ForgeDim}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                        
+                        <!-- Markdown Content -->
+                        <md:MarkdownScrollViewer Markdown="{Binding Content}"
+                                                HorizontalAlignment="Stretch">
+                            <md:MarkdownScrollViewer.Styles>
+                                <Style Selector="ctxt|CTextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource ForgeAmber}" />
+                                    <Setter Property="FontSize" Value="14" />
+                                </Style>
+                                <Style Selector="Border.CodeBlock">
+                                    <Setter Property="Background" Value="#101010" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource ForgeDim}" />
+                                    <Setter Property="BorderThickness" Value="1" />
+                                    <Setter Property="Padding" Value="10" />
+                                </Style>
+                            </md:MarkdownScrollViewer.Styles>
+                        </md:MarkdownScrollViewer>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- Tool Template -->
+            <DataTemplate x:Key="Tool">
+                <views:ForgeToolBlock Margin="20,4,20,4" />
+            </DataTemplate>
+
+            <!-- System Template -->
+            <DataTemplate x:Key="System">
+                <Border HorizontalAlignment="Center"
+                        Background="#1a1000"
+                        BorderBrush="{StaticResource ForgeError}"
+                        BorderThickness="1"
+                        Padding="20,4"
+                        Margin="4,10">
+                    <TextBlock Text="{Binding Content}"
+                               Foreground="{StaticResource ForgeError}"
+                               FontSize="11"
+                               FontStyle="Italic"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center" />
+                </Border>
+            </DataTemplate>
+        </views:MessageTemplateSelector>
+    </UserControl.Resources>
+
     <ScrollViewer x:Name="ChatScroller"
                   Padding="8"
                   VerticalScrollBarVisibility="Auto">
-        <ItemsControl x:Name="MessagesList">
-            <ItemsControl.DataTemplates>
-                <DataTemplate DataType="models:ChatMessage">
-                    <Border CornerRadius="4" Padding="10,6" Margin="4,3"
-                            Background="#2a2a2a">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock FontSize="10"
-                                           Foreground="{StaticResource TerminalDim}"
-                                           Text="{Binding Role}" />
-                                <TextBlock FontSize="10"
-                                           Foreground="{StaticResource TerminalDim}"
-                                           Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}" />
-                            </StackPanel>
-                            <TextBlock Text="{Binding Content}"
-                                       TextWrapping="Wrap"
-                                       Margin="0,4,0,0"
-                                       Foreground="{StaticResource TerminalForeground}" />
-                        </StackPanel>
-                    </Border>
-                </DataTemplate>
-            </ItemsControl.DataTemplates>
+        <ItemsControl x:Name="MessagesList"
+                      ItemsSource="{Binding Messages}"
+                      ItemTemplate="{StaticResource MessageTemplateSelector}">
         </ItemsControl>
     </ScrollViewer>
 </UserControl>

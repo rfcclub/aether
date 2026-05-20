@@ -8,6 +8,8 @@ public sealed record UiDocument
     public string CallbackNamespace { get; init; } = "";
     /// <summary>Opaque context string passed through to page callbacks (e.g., provider name).</summary>
     public string PageContext { get; init; } = "";
+    public int PageIndex { get; init; }
+    public int TotalPages { get; init; } = 1;
 }
 
 public sealed record UiSection

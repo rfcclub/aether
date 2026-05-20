@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Aether.Terminal"
+             x:Class="Aether.Terminal.Views.ContinuityView"
+             x:DataType="vm:TerminalViewModel">
+    <Border BorderBrush="{DynamicResource TerminalAccent}" BorderThickness="1" Margin="5" Padding="5">
+        <Grid RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="CONTINUITY" 
+                       Foreground="{DynamicResource TerminalAccent}" 
+                       FontWeight="Bold" Margin="0,0,0,5" 
+                       HorizontalAlignment="Center"/>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <TextBlock Text="{Binding ContinuityText}" 
+                           Foreground="{DynamicResource TerminalDim}" 
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           FontStyle="Italic"/>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</UserControl>

@@ -12,12 +12,14 @@ public sealed class AgentProfile
 
     public string Name { get; }
     public string AgentDirectory { get; }
+    public AgentModelConfig Model { get; }
 
-    public AgentProfile(string name, string agentDirectory, AgentConfig config)
+    public AgentProfile(string name, string agentDirectory, AgentConfig config, AgentModelConfig model)
     {
         Name = name;
         AgentDirectory = agentDirectory;
         _config = config;
+        Model = model;
     }
 
     public static AgentProfile FromConfigLoader(
@@ -28,12 +30,13 @@ public sealed class AgentProfile
     {
         logger ??= NullLogger.Instance;
 
-        // Try ~/.aether/workspaces/<name>/ first
         var agentConfig = configLoader.GetAgentConfig(name);
         var newPath = agentConfig?.Workspace;
+        var model = agentConfig?.Model ?? new AgentModelConfig();
+
         if (!string.IsNullOrEmpty(newPath) && Directory.Exists(newPath))
         {
-            return new AgentProfile(name, newPath, config);
+            return new AgentProfile(name, newPath, config, model);
         }
 
         // Fallback: <cwd>/agents/<name>/ (legacy layout)
@@ -42,7 +45,7 @@ public sealed class AgentProfile
         {
             logger.LogWarning("Agent '{Name}' using legacy path {Path}. Migrate to ~/.aether/workspaces/{Name}/",
                 name, legacyPath, name);
-            return new AgentProfile(name, legacyPath, config);
+            return new AgentProfile(name, legacyPath, config, model);
         }
 
         throw new DirectoryNotFoundException(

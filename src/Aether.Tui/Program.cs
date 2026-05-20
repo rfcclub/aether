@@ -465,7 +465,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         var configuration = provider.GetRequiredService<IConfiguration>();
         var agentName = configuration["agent:name"] ?? "aether";
         var agentsRoot = configuration["agent:root"] ?? ".";
-        return new AgentProfile(agentName, agentsRoot, config);
+        return new AgentProfile(agentName, agentsRoot, config, new AgentModelConfig());
     });
 
     services.AddSingleton<AetherSoul>(provider =>

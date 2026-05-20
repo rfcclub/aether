@@ -65,6 +65,6 @@ public class SandboxContext
                 return true;
         }
 
-        return true;
+        return AllowedPaths.Count == 0;
     }
 }

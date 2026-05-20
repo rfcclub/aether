@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:Aether.Terminal.Models"
+             x:Class="Aether.Terminal.Views.ForgeToolBlock">
+    <Border BorderBrush="{StaticResource ForgeAmber}"
+            BorderThickness="1"
+            Background="{StaticResource ForgeToolBubble}"
+            CornerRadius="2"
+            Margin="0,4"
+            ClipToBounds="True">
+        <Expander HorizontalAlignment="Stretch"
+                  Header="TOOL_CALL"
+                  Foreground="{StaticResource ForgeAmber}">
+            <Expander.HeaderTemplate>
+                <DataTemplate>
+                    <Grid ColumnDefinitions="Auto, *, Auto" Margin="8,4">
+                        <TextBlock Grid.Column="0" 
+                                   Text="[ FORGING_SCHEMA ]" 
+                                   Foreground="{StaticResource ForgeAmber}" 
+                                   FontWeight="Bold" 
+                                   FontSize="10" 
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" 
+                                   Text="{Binding ToolName}" 
+                                   Margin="10,0"
+                                   Foreground="{StaticResource ForgeAccent}" 
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </DataTemplate>
+            </Expander.HeaderTemplate>
+            
+            <StackPanel Margin="10" Spacing="5">
+                <TextBlock Text="ARGUMENTS" 
+                           FontSize="10" 
+                           Foreground="{StaticResource ForgeDim}" 
+                           FontWeight="Bold"/>
+                <Border Background="#1a000000" Padding="5">
+                    <TextBlock Text="{Binding Content}" 
+                               TextWrapping="Wrap" 
+                               FontFamily="Cascadia Code,Consolas,Monospace"
+                               Foreground="{StaticResource ForgeAmber}"/>
+                </Border>
+                
+                <Separator Background="{StaticResource ForgeDim}" Height="1" Margin="0,5"/>
+                
+                <TextBlock Text="RESULT_STREAM" 
+                           FontSize="10" 
+                           Foreground="{StaticResource ForgeDim}" 
+                           FontWeight="Bold"/>
+                <Border Background="#1a000000" Padding="5">
+                    <TextBlock Text="{Binding ToolResult}" 
+                               TextWrapping="Wrap" 
+                               FontFamily="Cascadia Code,Consolas,Monospace"
+                               Foreground="#00ff00"/>
+                </Border>
+            </StackPanel>
+        </Expander>
+    </Border>
+</UserControl>

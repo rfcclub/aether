@@ -46,9 +46,127 @@ public sealed class AetherCli
         root.AddCommand(BuildPluginCommand());
         root.AddCommand(BuildAccessCommand());
         root.AddCommand(BuildIntegrityCommand());
-        root.AddCommand(BuildRestartCommand());
+        root.AddCommand(BuildGatewayCommand());
 
         return root;
+    }
+
+    private Command BuildGatewayCommand()
+    {
+        var gateway = new Command("gateway", "Manage the Aether gateway service");
+
+        gateway.AddCommand(BuildGatewayStatusCommand());
+        gateway.AddCommand(BuildGatewayRestartCommand());
+
+        return gateway;
+    }
+
+    private Command BuildGatewayStatusCommand()
+    {
+        var cmd = new Command("status", "Check the Aether service status");
+
+        cmd.SetHandler(async (context) =>
+        {
+            var isUser = await IsSystemdServiceActiveAsync(user: true);
+            var isSystem = await IsSystemdServiceActiveAsync(user: false);
+
+            if (isUser)
+            {
+                context.Console.Out.Write("Aether service is running (user-level).\n");
+                await RunSystemdCommandAsync("status", user: true, context);
+            }
+            else if (isSystem)
+            {
+                context.Console.Out.Write("Aether service is running (system-level).\n");
+                await RunSystemdCommandAsync("status", user: false, context);
+            }
+            else
+            {
+                context.Console.Out.Write("Aether service is not running.\n");
+            }
+        });
+
+        return cmd;
+    }
+
+    private Command BuildGatewayRestartCommand()
+    {
+        var cmd = new Command("restart", "Restart the Aether service");
+
+        cmd.SetHandler(async (context) =>
+        {
+            var isUser = await IsSystemdServiceActiveAsync(user: true);
+            if (isUser)
+            {
+                context.Console.Out.Write("Restarting Aether service (user-level)...\n");
+                await RunSystemdCommandAsync("restart", user: true, context);
+                return;
+            }
+
+            var isSystem = await IsSystemdServiceActiveAsync(user: false);
+            if (isSystem)
+            {
+                context.Console.Out.Write("Restarting Aether service (system-level)...\n");
+                await RunSystemdCommandAsync("restart", user: false, context);
+                return;
+            }
+
+            context.Console.Out.Write("Aether is not running as a systemd service.\n");
+            context.Console.Out.Write("Install: sudo bash scripts/install-service.sh install\n");
+            context.Console.Out.Write("Or start manually: dotnet run -- serve\n");
+            context.ExitCode = 1;
+        });
+
+        return cmd;
+    }
+
+    private async Task<bool> IsSystemdServiceActiveAsync(bool user)
+    {
+        var args = user ? "--user is-active aether.service" : "is-active aether.service";
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "systemctl",
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        try
+        {
+            using var check = System.Diagnostics.Process.Start(psi);
+            if (check is null) return false;
+            var output = (await check.StandardOutput.ReadToEndAsync()).Trim();
+            await check.WaitForExitAsync();
+            return output == "active";
+        }
+        catch { return false; }
+    }
+
+    private async Task RunSystemdCommandAsync(string command, bool user, System.CommandLine.Invocation.InvocationContext context)
+    {
+        var fileName = (user || command == "status") ? "systemctl" : "sudo";
+        var args = user 
+            ? $"--user {command} aether.service" 
+            : (command == "status" ? "status aether.service" : $"systemctl {command} aether.service");
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = args,
+            UseShellExecute = false
+        };
+
+        using var process = System.Diagnostics.Process.Start(psi);
+        if (process is not null)
+        {
+            await process.WaitForExitAsync(context.GetCancellationToken());
+            if (process.ExitCode != 0)
+            {
+                context.Console.Error.Write($"{fileName} {args} failed with exit code {process.ExitCode}\n");
+                context.ExitCode = 1;
+            }
+        }
     }
 
     private Command BuildPluginCommand() => _pluginCli.BuildPluginCommand();
@@ -100,7 +218,7 @@ public sealed class AetherCli
 
             await UpdateConfigAgentAsync(name, workspacePath, context.GetCancellationToken());
 
-            context.Console.WriteLine($"Agent '{name}' added at {workspacePath}");
+            context.Console.Out.Write($"Agent '{name}' added at {workspacePath}");
         });
 
         return cmd;
@@ -119,8 +237,8 @@ public sealed class AetherCli
 
             if (!File.Exists(configPath))
             {
-                if (asJson) context.Console.WriteLine("[]");
-                else context.Console.WriteLine("No agents configured.");
+                if (asJson) context.Console.Out.Write("[]");
+                else context.Console.Out.Write("No agents configured.");
                 return;
             }
 
@@ -130,15 +248,15 @@ public sealed class AetherCli
             if (asJson)
             {
                 if (doc.RootElement.TryGetProperty("agents", out var agentsEl))
-                    context.Console.WriteLine(agentsEl.GetRawText());
+                    context.Console.Out.Write(agentsEl.GetRawText());
                 else
-                    context.Console.WriteLine("[]");
+                    context.Console.Out.Write("[]");
                 return;
             }
 
             if (!doc.RootElement.TryGetProperty("agents", out var agents))
             {
-                context.Console.WriteLine("No agents configured.");
+                context.Console.Out.Write("No agents configured.");
                 return;
             }
 
@@ -148,7 +266,7 @@ public sealed class AetherCli
                 var status = enabled ? "enabled" : "disabled";
                 var displayName = prop.Value.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "";
                 var info = displayName.Length > 0 ? $"{prop.Name} ({displayName})" : prop.Name;
-                context.Console.WriteLine($"{info} [{status}]");
+                context.Console.Out.Write($"{info} [{status}]");
             }
         });
 
@@ -171,7 +289,7 @@ public sealed class AetherCli
 
             if (!force)
             {
-                context.Console.WriteLine($"Use --force to confirm deletion of agent '{name}'.");
+                context.Console.Out.Write($"Use --force to confirm deletion of agent '{name}'.");
                 context.ExitCode = 1;
                 return;
             }
@@ -186,7 +304,7 @@ public sealed class AetherCli
 
             await RemoveConfigAgentAsync(name, context.GetCancellationToken());
 
-            context.Console.WriteLine($"Agent '{name}' deleted.");
+            context.Console.Out.Write($"Agent '{name}' deleted.");
         });
 
         return cmd;
@@ -211,7 +329,7 @@ public sealed class AetherCli
             var configPath = Path.Combine(_aetherDir, "config.json");
             if (!File.Exists(configPath))
             {
-                context.Console.WriteLine($"Agent '{name}' not found in config.");
+                context.Console.Out.Write($"Agent '{name}' not found in config.");
                 context.ExitCode = 1;
                 return;
             }
@@ -224,7 +342,7 @@ public sealed class AetherCli
 
             if (!config.TryGetValue("agents", out var agentsObj) || agentsObj is not JsonElement agentsEl)
             {
-                context.Console.WriteLine($"Agent '{name}' not found in config.");
+                context.Console.Out.Write($"Agent '{name}' not found in config.");
                 context.ExitCode = 1;
                 return;
             }
@@ -233,7 +351,7 @@ public sealed class AetherCli
             var agents = DeserializeToDict(agentsEl);
             if (!agents.TryGetValue(name, out var agentEntry) || agentEntry is null)
             {
-                context.Console.WriteLine($"Agent '{name}' not found in config.");
+                context.Console.Out.Write($"Agent '{name}' not found in config.");
                 context.ExitCode = 1;
                 return;
             }
@@ -248,7 +366,7 @@ public sealed class AetherCli
             var updated = JsonSerializer.Serialize(config, JsonOptions);
             await File.WriteAllTextAsync(configPath, updated, context.GetCancellationToken());
 
-            context.Console.WriteLine($"Identity updated for '{name}'.");
+            context.Console.Out.Write($"Identity updated for '{name}'.");
         });
 
         return cmd;
@@ -273,7 +391,7 @@ public sealed class AetherCli
             }
 
             await ModifyBindingAsync(name, channel, add: true, context);
-            context.Console.WriteLine($"Bound '{name}' to {channel}.");
+            context.Console.Out.Write($"Bound '{name}' to {channel}.");
         });
 
         return cmd;
@@ -293,13 +411,13 @@ public sealed class AetherCli
 
             if (channel is null)
             {
-                context.Console.WriteLine("Specify --channel to remove a binding.");
+                context.Console.Out.Write("Specify --channel to remove a binding.");
                 context.ExitCode = 1;
                 return;
             }
 
             await ModifyBindingAsync(name, channel, add: false, context);
-            context.Console.WriteLine($"Unbound '{name}' from {channel}.");
+            context.Console.Out.Write($"Unbound '{name}' from {channel}.");
         });
 
         return cmd;
@@ -331,10 +449,10 @@ public sealed class AetherCli
             await access.LoadAsync(context.GetCancellationToken());
 
             if (await access.ApprovePairingAsync(code, context.GetCancellationToken()))
-                context.Console.WriteLine($"Pairing approved. Sender added to {channel} allowlist.");
+                context.Console.Out.Write($"Pairing approved. Sender added to {channel} allowlist.");
             else
             {
-                context.Console.WriteLine("Invalid or expired pairing code.");
+                context.Console.Out.Write("Invalid or expired pairing code.");
                 context.ExitCode = 1;
             }
         });
@@ -356,7 +474,7 @@ public sealed class AetherCli
 
             if (policy is not "open" and not "pairing" and not "allowlist")
             {
-                context.Console.WriteLine("Policy must be: open, pairing, or allowlist.");
+                context.Console.Out.Write("Policy must be: open, pairing, or allowlist.");
                 context.ExitCode = 1;
                 return;
             }
@@ -365,7 +483,7 @@ public sealed class AetherCli
             await access.LoadAsync(context.GetCancellationToken());
             await access.SetModeAsync(policy, context.GetCancellationToken());
 
-            context.Console.WriteLine($"Access policy for {channel} set to: {policy}");
+            context.Console.Out.Write($"Access policy for {channel} set to: {policy}");
         });
 
         return cmd;
@@ -396,12 +514,12 @@ public sealed class AetherCli
 
             var signer = new IntegritySigner(agentDir, NullLogger<IntegritySigner>.Instance);
             var publicKey = await signer.InitializeAsync(context.GetCancellationToken());
-            context.Console.WriteLine($"Keypair generated for '{agentName}'.");
+            context.Console.Out.Write($"Keypair generated for '{agentName}'.");
 
             var agentConfig = AgentConfigForDir(agentDir);
             var bootConfig = agentConfig.Boot ?? new BootConfig();
             await signer.SignBootFilesAsync(bootConfig, context.GetCancellationToken());
-            context.Console.WriteLine($"Boot files signed. Integrity directory: {Path.Combine(agentDir, "_INTEGRITY")}");
+            context.Console.Out.Write($"Boot files signed. Integrity directory: {Path.Combine(agentDir, "_INTEGRITY")}");
         });
 
         return cmd;
@@ -425,10 +543,10 @@ public sealed class AetherCli
             var result = await signer.SignAsync(file, context.GetCancellationToken());
 
             if (result.Status == IntegrityStatus.Valid)
-                context.Console.WriteLine($"Signed: {file}");
+                context.Console.Out.Write($"Signed: {file}");
             else
             {
-                context.Console.WriteLine($"Failed: {result.Error}");
+                context.Console.Out.Write($"Failed: {result.Error}");
                 context.ExitCode = 1;
             }
         });
@@ -455,7 +573,7 @@ public sealed class AetherCli
             if (file is not null)
             {
                 var result = await signer.VerifyAsync(file, context.GetCancellationToken());
-                context.Console.WriteLine(result.Status switch
+                context.Console.Out.Write(result.Status switch
                 {
                     IntegrityStatus.Valid => $"✓ {file} — valid",
                     IntegrityStatus.Unsigned => $"○ {file} — unsigned",
@@ -470,11 +588,11 @@ public sealed class AetherCli
             {
                 var failures = await signer.VerifyAllAsync(context.GetCancellationToken());
                 if (failures.Count == 0)
-                    context.Console.WriteLine("All signed files verified.");
+                    context.Console.Out.Write("All signed files verified.");
                 else
                 {
                     foreach (var (f, r) in failures)
-                        context.Console.WriteLine($"✗ {f} — {r.Error}");
+                        context.Console.Out.Write($"✗ {f} — {r.Error}");
                     context.ExitCode = 1;
                 }
             }
@@ -509,7 +627,7 @@ public sealed class AetherCli
 
                     if (output == "active")
                     {
-                        context.Console.WriteLine("Restarting Aether service via systemd...");
+                        context.Console.Out.Write("Restarting Aether service via systemd...");
                         var restart = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "sudo",
@@ -517,7 +635,7 @@ public sealed class AetherCli
                             UseShellExecute = false
                         });
                         await restart!.WaitForExitAsync(context.GetCancellationToken());
-                        context.Console.WriteLine(restart.ExitCode == 0
+                        context.Console.Out.Write(restart.ExitCode == 0
                             ? "Aether service restarted."
                             : $"systemctl restart failed with exit code {restart.ExitCode}");
                         return;
@@ -529,9 +647,9 @@ public sealed class AetherCli
                 // systemctl not available, fall through
             }
 
-            context.Console.WriteLine("Aether is not running as a systemd service.");
-            context.Console.WriteLine("Install: sudo bash scripts/install-service.sh install");
-            context.Console.WriteLine("Or start manually: dotnet run -- serve");
+            context.Console.Out.Write("Aether is not running as a systemd service.");
+            context.Console.Out.Write("Install: sudo bash scripts/install-service.sh install");
+            context.Console.Out.Write("Or start manually: dotnet run -- serve");
             context.ExitCode = 1;
         });
 
@@ -592,7 +710,7 @@ public sealed class AetherCli
         var configPath = Path.Combine(_aetherDir, "config.json");
         if (!File.Exists(configPath))
         {
-            context.Console.WriteLine("No bindings configured.");
+            context.Console.Out.Write("No bindings configured.");
             return;
         }
 
@@ -603,12 +721,12 @@ public sealed class AetherCli
             !agentsEl.TryGetProperty(agentName, out var agent) ||
             !agent.TryGetProperty("bindings", out var bindings))
         {
-            context.Console.WriteLine("No bindings configured.");
+            context.Console.Out.Write("No bindings configured.");
             return;
         }
 
         foreach (var binding in bindings.EnumerateArray())
-            context.Console.WriteLine(binding.GetString() ?? "");
+            context.Console.Out.Write(binding.GetString() ?? "");
     }
 
     private async Task ModifyBindingAsync(string agentName, string channel, bool add, System.CommandLine.Invocation.InvocationContext context)
@@ -634,7 +752,7 @@ public sealed class AetherCli
         var agents = DeserializeToDict((JsonElement)(config["agents"]!));
         if (!agents.TryGetValue(agentName, out var agentEntry) || agentEntry is null)
         {
-            context.Console.WriteLine($"Agent '{agentName}' not found. Add it first with 'aether agent add'.");
+            context.Console.Out.Write($"Agent '{agentName}' not found. Add it first with 'aether agent add'.");
             context.ExitCode = 1;
             return;
         }

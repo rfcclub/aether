@@ -523,6 +523,10 @@ public sealed class ConfigLoader
             model = model with { Primary = p.GetString() };
         if (el.TryGetProperty("fallbacks", out var fb) && fb.ValueKind == JsonValueKind.Array)
             model = model with { Fallbacks = fb.EnumerateArray().Select(f => f.GetString() ?? "").ToList() };
+        if (el.TryGetProperty("reasoningEffort", out var re))
+            model = model with { ReasoningEffort = re.GetString() };
+        if (el.TryGetProperty("thinkingBudgetTokens", out var tb) && tb.TryGetInt32(out var tbi))
+            model = model with { ThinkingBudgetTokens = tbi };
         return model;
     }
 
@@ -624,6 +628,109 @@ public sealed class ConfigLoader
         writer.WriteString("primary", primaryModel);
         writer.WriteEndObject();
 
+        writer.WriteEndObject();
+    }
+
+    public async Task UpdateAgentThinkingAsync(string agentName, string? reasoningEffort, int? thinkingBudgetTokens, CancellationToken ct)
+    {
+        var path = Path.Combine(_aetherDir, "config.json");
+        var json = File.Exists(path) ? await File.ReadAllTextAsync(path, ct) : "{}";
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        using var stream = new MemoryStream();
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+
+        writer.WriteStartObject();
+
+        var wroteAgents = false;
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.NameEquals("agents"))
+            {
+                writer.WritePropertyName("agents");
+                writer.WriteStartObject();
+                foreach (var agentProp in prop.Value.EnumerateObject())
+                {
+                    writer.WritePropertyName(agentProp.Name);
+                    if (agentProp.NameEquals(agentName))
+                    {
+                        WriteAgentWithThinking(writer, agentProp.Value, reasoningEffort, thinkingBudgetTokens);
+                    }
+                    else
+                    {
+                        agentProp.Value.WriteTo(writer);
+                    }
+                }
+                wroteAgents = true;
+                writer.WriteEndObject();
+            }
+            else
+            {
+                prop.WriteTo(writer);
+            }
+        }
+
+        if (!wroteAgents)
+        {
+            writer.WritePropertyName("agents");
+            writer.WriteStartObject();
+            writer.WritePropertyName(agentName);
+            WriteAgentWithThinking(writer, default, reasoningEffort, thinkingBudgetTokens);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        var updated = Encoding.UTF8.GetString(stream.ToArray());
+        await File.WriteAllTextAsync(path, updated, ct);
+
+        // Update cache
+        if (_cachedAgents is not null && _cachedAgents.TryGetValue(agentName, out var cached))
+        {
+            _cachedAgents[agentName] = cached with
+            {
+                Model = cached.Model is null
+                    ? new AgentModelConfig { ReasoningEffort = reasoningEffort, ThinkingBudgetTokens = thinkingBudgetTokens }
+                    : cached.Model with { ReasoningEffort = reasoningEffort, ThinkingBudgetTokens = thinkingBudgetTokens }
+            };
+        }
+
+        _logger.LogInformation("Persisted thinking config for agent {Agent}", agentName);
+    }
+
+    private static void WriteAgentWithThinking(Utf8JsonWriter writer, JsonElement existing, string? reasoningEffort, int? thinkingBudgetTokens)
+    {
+        writer.WriteStartObject();
+        if (existing.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in existing.EnumerateObject())
+            {
+                if (!prop.NameEquals("model"))
+                    prop.WriteTo(writer);
+            }
+        }
+
+        writer.WritePropertyName("model");
+        writer.WriteStartObject();
+        
+        // Copy existing model props if they exist
+        if (existing.ValueKind == JsonValueKind.Object && existing.TryGetProperty("model", out var existingModel) && existingModel.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in existingModel.EnumerateObject())
+            {
+                if (!prop.NameEquals("reasoningEffort") && !prop.NameEquals("thinkingBudgetTokens"))
+                    prop.WriteTo(writer);
+            }
+        }
+
+        if (reasoningEffort is not null)
+            writer.WriteString("reasoningEffort", reasoningEffort);
+        if (thinkingBudgetTokens is not null)
+            writer.WriteNumber("thinkingBudgetTokens", thinkingBudgetTokens.Value);
+
+        writer.WriteEndObject();
         writer.WriteEndObject();
     }
 }

@@ -96,7 +96,7 @@ public sealed class MemoryReadTool : IToolImplementation
 
         var path = ResolveMemoryPath(sandbox, relative);
         if (!File.Exists(path))
-            throw new FileNotFoundException($"memory_read: file not found: {relative}");
+            return Task.FromResult<object>($"Memory file not found: {relative}");
 
         return Task.FromResult<object>(File.ReadAllText(path));
     }

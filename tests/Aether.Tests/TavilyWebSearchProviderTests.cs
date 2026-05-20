@@ -58,15 +58,24 @@ public sealed class TavilyWebSearchProviderTests
     [Fact]
     public async Task MissingApiKey_Throws()
     {
-        var config = new ConfigurationBuilder().Build();
-        var provider = new TavilyWebSearchProvider(
-            new HttpClient(new FakeHandler(_ => new HttpResponseMessage())),
-            config,
-            NullLogger<TavilyWebSearchProvider>.Instance);
+        var previous = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
+        Environment.SetEnvironmentVariable("TAVILY_API_KEY", null);
+        try
+        {
+            var config = new ConfigurationBuilder().Build();
+            var provider = new TavilyWebSearchProvider(
+                new HttpClient(new FakeHandler(_ => new HttpResponseMessage())),
+                config,
+                NullLogger<TavilyWebSearchProvider>.Instance);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => provider.SearchAsync("test", 5, CancellationToken.None));
-        Assert.Contains("API key", ex.Message);
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => provider.SearchAsync("test", 5, CancellationToken.None));
+            Assert.Contains("API key", ex.Message);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TAVILY_API_KEY", previous);
+        }
     }
 
     [Fact]

@@ -6,6 +6,7 @@ using Aether.Memory;
 using Aether.Plugins;
 using Aether.Providers;
 using Aether.Routing;
+using Aether.Sessions;
 using Aether.Ui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -252,10 +253,12 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 : new AetherSoul(
                     scope.ServiceProvider.GetRequiredService<ProviderRouter>(),
                     scope.ServiceProvider.GetRequiredService<Aether.Tooling.ToolExecutor>(),
-                    scope.ServiceProvider.GetRequiredService<Aether.Tooling.ToolRegistry>(),
+                    scope.ServiceProvider.GetRequiredService<Tooling.ToolRegistry>(),
                     scope.ServiceProvider.GetRequiredService<AgentProfile>(),
                     scope.ServiceProvider.GetRequiredService<ILogger<AetherSoul>>(),
-                    requestHooks);
+                    requestHooks,
+                    scope.ServiceProvider.GetRequiredService<SqliteMemorySystem>(),
+                    scope.ServiceProvider.GetRequiredService<SessionManager>());
 
             await _channel.SetTypingAsync(message.ChatId, true, ct);
 

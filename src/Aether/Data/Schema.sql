@@ -102,3 +102,15 @@ CREATE TABLE IF NOT EXISTS pipeline_states (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS goals (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    created_at TEXT NOT NULL,
+    deadline TEXT,
+    completed_at TEXT
+);

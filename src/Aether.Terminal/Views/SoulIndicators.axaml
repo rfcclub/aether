@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Aether.Terminal"
+             xmlns:views="clr-namespace:Aether.Terminal.Views"
+             mc:Ignorable="d" d:DesignWidth="100" d:DesignHeight="100"
+             x:Class="Aether.Terminal.Views.SoulIndicators"
+             x:DataType="vm:TerminalViewModel">
+    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+        <!-- 2B Tension Ring -->
+        <Grid Width="40" Height="40">
+            <Ellipse Stroke="{DynamicResource ForgeDim}" StrokeThickness="3" Opacity="0.3" />
+            <Arc Width="40" Height="40"
+                 StrokeThickness="3"
+                 StartAngle="0"
+                 SweepAngle="{Binding TensionLevel, Converter={x:Static views:SoulIndicators.TensionToAngleConverter}}"
+                 StrokeJoin="Round">
+                <Arc.Stroke>
+                    <MultiBinding Converter="{x:Static views:SoulIndicators.TensionToColorConverter}">
+                        <Binding Path="TensionLevel" />
+                    </MultiBinding>
+                </Arc.Stroke>
+            </Arc>
+            <TextBlock Text="{Binding TensionLevel, StringFormat='\{0\}%'}"
+                       FontSize="10"
+                       Foreground="{DynamicResource ForgeAmber}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+        </Grid>
+
+        <!-- Agora / Hive Indicator -->
+        <Panel Width="30" Height="30">
+            <PathIcon Data="M 15 2 L 28 10 L 28 22 L 15 30 L 2 22 L 2 10 Z" 
+                      Width="24" Height="24"
+                      Foreground="{Binding IsHiveActive, Converter={x:Static views:SoulIndicators.HiveStatusToColorConverter}}">
+                <PathIcon.Effect>
+                    <DropShadowEffect BlurRadius="8" Color="{Binding IsHiveActive, Converter={x:Static views:SoulIndicators.HiveStatusToGlowColorConverter}}" Opacity="0.8" />
+                </PathIcon.Effect>
+            </PathIcon>
+        </Panel>
+    </StackPanel>
+</UserControl>

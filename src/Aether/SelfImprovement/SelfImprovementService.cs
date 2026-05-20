@@ -1,6 +1,8 @@
 using System.Text;
+using Aether.Data;
 using Aether.Memory;
 using Aether.Skills;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.SelfImprovement;
@@ -12,6 +14,7 @@ public class SelfImprovementService
     private readonly BenchmarkGate _benchmarkGate;
     private readonly PipelineTracker _pipelineTracker;
     private readonly string _patchesPath;
+    private readonly IServiceProvider _services;
     private readonly ILogger<SelfImprovementService> _logger;
 
     public SelfImprovementService(
@@ -20,6 +23,7 @@ public class SelfImprovementService
         BenchmarkGate benchmarkGate,
         PipelineTracker pipelineTracker,
         string patchesPath,
+        IServiceProvider services,
         ILogger<SelfImprovementService> logger)
     {
         _memory = memory;
@@ -27,6 +31,7 @@ public class SelfImprovementService
         _benchmarkGate = benchmarkGate;
         _pipelineTracker = pipelineTracker;
         _patchesPath = patchesPath;
+        _services = services;
         _logger = logger;
     }
 
@@ -123,17 +128,43 @@ public class SelfImprovementService
         var since = DateTime.UtcNow.AddDays(-1);
         var sessions = await _memory.GetRecentSessionsAsync(since, ct);
 
-        if (sessions.Count == 0)
-        {
-            _logger.LogInformation("No sessions in last 24h, writing empty reflections");
-            WriteReflectionsFile(Array.Empty<PromotionCandidate>());
-            return Array.Empty<PromotionCandidate>();
-        }
-
         var candidates = new List<PromotionCandidate>();
         var reflections = new StringBuilder();
         reflections.AppendLine($"# Daily Reflections — {DateTime.UtcNow:yyyy-MM-dd}");
         reflections.AppendLine();
+
+        // Include Goal Progress
+        try
+        {
+            using var scope = _services.CreateScope();
+            var goalStore = scope.ServiceProvider.GetRequiredService<GoalStore>();
+            var activeGoals = await goalStore.GetActiveGoalsAsync("maria", ct);
+            reflections.AppendLine("## Goal Progress");
+            if (activeGoals.Count == 0)
+            {
+                reflections.AppendLine("- No active goals.");
+            }
+            else
+            {
+                foreach (var goal in activeGoals)
+                {
+                    reflections.AppendLine($"- [{goal.Status}] {goal.Title}: {goal.Description} (Priority: {goal.Priority})");
+                }
+            }
+            reflections.AppendLine();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load goals during daily reflection");
+        }
+
+        if (sessions.Count == 0)
+        {
+            _logger.LogInformation("No sessions in last 24h.");
+            reflections.AppendLine("No sessions in last 24h.");
+            WriteReflectionsFile(Array.Empty<PromotionCandidate>(), reflections.ToString());
+            return Array.Empty<PromotionCandidate>();
+        }
 
         foreach (var session in sessions)
         {
@@ -163,7 +194,7 @@ public class SelfImprovementService
             reflections.AppendLine("No friction signals detected.");
         }
 
-        WriteReflectionsFile(candidates);
+        WriteReflectionsFile(candidates, reflections.ToString());
         return candidates;
     }
 
@@ -186,28 +217,14 @@ public class SelfImprovementService
         return points;
     }
 
-    private void WriteReflectionsFile(IReadOnlyList<PromotionCandidate> candidates)
+    private void WriteReflectionsFile(IReadOnlyList<PromotionCandidate> candidates, string content)
     {
         Directory.CreateDirectory(_patchesPath);
 
         var dateStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
         var filePath = Path.Combine(_patchesPath, $"reflections-{dateStr}.md");
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"# Daily Reflections — {DateTime.UtcNow:yyyy-MM-dd}");
-        sb.AppendLine();
-        sb.AppendLine($"Candidates identified: {candidates.Count}");
-        sb.AppendLine();
-
-        foreach (var candidate in candidates)
-        {
-            sb.AppendLine($"## {candidate.Source} | confidence={candidate.Confidence:F1} | evidence={candidate.EvidenceCount}");
-            sb.AppendLine();
-            sb.AppendLine(candidate.Content);
-            sb.AppendLine();
-        }
-
-        File.WriteAllText(filePath, sb.ToString());
+        File.WriteAllText(filePath, content);
         _logger.LogInformation("Wrote reflections to {Path}", filePath);
     }
 

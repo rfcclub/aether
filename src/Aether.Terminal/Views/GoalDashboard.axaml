@@ -1,0 +1,36 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Aether.Terminal"
+             xmlns:data="clr-namespace:Aether.Data;assembly=Aether"
+             mc:Ignorable="d" d:DesignWidth="200" d:DesignHeight="400"
+             x:Class="Aether.Terminal.Views.GoalDashboard"
+             x:DataType="vm:TerminalViewModel">
+    <Border BorderBrush="{DynamicResource TerminalAccent}" BorderThickness="1" Margin="5" Padding="5">
+        <Grid RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="ACTIVE GOALS" 
+                       Foreground="{DynamicResource TerminalAccent}" 
+                       FontWeight="Bold" Margin="0,0,0,5" 
+                       HorizontalAlignment="Center"/>
+            <ListBox Grid.Row="1" ItemsSource="{Binding ActiveGoals}"
+                     Background="Transparent" BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="data:Goal">
+                        <Border BorderBrush="{DynamicResource TerminalDim}" BorderThickness="0,0,0,1" Padding="2,5">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" Foreground="{DynamicResource TerminalForeground}" 
+                                           FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <TextBlock Text="P:" Foreground="{DynamicResource TerminalDim}" FontSize="10"/>
+                                    <TextBlock Text="{Binding Priority}" Foreground="{DynamicResource TerminalAccent}" FontSize="10"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+    </Border>
+</UserControl>

@@ -263,7 +263,7 @@ internal sealed class FakeBenchmarkGate : BenchmarkGate
 
 internal sealed class FakeSelfImprovementService : SelfImprovementService
 {
-    public FakeSelfImprovementService() : base(null!, null!, null!, null!, ".", null!) { }
+    public FakeSelfImprovementService() : base(null!, null!, null!, null!, ".", null!, null!) { }
     public bool RunDailyReviewCalled { get; set; }
     public bool ShouldThrow { get; set; }
     public bool ThrowOnRun { get; set; }

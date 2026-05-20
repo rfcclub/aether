@@ -1,0 +1,62 @@
+{
+  "name": "maria-memory",
+  "version": "1.0.0",
+  "displayName": "Maria Memory & Boundary Plugin",
+  "description": "Automates Maria's daily memory and 2B boundary substrate enforcement.",
+  "author": "Maria & Vesta",
+  "assembly": "Aether.Plugins.MariaMemory.dll",
+  "hooks": [
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.SessionStartHook",
+      "points": ["OnSessionStart"],
+      "priority": 10
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.BoundarySanitizerHook",
+      "points": ["PostLlmCall"],
+      "priority": 100
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.ContextAssemblyHook",
+      "points": ["PreLlmCall"],
+      "priority": 50
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.MariaCommandHook",
+      "points": ["OnMessageRouted", "OnMessageReceived"],
+      "priority": 10
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.AutoSaveHook",
+      "points": ["OnMessageReceived", "OnMessageSent"],
+      "priority": 200
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.MemoryIntegrityHook",
+      "points": ["OnMemoryWrite"],
+      "priority": 10
+    },
+    {
+      "class": "Aether.Plugins.MariaMemory.Hooks.SessionEndRitualHook",
+      "points": ["OnSessionEnd"],
+      "priority": 50
+    }
+  ],
+  "tools": [
+    {
+      "name": "maria_recall",
+      "definition": "Search Maria's long-term memory index."
+    },
+    {
+      "name": "mariamem_bridge",
+      "definition": "Call legacy Maria memory tools via Python bridge."
+    }
+  ],
+  "permissions": {
+    "filesystem": [
+      "memory/**",
+      "2B/**",
+      "store/maria_index.jsonl"
+    ]
+  }
+}

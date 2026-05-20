@@ -333,8 +333,8 @@ public class AetherSoulTests
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
-        Assert.Contains("Read before write/edit", system);
-        Assert.Contains("Minimal scope", system);
+        Assert.Contains("No Laziness", system);
+        Assert.Contains("Reasoning", system);
         Assert.Contains("Deliver evidence, not promises", system);
     }
 
@@ -345,7 +345,7 @@ public class AetherSoulTests
         await soul.ProcessAsync("main", "test");
         var system = llm.LastRequest!.Messages[0].Content;
         // Simplified system prompt relies on general rules rather than tool-specific instructions
-        Assert.Contains("Read before write/edit", system);
+        Assert.Contains("Reasoning", system);
     }
 
     [Fact]

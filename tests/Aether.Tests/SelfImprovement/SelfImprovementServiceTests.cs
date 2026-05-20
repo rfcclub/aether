@@ -16,7 +16,7 @@ public class SelfImprovementServiceTests
         var tracker = new FakePipelineTracker();
 
         var service = new SelfImprovementService(
-            memory, skillEvo, benchmark, tracker, Path.GetTempPath(),
+            memory, skillEvo, benchmark, tracker, Path.GetTempPath(), null!,
             NullLogger<SelfImprovementService>.Instance);
 
         await service.RunDailyReviewAsync();
@@ -34,7 +34,7 @@ public class SelfImprovementServiceTests
         var tracker = new FakePipelineTracker();
 
         var service = new SelfImprovementService(
-            memory, skillEvo, benchmark, tracker, Path.GetTempPath(),
+            memory, skillEvo, benchmark, tracker, Path.GetTempPath(), null!,
             NullLogger<SelfImprovementService>.Instance);
 
         // Should not throw
@@ -51,7 +51,7 @@ public class SelfImprovementServiceTests
         var tracker = new FakePipelineTracker();
 
         var service = new SelfImprovementService(
-            memory, skillEvo, benchmark, tracker, Path.GetTempPath(),
+            memory, skillEvo, benchmark, tracker, Path.GetTempPath(), null!,
             NullLogger<SelfImprovementService>.Instance);
 
         await service.RunDailyReviewAsync();
@@ -77,7 +77,7 @@ public class SelfImprovementServiceTests
         var tracker = new FakePipelineTracker();
 
         var service = new SelfImprovementService(
-            memory, skillEvo, benchmark, tracker, Path.GetTempPath(),
+            memory, skillEvo, benchmark, tracker, Path.GetTempPath(), null!,
             NullLogger<SelfImprovementService>.Instance);
 
         // Should not throw — promotion fails are caught

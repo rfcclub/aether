@@ -58,10 +58,12 @@ public class BenchmarkGate
 
         _logger.LogInformation("Benchmark exit code: {ExitCode}", process.ExitCode);
 
-        return new BenchmarkResult(
+        var result = new BenchmarkResult(
             Passed: process.ExitCode == 0,
             ExitCode: process.ExitCode,
             Output: output,
             Error: error);
+
+        return BenchmarkReportParser.Parse(result);
     }
 }

@@ -41,7 +41,7 @@ var traceStartup = args.Contains("--trace-startup", StringComparer.OrdinalIgnore
 var prompt = GetOption(args, "--prompt");
 
 // CLI dispatch: route management commands before harness/serve/tui
-if (args.FirstOrDefault() is "agent" or "integrity" or "access")
+if (args.FirstOrDefault() is "agent" or "integrity" or "access" or "gateway" or "plugin")
 {
     await RunCliAsync(args);
     return;
@@ -149,10 +149,28 @@ static async Task RunPromptHarnessAsync(string[] args, string prompt, bool trace
         var memory = new FileMemory(ConfigValue(configuration, "groups:path", "groups"));
         var sessions = new SessionManager(db);
         var toolExecutor = new ToolExecutor(configuration);
-        var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
-        var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
         var profile = ResolveAgentProfile("aether", configuration);
-        var soul = new AetherSoul(provider, toolExecutor, profile);
+
+        // ── Plugin system ──
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var pluginsPath = Path.GetFullPath(configuration["plugins:path"] ?? Path.Combine(aetherHome, "plugins"));
+        var pluginLoader = new Aether.Plugins.PluginLoader(pluginsPath, Microsoft.Extensions.Logging.Abstractions.NullLogger<Aether.Plugins.PluginLoader>.Instance);
+        var (pluginResult, manifestPairs) = await pluginLoader.LoadAllAsync(cts.Token);
+        var hooks = new HookEngine(pluginResult.Hooks, Microsoft.Extensions.Logging.Abstractions.NullLogger<HookEngine>.Instance);
+        
+        // Filter hooks for agent
+        var agentSpec = configuration.GetSection("assistant").Get<AgentSpecConfig>(); // Minimal mock for harness
+        if (agentSpec?.Plugins is not null)
+        {
+            hooks = hooks.FilterForAgent(agentSpec.Plugins);
+        }
+
+        var sqliteMemory = new SqliteMemorySystem(databasePath, Path.Combine(profile.AgentDirectory, "MEMORY.md"),
+            LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SqliteMemorySystem>());
+        await sqliteMemory.InitializeAsync(cts.Token);
+        
+        var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
+        var soul = new AetherSoul(provider, toolExecutor, profile, hooks: hooks, sqliteMemory: sqliteMemory, sessionManager: sessions);
 
         var response = await soul.ProcessAsync(group, prompt, cts.Token);
         Console.WriteLine(response.Content);
@@ -259,7 +277,7 @@ static AgentProfile ResolveAgentProfile(string name, IConfiguration configuratio
     }
 
     // Fallback: use current directory (repo-relative, no ~/.aether/ needed)
-    return new AgentProfile(name, ".", config);
+    return new AgentProfile(name, ".", config, new AgentModelConfig());
 }
 
 static string? GetOption(string[] args, string name)
@@ -322,7 +340,36 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
     var skillRegistry = new SkillRegistry(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillRegistry>());
     var skillTrigger = new SkillTrigger(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SkillTrigger>());
     var profile = ResolveAgentProfile("aether", configuration);
-    var soul = new AetherSoul(provider, toolExecutor, profile);
+
+    // ── Plugin system ──
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var pluginsPath = Path.Combine(aetherHome, "plugins");
+    var pluginLoader = new Aether.Plugins.PluginLoader(pluginsPath, Microsoft.Extensions.Logging.Abstractions.NullLogger<Aether.Plugins.PluginLoader>.Instance);
+    var (pluginResult, manifestPairs) = await pluginLoader.LoadAllAsync(CancellationToken.None);
+    var hooks = new HookEngine(pluginResult.Hooks, Microsoft.Extensions.Logging.Abstractions.NullLogger<HookEngine>.Instance);
+
+    // ── Initialize Lifecycles ──
+    foreach (var lifecycle in pluginResult.LifecycleHandlers)
+    {
+        await lifecycle.OnLoadAsync(new PluginContext
+        {
+            PluginDirectory = pluginsPath,
+            Logger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            Services = new ServiceCollection().BuildServiceProvider(),
+            Manifest = new PluginManifest { Name = "repl-plugin" }
+        }, CancellationToken.None);
+    }
+
+    var sqliteMemory = new SqliteMemorySystem(databasePath, Path.Combine(profile.AgentDirectory, "MEMORY.md"),
+        LoggerFactory.Create(b => b.AddConsole()).CreateLogger<SqliteMemorySystem>());
+    await sqliteMemory.InitializeAsync(CancellationToken.None);
+
+    var soul = new AetherSoul(provider, toolExecutor, profile, hooks: hooks, sqliteMemory: sqliteMemory, sessionManager: sessions);
+
+    // ── OnSessionStart hook ──
+    var startCtx = new OnSessionStartContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory, IsNewSession = true };
+    await hooks.RunAsync(HookPoint.OnSessionStart, startCtx, CancellationToken.None);
+
     Console.WriteLine("╔══════════════════════════════════════╗");
     Console.WriteLine("║         Aether — Onboard REPL       ║");
     Console.WriteLine("╠══════════════════════════════════════╣");
@@ -349,11 +396,24 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
         if (trimmed is "/quit" or "/q" or "/exit") break;
         if (string.IsNullOrWhiteSpace(trimmed)) continue;
 
+        // ── OnMessageReceived hook ──
+        var msgCtx = new OnMessageReceivedContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory, Text = trimmed, ChannelName = "repl" };
+        var msgResult = await hooks.RunAsync(HookPoint.OnMessageReceived, msgCtx, cts.Token);
+        if (!msgResult.Success || msgCtx.Dropped) continue;
+        var processedInput = msgCtx.OverrideText ?? trimmed;
+
         Console.WriteLine();
         try
         {
-            var response = await soul.ProcessAsync(group, trimmed, cts.Token);
-            Console.WriteLine(response.Content);
+            var response = await soul.ProcessAsync(group, processedInput, cts.Token);
+            var responseText = response.Content;
+
+            // ── OnMessageSent hook ──
+            var sentCtx = new OnMessageSentContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory, Text = responseText };
+            await hooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, cts.Token);
+            responseText = sentCtx.OverrideText ?? responseText;
+
+            Console.WriteLine(responseText);
         }
         catch (OperationCanceledException)
         {
@@ -365,6 +425,10 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
         }
         Console.WriteLine();
     }
+
+    // ── OnSessionEnd hook ──
+    var endCtx = new HookContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory };
+    await hooks.RunAsync(HookPoint.OnSessionEnd, endCtx, CancellationToken.None);
 
     Console.WriteLine("Aether signing off.");
 }
@@ -577,6 +641,14 @@ static async Task RunServeAsync(bool traceStartup)
     });
 
     builder.Services.AddSingleton<IHostedService, AetherInitializationService>();
+    builder.Services.AddScoped<GoalStore>(provider =>
+    {
+        var db = provider.GetRequiredService<AetherDb>();
+        return new GoalStore(db);
+    });
+
+    builder.Services.AddHostedService<ProactiveTaskService>();
+    builder.Services.AddHostedService<PluginLifecycleService>();
 
     // Tool hot-reload: watches tools/*.json for changes at runtime.
     builder.Services.AddSingleton<IHostedService>(provider =>
@@ -607,7 +679,7 @@ static async Task RunServeAsync(bool traceStartup)
         var configuration = provider.GetRequiredService<IConfiguration>();
         var logger = provider.GetRequiredService<ILogger<SelfImprovementService>>();
         var patchesPath = configuration["self_improvement:patches_path"] ?? "patches";
-        return new SelfImprovementService(memory, skillEvolution, benchmarkGate, pipelineTracker, patchesPath, logger);
+        return new SelfImprovementService(memory, skillEvolution, benchmarkGate, pipelineTracker, patchesPath, provider, logger);
     });
     builder.Services.AddHostedService<DailyReviewHostedService>();
 
@@ -782,7 +854,8 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<Aether.Plugins.PluginLoader>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var pluginsPath = configuration["plugins:path"] ?? "plugins";
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var pluginsPath = Path.GetFullPath(configuration["plugins:path"] ?? Path.Combine(aetherHome, "plugins"));
         var logger = provider.GetRequiredService<ILogger<Aether.Plugins.PluginLoader>>();
         return new Aether.Plugins.PluginLoader(pluginsPath, logger);
     });
@@ -806,15 +879,28 @@ static async Task RunServeAsync(bool traceStartup)
         return new Aether.Plugins.HookEngine(allHooks, logger);
     });
 
-    builder.Services.AddSingleton<AetherSoul>(provider =>
+    builder.Services.AddSingleton<SqliteMemorySystem>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var databasePath = configuration["database:path"] ?? "store/aether.db";
+        var memoryFilePath = Path.Combine(profile.AgentDirectory, "MEMORY.md");
+        var logger = provider.GetRequiredService<ILogger<SqliteMemorySystem>>();
+        var hooks = provider.GetService<Aether.Plugins.HookEngine>();
+        return new SqliteMemorySystem(databasePath, memoryFilePath, logger, hooks);
+    });
+
+    builder.Services.AddTransient<AetherSoul>(provider =>
     {
         var llm = provider.GetRequiredService<ProviderRouter>();
         var tools = provider.GetRequiredService<Aether.Tooling.ToolExecutor>();
         var registry = provider.GetRequiredService<ToolRegistry>();
         var profile = provider.GetRequiredService<AgentProfile>();
+        var sqliteMemory = provider.GetRequiredService<SqliteMemorySystem>();
+        var sessionManager = provider.GetRequiredService<SessionManager>();
         var logger = provider.GetRequiredService<ILogger<AetherSoul>>();
         var hooks = provider.GetService<Aether.Plugins.HookEngine>();
-        return new AetherSoul(llm, tools, registry, profile, logger, hooks);
+        return new AetherSoul(llm, tools, registry, profile, logger, hooks, sqliteMemory, sessionManager);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

@@ -21,6 +21,7 @@ public class ModelSelectionHandler : IUiCallbackHandler
             "browse" => BuildProviderList(router),
             "list" => BuildModelList(router, callback.Data, agentId),
             "select" => await SelectModelAsync(router, services, callback.Data, agentId, logger),
+            "selectat" => await SelectModelAtAsync(router, services, callback.Data, agentId, logger),
             "reset" => await ResetToDefaultAsync(router, services.GetRequiredService<ConfigLoader>(), agentId),
             "page" => BuildModelList(router, callback.Data, agentId), // data = "{baseProvider}:{page}"
             _ => null
@@ -134,72 +135,66 @@ public class ModelSelectionHandler : IUiCallbackHandler
 
         var emoji = ProviderEmoji(baseProvider);
 
-        if (totalPages <= 1)
+        var startIndex = page * ModelsPerPage;
+        var pageModels = models
+            .Skip(startIndex)
+            .Take(ModelsPerPage)
+            .Select((model, index) => (Model: model, AbsoluteIndex: startIndex + index));
+
+        var items = pageModels.Select(m => new UiItem
         {
-            var items = models.Select(m => new UiItem
-            {
-                Id = $"select:{m.Model}",
-                Label = ShortModelName(m.Model),
-                Selected = string.Equals(m.Model, effectiveModel, StringComparison.OrdinalIgnoreCase)
-            }).ToList();
+            Id = $"selectat:{baseProvider}:{m.AbsoluteIndex}",
+            Label = ShortModelName(m.Model.Model),
+            Selected = string.Equals(m.Model.Model, effectiveModel, StringComparison.OrdinalIgnoreCase)
+        }).ToList();
 
-            items.Add(new UiItem
-            {
-                Id = "browse",
-                Label = "Back",
-                Emoji = "◀️"
-            });
-
-            return new UiDocument
-            {
-                Text = $"{emoji} {baseProvider} — {models.Count} models\nCurrent: {effectiveModel}",
-                Sections = new List<UiSection>
-                {
-                    new() { Title = baseProvider, Items = items }
-                },
-                Layout = UiLayout.List,
-                CallbackNamespace = "model",
-                PageContext = baseProvider
-            };
-        }
-
-        // Paginated
-        var sections = new List<UiSection>();
-        for (var i = 0; i < totalPages; i++)
+        items.Add(new UiItem
         {
-            var pageModels = models.Skip(i * ModelsPerPage).Take(ModelsPerPage).ToList();
-            var pageItems = pageModels.Select(m => new UiItem
-            {
-                Id = $"select:{m.Model}",
-                Label = ShortModelName(m.Model),
-                Selected = string.Equals(m.Model, effectiveModel, StringComparison.OrdinalIgnoreCase)
-            }).ToList();
-
-            if (i == totalPages - 1)
-            {
-                pageItems.Add(new UiItem
-                {
-                    Id = "browse",
-                    Label = "Back",
-                    Emoji = "◀️"
-                });
-            }
-
-            sections.Add(new UiSection
-            {
-                Title = $"{baseProvider} (page {i + 1}/{totalPages})",
-                Items = pageItems
-            });
-        }
+            Id = "browse",
+            Label = "Back",
+            Emoji = "◀️"
+        });
 
         return new UiDocument
         {
             Text = $"{emoji} {baseProvider} — {models.Count} models\nCurrent: {effectiveModel}",
-            Sections = sections,
-            Layout = UiLayout.Paged,
+            Sections = new List<UiSection>
+            {
+                new()
+                {
+                    Title = totalPages <= 1
+                        ? baseProvider
+                        : $"{baseProvider} (page {page + 1}/{totalPages})",
+                    Items = items
+                }
+            },
+            Layout = totalPages > 1 ? UiLayout.Paged : UiLayout.List,
             CallbackNamespace = "model",
-            PageContext = baseProvider
+            PageContext = baseProvider,
+            PageIndex = page,
+            TotalPages = totalPages
         };
+    }
+
+    private static async Task<UiDocument?> SelectModelAtAsync(
+        ProviderRouter router, IServiceProvider services,
+        string data, string agentId, ILogger<ModelSelectionHandler>? logger)
+    {
+        var parts = data.Split(':', 2);
+        if (parts.Length != 2 || !int.TryParse(parts[1], out var index))
+            return new UiDocument { Text = "Invalid model selection." };
+
+        var baseProvider = parts[0];
+        var models = router.GetAvailableModels()
+            .Where(m => string.Equals(BaseProvider(m.Provider, m.Model), baseProvider,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.Model, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (index < 0 || index >= models.Count)
+            return new UiDocument { Text = "Invalid model selection." };
+
+        return await SelectModelAsync(router, services, models[index].Model, agentId, logger);
     }
 
     private static async Task<UiDocument?> SelectModelAsync(
@@ -215,7 +210,7 @@ public class ModelSelectionHandler : IUiCallbackHandler
         var effectiveModel = router.EffectiveModel;
         if (string.Equals(modelId, effectiveModel, StringComparison.OrdinalIgnoreCase))
         {
-            return new UiDocument { Text = $"Already using **{ShortModelName(modelId)}**" };
+            return null;
         }
 
         var existing = router.ModelChain?.Skip(1).ToList() ?? new List<string>();
@@ -229,11 +224,11 @@ public class ModelSelectionHandler : IUiCallbackHandler
 
         logger?.LogInformation("Model switched to {Model} for {Agent}", modelId, agentId);
 
-        // Confirmation with no keyboard — menu closes
-        var baseProvider = BaseProvider(provider.Name, provider.Model);
+        var baseProviderName = BaseProvider(provider.Name, provider.Model);
         return new UiDocument
         {
-            Text = $"✅ Switched to **{ShortModelName(modelId)}** ({baseProvider})"
+            Text = $"✅ Model switched to: **{ShortModelName(modelId)}**\nProvider: {baseProviderName}",
+            CallbackNamespace = "model"
         };
     }
 

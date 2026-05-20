@@ -67,7 +67,10 @@
 
     <Panel>
         <!-- Glow/Halo -->
-        <Ellipse Width="120" Height="200" Fill="{DynamicResource TerminalAccent}" Opacity="0.1">
+        <Ellipse Width="120" Height="200" 
+                 Fill="{DynamicResource TerminalAccent}" 
+                 Opacity="{Binding $parent[Window].((vm:TerminalViewModel)DataContext).SystemHeat, Converter={x:Static views:SilhouetteView.HeatToOpacityConverter}}"
+                 VerticalAlignment="Center" HorizontalAlignment="Center">
             <Ellipse.Effect>
                 <BlurEffect Radius="50" />
             </Ellipse.Effect>

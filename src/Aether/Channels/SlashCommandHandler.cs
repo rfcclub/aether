@@ -56,6 +56,8 @@ public sealed class SlashCommandHandler
             "/model" => await HandleModelAsync(ctx, args, ct),
             "/models" => await HandleModelsAsync(ctx),
             "/tools" => HandleTools(),
+            "/think" => await HandleThinkAsync(ctx, args, ct),
+            "/reasoning" => await HandleThinkAsync(ctx, args, ct),
             "/context" => await HandleContextAsync(ctx, ct),
             "/compact" => await HandleCompactAsync(ctx, ct),
             _ => null
@@ -254,6 +256,42 @@ public sealed class SlashCommandHandler
         }
 
         return new SlashCommandResult(sb.ToString().TrimEnd());
+    }
+
+    private async Task<SlashCommandResult> HandleThinkAsync(SlashCommandContext ctx, string args, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            return new SlashCommandResult("Usage: /think <low|medium|high> OR /think <budget_tokens>");
+        }
+
+        string? reasoningEffort = null;
+        int? thinkingBudgetTokens = null;
+
+        var input = args.Trim().ToLowerInvariant();
+        if (input is "low" or "medium" or "high")
+        {
+            reasoningEffort = input;
+        }
+        else if (int.TryParse(input, out var tokens) && tokens > 0)
+        {
+            thinkingBudgetTokens = tokens;
+        }
+        else
+        {
+            return new SlashCommandResult("Invalid argument. Use 'low', 'medium', 'high', or an integer > 0 for tokens.");
+        }
+
+        if (_configLoader is not null)
+        {
+            await _configLoader.UpdateAgentThinkingAsync(ctx.AgentName, reasoningEffort, thinkingBudgetTokens, ct);
+        }
+
+        PendingSessionReset[ctx.AgentName] = true;
+        _rootServices.GetService<AetherSoul>()?.Reset();
+
+        _logger.LogInformation("Thinking config updated for {Agent}: Effort={Effort}, Budget={Budget}", ctx.AgentName, reasoningEffort, thinkingBudgetTokens);
+        return new SlashCommandResult($"Thinking configuration updated.\nReasoning Effort: {reasoningEffort ?? "none"}\nThinking Budget: {thinkingBudgetTokens?.ToString() ?? "none"}\nContext cleared to apply changes.", AutoGreet: true);
     }
 
     private async Task<SlashCommandResult> HandleContextAsync(SlashCommandContext ctx, CancellationToken ct)

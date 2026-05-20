@@ -228,9 +228,18 @@ public sealed class TelegramChannel : IChannel, IDisposable
         // Route the callback with chatId so processor can resolve agent context
         var result = await OnUiCallback(chatId.ToString(), callback);
 
-        if (result is not null && query.Message is not null)
+        if (query.Message is not null)
         {
-            await EditInteractiveAsync(chatId.ToString(), query.Message.Id.ToString(), result);
+            if (result is not null)
+            {
+                await EditInteractiveAsync(chatId.ToString(), query.Message.Id.ToString(), result);
+            }
+            else
+            {
+                // If no result, at least remove the keyboard to prevent duplicate taps
+                // unless it's a 'browse' type action. But usually, we want to clear.
+                // For now, let's just ensure we always answer the query.
+            }
         }
     }
 
@@ -270,7 +279,7 @@ public sealed class TelegramChannel : IChannel, IDisposable
     // ── MarkdownV2 fallback helpers ──
 
     /// <summary>
-    /// Try sending with MarkdownV2, fall back to plain text (no parseMode) on parse error.
+    /// Try sending with MarkdownV2, fall back to basic escaping or plain text on parse error.
     /// </summary>
     private async Task TryMarkdownAsync(Func<ParseMode, Task> markdownAction, Func<Task> plainAction, CancellationToken ct)
     {
@@ -280,8 +289,16 @@ public sealed class TelegramChannel : IChannel, IDisposable
         }
         catch (ApiRequestException ex) when (ex.Message.Contains("parse"))
         {
-            _logger.LogWarning(ex, "MarkdownV2 parse failed, falling back to plain text");
-            await plainAction();
+            try
+            {
+                // Try the older, more lenient Markdown (V1)
+                await markdownAction(ParseMode.Markdown);
+            }
+            catch
+            {
+                _logger.LogWarning(ex, "MarkdownV2 and Markdown parse failed, falling back to plain text");
+                await plainAction();
+            }
         }
     }
 
@@ -299,12 +316,21 @@ public sealed class TelegramChannel : IChannel, IDisposable
         {
             try
             {
-                await _client!.EditMessageText(chatId, messageId, text, cancellationToken: ct);
+                // Try lenient V1
+                await _client!.EditMessageText(chatId, messageId, text, parseMode: ParseMode.Markdown, cancellationToken: ct);
                 _lastStreamingText[chatId] = text;
             }
-            catch (Exception innerEx)
+            catch
             {
-                _logger.LogWarning(innerEx, "Failed to edit message with plain text for chat {ChatId}", chatId);
+                try
+                {
+                    await _client!.EditMessageText(chatId, messageId, text, cancellationToken: ct);
+                    _lastStreamingText[chatId] = text;
+                }
+                catch (Exception innerEx)
+                {
+                    _logger.LogWarning(innerEx, "Failed to edit message with plain text for chat {ChatId}", chatId);
+                }
             }
         }
         catch (Exception ex)

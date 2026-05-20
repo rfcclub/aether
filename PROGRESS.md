@@ -4,9 +4,30 @@
 
 ## Current Phase
 
-Phase 1: Core Rewrite — implementation complete. Phase 2: Hardening and channel integration in progress.
+Phase 1: Core Rewrite — implementation complete. Phase 2: Hardening and channel integration — core hardening COMPLETE.
 
 ## Completed
+
+### Maria Memory & Boundary Plugin
+
+Status: Completed (Phase 2)
+
+- **Phase 1 (Core)**: Native .NET 9 Plugin, JSONL Storage, Boundary Sanitizer, Daily Diary automation.
+- **Auto-Promotion Engine**: Scoring logic for "lasting truths" based on significance, recall count, and user tags.
+- **Smart Context Assembly**: Priority scoring (`recency * relevance * importance`) with a strict **7000 token budget**.
+- **Dreaming System**: 3-phase background task (Light/REM/Deep) for score recalculation and pattern detection.
+- **Python Extension Hook**: Minimal REST API on **port 5077** for external Python tool/script integration.
+- **Research Integration**: SQLite-based graph linking between memory nodes and `research/` findings.
+- **Slash Commands**: Added `/memory promote` and `/memory link-research <topic>`.
+
+### Core Hardening (Vesta Forge)
+- ✅ **Security**: Resolved NU1903 vulnerability in DBus. Protocol upgraded to 0.21.3.
+- ✅ **Sandbox Safety**: Fixed critical default-allow bug. Verified path traversal and command filtering.
+- ✅ **AetherSoul Loop**: Verified edge cases (empty prompt, max iteration limit).
+- ✅ **Memory Integrity**: Verified dual-write (SQLite + Markdown). Implemented RAG-based context injection.
+- ✅ **Reliability**: Implemented 10k token budgeting and exponential backoff retries.
+- ✅ **Benchmark Gate**: Added detailed report parsing for self-improvement statistics.
+- ✅ **Documentation**: Created `USER_GUIDE.md` and `CONFIGURATION.md`. Refined `README.md` for better UX.
 
 ### Provider System
 

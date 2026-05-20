@@ -17,13 +17,13 @@ public sealed class SandboxContextTests
     }
 
     [Fact]
-    public void PathOutsideWorkspace_AllowedByDefault()
+    public void PathOutsideWorkspace_DeniedByDefault()
     {
         var sandbox = new SandboxContext(_workspace);
 
-        // IsPathAllowed defaults to true — only denies if in DeniedPaths
-        Assert.True(sandbox.IsPathAllowed("/etc/passwd"));
-        Assert.True(sandbox.IsPathAllowed("/home/user/secret.txt"));
+        // IsPathAllowed returns false for paths outside workspace if AllowedPaths is not empty
+        Assert.False(sandbox.IsPathAllowed("/etc/passwd"));
+        Assert.False(sandbox.IsPathAllowed("/home/user/secret.txt"));
     }
 
     [Fact]

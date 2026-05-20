@@ -48,8 +48,17 @@ public abstract class AnthropicCompatibleProviderBase : ILLMProvider
         {
             ["model"] = Model,
             ["messages"] = request.Messages.Select(MapMessage).ToArray(),
-            ["max_tokens"] = GetMaxTokens()
+            ["max_tokens"] = Math.Max(GetMaxTokens(), (request.ThinkingBudgetTokens ?? 0) + 1024)
         };
+
+        if (request.ThinkingBudgetTokens > 0)
+        {
+            body["thinking"] = new
+            {
+                type = "enabled",
+                budget_tokens = request.ThinkingBudgetTokens.Value
+            };
+        }
 
         if (request.Tools is { Count: > 0 })
         {
@@ -134,9 +143,18 @@ public abstract class AnthropicCompatibleProviderBase : ILLMProvider
         {
             ["model"] = Model,
             ["messages"] = request.Messages.Select(MapMessage).ToArray(),
-            ["max_tokens"] = GetMaxTokens(),
+            ["max_tokens"] = Math.Max(GetMaxTokens(), (request.ThinkingBudgetTokens ?? 0) + 1024),
             ["stream"] = true
         };
+
+        if (request.ThinkingBudgetTokens > 0 && Model.Contains("claude-3-7", StringComparison.OrdinalIgnoreCase))
+        {
+            body["thinking"] = new
+            {
+                type = "enabled",
+                budget_tokens = request.ThinkingBudgetTokens.Value
+            };
+        }
 
         if (request.Tools is { Count: > 0 })
         {

@@ -253,6 +253,20 @@ public sealed class ProviderRouterModelRoutingTests : IDisposable
     }
 
     [Fact]
+    public void ResolveModelToProvider_ExactPrefix_MatchesExpandedProviderName()
+    {
+        var openrouter = new FakeLlmProvider(
+            "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "nvidia/nemotron-3-super-120b-a12b:free");
+        var router = CreateRouter(new[] { openrouter });
+
+        var result = router.ResolveModelToProvider("openrouter/deepseek/deepseek-r1:free");
+
+        Assert.NotNull(result);
+        Assert.Equal("openrouter/nvidia/nemotron-3-super-120b-a12b:free", result!.Name);
+    }
+
+    [Fact]
     public void ResolveModelToProvider_UnknownSlug_ReturnsNull()
     {
         var fireworks = new FakeLlmProvider("fireworks", "model");

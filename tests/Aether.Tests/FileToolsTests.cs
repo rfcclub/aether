@@ -120,6 +120,42 @@ public sealed class FileToolsTests : IDisposable
     }
 
     [Fact]
+    public async Task GlobTool_BareDoubleStar_ReturnsAllFiles()
+    {
+        Directory.CreateDirectory(Path.Combine(_workspace, "nested"));
+        File.WriteAllText(Path.Combine(_workspace, "root.md"), "");
+        File.WriteAllText(Path.Combine(_workspace, "nested", "child.txt"), "");
+
+        var tool = new GlobTool(NullLogger<GlobTool>.Instance);
+        var args = JsonDocument.Parse("""{"pattern":"**"}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, _sandbox, CancellationToken.None);
+        var output = result.ToString()!;
+
+        Assert.Contains("root.md", output);
+        Assert.Contains(Path.Combine("nested", "child.txt"), output);
+    }
+
+    [Fact]
+    public async Task GlobTool_DoubleStarSlashPattern_MatchesNestedFiles()
+    {
+        Directory.CreateDirectory(Path.Combine(_workspace, "nested"));
+        File.WriteAllText(Path.Combine(_workspace, "root.md"), "");
+        File.WriteAllText(Path.Combine(_workspace, "nested", "child.md"), "");
+        File.WriteAllText(Path.Combine(_workspace, "nested", "child.txt"), "");
+
+        var tool = new GlobTool(NullLogger<GlobTool>.Instance);
+        var args = JsonDocument.Parse("""{"pattern":"**/*.md"}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, _sandbox, CancellationToken.None);
+        var output = result.ToString()!;
+
+        Assert.Contains("root.md", output);
+        Assert.Contains(Path.Combine("nested", "child.md"), output);
+        Assert.DoesNotContain("child.txt", output);
+    }
+
+    [Fact]
     public async Task GrepTool_FindsMatches()
     {
         File.WriteAllText(Path.Combine(_workspace, "code.cs"), "// TODO: fix this\n// ok");

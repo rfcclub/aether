@@ -43,6 +43,12 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
             ["messages"] = request.Messages.Select(MapMessage).ToArray()
         };
 
+        if (!string.IsNullOrEmpty(request.ReasoningEffort) && 
+            (Model.Contains("o1", StringComparison.OrdinalIgnoreCase) || Model.Contains("o3", StringComparison.OrdinalIgnoreCase)))
+        {
+            body["reasoning_effort"] = request.ReasoningEffort;
+        }
+
         if (request.Tools is { Count: > 0 })
         {
             body["tools"] = request.Tools.Select(MapTool).ToArray();

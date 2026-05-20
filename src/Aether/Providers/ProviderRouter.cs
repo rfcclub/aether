@@ -565,7 +565,8 @@ public class ProviderRouter : ILLMProvider
         {
             var prefix = modelId[..slashIdx];
             var match = _providers.FirstOrDefault(p =>
-                p.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase));
+                p.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
+                p.Name.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase));
             if (match is not null) return match;
 
             // 4. Hyphen-slug match: "fireworks-ai/accounts/..." → provider "fireworks"
@@ -582,7 +583,8 @@ public class ProviderRouter : ILLMProvider
             if (!string.Equals(slug, prefix, StringComparison.Ordinal))
             {
                 var slugMatch = _providers.FirstOrDefault(p =>
-                    p.Name.Equals(slug, StringComparison.OrdinalIgnoreCase));
+                    p.Name.Equals(slug, StringComparison.OrdinalIgnoreCase) ||
+                    p.Name.StartsWith(slug + "/", StringComparison.OrdinalIgnoreCase));
                 if (slugMatch is not null) return slugMatch;
             }
         }

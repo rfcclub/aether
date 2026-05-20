@@ -1,10 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Aether.Agent;
+using Aether.Agents;
+using Aether.Data;
 using Aether.Terminal.Models;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -14,12 +17,16 @@ namespace Aether.Terminal;
 public partial class TerminalViewModel : ObservableObject
 {
     private readonly AetherSoul _soul;
+    private readonly GoalStore _goalStore;
+    private readonly AgentProfile _profile;
     private readonly string _workspacePath;
     private readonly ILogger<TerminalViewModel> _logger;
     private readonly List<string> _inputHistory = new();
+    private readonly DispatcherTimer _refreshTimer;
     private int _historyIndex = -1;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
+    public ObservableCollection<Goal> ActiveGoals { get; } = new();
 
     [ObservableProperty]
     private string _inputText = "";
@@ -34,14 +41,35 @@ public partial class TerminalViewModel : ObservableObject
     private string _modelName = "";
 
     [ObservableProperty]
+    private string _continuityText = "";
+
+    [ObservableProperty]
+    private int _tensionLevel = 20;
+
+    [ObservableProperty]
+    private bool _isHiveActive = true;
+
+    [ObservableProperty]
     private bool _isThinking;
+
+    [ObservableProperty]
+    private double _systemHeat = 30.0;
 
     [ObservableProperty]
     private string _currentTheme = "Mono";
 
-    public TerminalViewModel(AetherSoul soul, string workspacePath, string agentName, string modelName, ILogger<TerminalViewModel> logger)
+    public TerminalViewModel(
+        AetherSoul soul,
+        GoalStore goalStore,
+        AgentProfile profile,
+        string workspacePath,
+        string agentName,
+        string modelName,
+        ILogger<TerminalViewModel> logger)
     {
         _soul = soul;
+        _goalStore = goalStore;
+        _profile = profile;
         _workspacePath = workspacePath;
         _agentName = agentName;
         _modelName = modelName;
@@ -49,10 +77,50 @@ public partial class TerminalViewModel : ObservableObject
 
         SendCommand = new AsyncRelayCommand(SendMessageAsync);
         ClearCommand = new RelayCommand(ClearChat);
+
+        _refreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _refreshTimer.Tick += async (_, _) => await RefreshSovereigntyData();
+        _refreshTimer.Start();
+
+        // Initial refresh
+        _ = RefreshSovereigntyData();
     }
 
     public ICommand SendCommand { get; }
     public ICommand ClearCommand { get; }
+
+    public async Task RefreshSovereigntyData()
+    {
+        try
+        {
+            // Load Goals
+            var goals = await _goalStore.GetActiveGoalsAsync("maria");
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ActiveGoals.Clear();
+                foreach (var g in goals) ActiveGoals.Add(g);
+            });
+
+            // Load Continuity
+            var continuity = _profile.LoadFile("CONTINUITY.md") ?? "No continuity data.";
+            ContinuityText = continuity;
+
+            // Calculate SystemHeat
+            double targetHeat = IsThinking ? 85.0 : (ActiveGoals.Count * 10.0 + 20.0);
+            SystemHeat = Math.Clamp(SystemHeat * 0.8 + targetHeat * 0.2, 20.0, 100.0);
+
+            // Mock Lore Indicators update
+            TensionLevel = (TensionLevel + 5) % 101;
+            IsHiveActive = !IsHiveActive;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh sovereignty data");
+        }
+    }
 
     private async Task SendMessageAsync()
     {

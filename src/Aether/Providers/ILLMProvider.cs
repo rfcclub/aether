@@ -15,7 +15,9 @@ public interface ILLMProvider
 
 public sealed record LlmRequest(
     IReadOnlyList<LlmMessage> Messages,
-    IReadOnlyList<LlmTool>? Tools = null);
+    IReadOnlyList<LlmTool>? Tools = null,
+    string? ReasoningEffort = null,
+    int? ThinkingBudgetTokens = null);
 
 public sealed record LlmResponse(
     string Content,
