@@ -5,13 +5,19 @@
         <FluentTheme />
     </Application.Styles>
     <Application.Resources>
-        <!-- Default Mono theme colors -->
-        <SolidColorBrush x:Key="TerminalBackground">#1a1a1a</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalForeground">#e0e0e0</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalDim">#444444</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalAccent">#ffffff</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalUserBubble">#2a2a2a</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalToolBubble">#2a2a1a</SolidColorBrush>
-        <SolidColorBrush x:Key="TerminalError">#ff6666</SolidColorBrush>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="/Themes/ForgeTheme.axaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Map Terminal brushes to Forge theme -->
+            <StaticResource x:Key="TerminalBackground" ResourceKey="ForgeBackground" />
+            <StaticResource x:Key="TerminalForeground" ResourceKey="ForgeAmber" />
+            <StaticResource x:Key="TerminalDim" ResourceKey="ForgeDim" />
+            <StaticResource x:Key="TerminalAccent" ResourceKey="ForgeAccent" />
+            <StaticResource x:Key="TerminalUserBubble" ResourceKey="ForgeUserBubble" />
+            <StaticResource x:Key="TerminalToolBubble" ResourceKey="ForgeToolBubble" />
+            <StaticResource x:Key="TerminalError" ResourceKey="ForgeError" />
+        </ResourceDictionary>
     </Application.Resources>
 </Application>
