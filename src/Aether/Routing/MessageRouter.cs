@@ -78,33 +78,50 @@ public sealed class MessageRouter
     private string? ResolveAgentFromBindings(string routeKey)
     {
         InvalidateCacheIfNeeded();
+
+        // Handle websocket dynamic routing
+        if (routeKey.StartsWith("websocket:websocket:", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = routeKey.Split(':');
+            if (parts.Length > 3)
+            {
+                var group = parts[^1];
+                var wsBinding = $"websocket:{group}";
+
+                var cache = _bindingCache ?? BuildCacheAndResolveGetCache();
+                if (cache.TryGetValue(wsBinding, out var agentName))
+                    return agentName;
+
+                if (_configLoader is not null)
+                {
+                    var config = _configLoader.LoadAsync().Result;
+                    foreach (var (name, entry) in config.Agents)
+                    {
+                        if (entry.Enabled && (string.Equals(name, group, StringComparison.OrdinalIgnoreCase) || 
+                                              string.Equals(entry.DisplayName, group, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            return name;
+                        }
+                    }
+                }
+            }
+        }
+
         if (_bindingCache is not null)
             return _bindingCache.TryGetValue(routeKey, out var agentName) ? agentName : ResolveFallback();
 
         return BuildCacheAndResolve(routeKey);
     }
 
-    private string? BuildCacheAndResolve(string routeKey)
+    private Dictionary<string, string> BuildCacheAndResolveGetCache()
     {
         _bindingCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var agents = _configLoader!.LoadAsync().Result.Agents;
-
-        string? firstCatchAll = null;
-        string? defaultAgent = null;
 
         foreach (var (name, entry) in agents)
         {
             if (!entry.Enabled)
                 continue;
-
-            var isCatchAll = entry.Bindings.Count == 0;
-
-            if (isCatchAll)
-            {
-                firstCatchAll ??= name;
-                if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
-                    defaultAgent = name;
-            }
 
             foreach (var binding in entry.Bindings)
             {
@@ -114,11 +131,17 @@ public sealed class MessageRouter
         }
 
         _lastConfigRead = DateTime.UtcNow;
+        return _bindingCache;
+    }
 
-        if (_bindingCache.TryGetValue(routeKey, out var matched))
+    private string? BuildCacheAndResolve(string routeKey)
+    {
+        var cache = BuildCacheAndResolveGetCache();
+
+        if (cache.TryGetValue(routeKey, out var matched))
             return matched;
 
-        return defaultAgent ?? firstCatchAll;
+        return ResolveFallback();
     }
 
     private string? ResolveFallback()

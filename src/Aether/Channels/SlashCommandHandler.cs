@@ -58,6 +58,7 @@ public sealed class SlashCommandHandler
             "/tools" => HandleTools(),
             "/think" => await HandleThinkAsync(ctx, args, ct),
             "/reasoning" => await HandleThinkAsync(ctx, args, ct),
+            "/effort" => await HandleThinkAsync(ctx, args, ct),
             "/context" => await HandleContextAsync(ctx, ct),
             "/compact" => await HandleCompactAsync(ctx, ct),
             _ => null
@@ -85,16 +86,18 @@ public sealed class SlashCommandHandler
         return new SlashCommandResult($"New session: {session.Id}", AutoGreet: true);
     }
 
-    private Task<SlashCommandResult> HandleResetAsync(SlashCommandContext ctx, CancellationToken ct)
+    private async Task<SlashCommandResult> HandleResetAsync(SlashCommandContext ctx, CancellationToken ct)
     {
+        var sessionMgr = _rootServices.GetRequiredService<SessionManager>();
+        var session = await sessionMgr.CreateSessionAsync(ctx.WorkspacePath, ct);
         var memory = _rootServices.GetRequiredService<FileMemory>();
         memory.CompactContext(0);
 
         PendingSessionReset[ctx.AgentName] = true;
         _rootServices.GetService<AetherSoul>()?.Reset();
 
-        _logger.LogInformation("Context cleared for {Agent}", ctx.AgentName);
-        return Task.FromResult(new SlashCommandResult("Context cleared.", AutoGreet: true));
+        _logger.LogInformation("Context cleared for {Agent} (New session {SessionId})", ctx.AgentName, session.Id);
+        return new SlashCommandResult("Context cleared. Starting fresh.", AutoGreet: true);
     }
 
     private async Task<SlashCommandResult> HandleModelAsync(SlashCommandContext ctx, string args, CancellationToken ct)
@@ -304,7 +307,7 @@ public sealed class SlashCommandHandler
         var model = _providerRouter?.EffectiveModel ?? "none";
 
         var session = await sessionMgr.GetOrCreateSessionAsync(ctx.WorkspacePath, ct);
-        var history = await sessionMgr.GetHistoryAsync(session.Id, 500, ct);
+        var history = await sessionMgr.GetHistoryAsync(session.Id, 20000, ct); 
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Session: {ctx.AgentName} ({session.Id})");

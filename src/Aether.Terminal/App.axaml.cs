@@ -150,12 +150,6 @@ public partial class App : Application
 
         // FEOFALLS Cognitive Architecture — loads constitution, identity, cognitive, working state
         services.AddSingleton<BootConfig>(_ => agentCfg.Boot ?? new BootConfig());
-        services.AddSingleton<BootContract>(provider =>
-        {
-            var profile = provider.GetRequiredService<AgentProfile>();
-            var bootConfig = provider.GetRequiredService<BootConfig>();
-            return new BootContract(profile.AgentDirectory, bootConfig);
-        });
 
         // AetherSoul using ProviderRouter + Boot contract
         services.AddSingleton<AetherSoul>(provider =>

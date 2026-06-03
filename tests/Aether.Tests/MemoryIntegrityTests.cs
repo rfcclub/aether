@@ -76,7 +76,25 @@ public class MemoryIntegrityTests : IDisposable
     public void Dispose()
     {
         _sqliteMemory.Dispose();
-        if (File.Exists(_dbPath)) File.Delete(_dbPath);
-        if (Directory.Exists(_agentDir)) Directory.Delete(_agentDir, recursive: true);
+        
+        // Clear SQLite connection pool to release file locks on Windows
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        try
+        {
+            if (File.Exists(_dbPath)) File.Delete(_dbPath);
+        }
+        catch (System.IO.IOException)
+        {
+            // Ignore transient lock failures in testing
+        }
+
+        try
+        {
+            if (Directory.Exists(_agentDir)) Directory.Delete(_agentDir, recursive: true);
+        }
+        catch (System.IO.IOException)
+        {
+        }
     }
 }

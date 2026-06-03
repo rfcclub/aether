@@ -39,6 +39,11 @@ public class SessionManager
         list.Add(message);
     }
 
+    public virtual void ReplaceHistory(string sessionId, IEnumerable<SessionMessage> messages)
+    {
+        _messages[sessionId] = messages.ToList();
+    }
+
     public virtual IReadOnlyList<SessionMessage> GetHistory(string sessionId, int maxMessages)
     {
         if (!_messages.TryGetValue(sessionId, out var list))
@@ -184,35 +189,71 @@ public class SessionManager
         await update.ExecuteNonQueryAsync(ct);
     }
 
-    public virtual async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxTokens, CancellationToken ct = default)
     {
         // Try in-memory first
-        var memHistory = GetHistory(sessionId, maxMessages);
-        if (memHistory.Count > 0) return memHistory;
+        var memHistory = GetHistory(sessionId, 500); // Fetch a large number of messages to filter by tokens
+        List<SessionMessage> rawMessages;
 
-        await using var connection = await _db.OpenConnectionAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT sender, content, timestamp
-            FROM messages
-            WHERE session_id = $sessionId
-            ORDER BY timestamp ASC
-            LIMIT $maxMessages;
-            """;
-        command.Parameters.AddWithValue("$sessionId", sessionId);
-        command.Parameters.AddWithValue("$maxMessages", maxMessages);
-
-        var messages = new List<SessionMessage>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        if (memHistory.Count > 0)
         {
-            messages.Add(new SessionMessage(
-                Role: reader.GetString(0),
-                Content: reader.GetString(1),
-                Timestamp: DateTimeOffset.Parse(reader.GetString(2))));
+            rawMessages = memHistory.ToList();
+        }
+        else
+        {
+            await using var connection = await _db.OpenConnectionAsync(ct);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT sender, content, timestamp
+                FROM messages
+                WHERE session_id = $sessionId
+                ORDER BY timestamp DESC
+                LIMIT 500;
+                """;
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+
+            var dbMessages = new List<SessionMessage>();
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                dbMessages.Add(new SessionMessage(
+                    Role: reader.GetString(0),
+                    Content: reader.GetString(1),
+                    Timestamp: DateTimeOffset.Parse(reader.GetString(2))));
+            }
+            dbMessages.Reverse();
+            rawMessages = dbMessages;
         }
 
-        return messages;
+        // Tier 1: Mechanical Trimming
+        var result = new List<SessionMessage>();
+        var currentTokens = 0;
+        
+        // Process from newest to oldest
+        for (int i = rawMessages.Count - 1; i >= 0; i--)
+        {
+            var msg = rawMessages[i];
+            var isRecent = (rawMessages.Count - 1 - i) <= 10; // Keep last 10 messages untouched
+            var isTool = msg.Role.Equals("tool", StringComparison.OrdinalIgnoreCase) || 
+                         (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && msg.Content.Contains("\"function\":"));
+
+            // If it's an old tool payload and we are tight on budget, drop it
+            if (!isRecent && isTool && currentTokens > (maxTokens / 2))
+            {
+                continue;
+            }
+
+            var msgTokens = EstimateTokens(msg.Content);
+            if (currentTokens + msgTokens > maxTokens && result.Count > 0)
+            {
+                break; // Stop including older messages if we hit the token limit
+            }
+
+            result.Insert(0, msg);
+            currentTokens += msgTokens;
+        }
+
+        return result;
     }
 
     public virtual async Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
@@ -257,4 +298,7 @@ public class SessionManager
 
     private static int EstimateTokens(IEnumerable<SessionMessage> messages)
         => Math.Max(1, messages.Sum(m => m.Content.Length) / 4);
+
+    private static int EstimateTokens(string text)
+        => string.IsNullOrEmpty(text) ? 0 : Math.Max(1, text.Length / 4);
 }

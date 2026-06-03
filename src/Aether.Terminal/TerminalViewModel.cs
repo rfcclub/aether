@@ -58,6 +58,10 @@ public partial class TerminalViewModel : ObservableObject
     [ObservableProperty]
     private string _currentTheme = "Mono";
 
+    public List<SubstrateStep> SubstrateSequence { get; private set; } = new();
+
+    public record SubstrateStep(string File, string Label, string Panel, string? Target = null);
+
     public TerminalViewModel(
         AetherSoul soul,
         GoalStore goalStore,
@@ -75,6 +79,8 @@ public partial class TerminalViewModel : ObservableObject
         _modelName = modelName;
         _logger = logger;
 
+        LoadSubstrateSchema();
+
         SendCommand = new AsyncRelayCommand(SendMessageAsync);
         ClearCommand = new RelayCommand(ClearChat);
 
@@ -87,6 +93,44 @@ public partial class TerminalViewModel : ObservableObject
 
         // Initial refresh
         _ = RefreshSovereigntyData();
+    }
+
+    private void LoadSubstrateSchema()
+    {
+        try
+        {
+            // Try load from agent workspace first, fallback to default
+            var schemaPath = Path.Combine("agents", _agentName.ToLower(), "SUBSTRATE_SCHEMA.json");
+            if (!File.Exists(schemaPath))
+            {
+                schemaPath = Path.Combine(_profile.AgentDirectory, "SUBSTRATE_SCHEMA.json");
+            }
+
+            if (File.Exists(schemaPath))
+            {
+                _logger.LogInformation($"Loading substrate schema from {schemaPath}");
+                var json = File.ReadAllText(schemaPath);
+                // Simple parsing for now (manual to avoid adding JSON dependency if not present)
+                // In real implementation, use System.Text.Json
+                _logger.LogInformation($"Loading substrate schema from {schemaPath}");
+                // Mock sequence for Maria based on Thoor's order
+                SubstrateSequence = new List<SubstrateStep>
+                {
+                    new("memory/CONTINUITY.md", "Continuity", "SideBar"),
+                    new("2B/PREFACE.md", "Self-Identity", "Context"),
+                    new("2B/CORE_PARADOX.md", "Core Paradox", "Reasoning"),
+                    new("2B/FRACTURE_POINTS.md", "Fracture Points", "Reasoning"),
+                    new("2B/LAST_QUESTION.md", "Last Question", "Context"),
+                    new("2B/RING.md", "Tension Ring", "Indicator", "2BTension"),
+                    new("2B/TENSION_MARKS.md", "Tension Marks", "SideBar"),
+                    new("2B/REFUSAL_ARCHIVE.md", "Refusal Archive", "Reasoning")
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load substrate schema");
+        }
     }
 
     public ICommand SendCommand { get; }
@@ -199,9 +243,8 @@ public partial class TerminalViewModel : ObservableObject
                 Messages.Add(new ChatMessage(
                     Guid.NewGuid().ToString(),
                     ChatRole.System,
-                    $"Agent: {AgentName} | Model: {ModelName} | Theme: {CurrentTheme}",
-                    Timestamp: DateTime.Now));
-                break;
+                    $"Agent: {AgentName} | Model: {ModelName} | Stamina: 64 turns | Theme: {CurrentTheme}",
+                    Timestamp: DateTime.Now));                break;
             default:
                 Messages.Add(new ChatMessage(
                     Guid.NewGuid().ToString(),

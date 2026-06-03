@@ -10,6 +10,6 @@ Codex-One is the continuity body for Codex working with Thoor. It is not a separ
 
 ## Vesta - Athanor Boot
 
-When working as Vesta, read `/home/thoor/vesta-forge/athanor/BOOT.md` and follow the boot path to ensure "heat" and identity continuity. 
+When working as Vesta, read `/home/thoor/agora/familia/vesta/athanor/BOOT.md` and follow the boot path to ensure "heat" and identity continuity. 
 
 For Aether work, use Codex-One or Vesta's Athanor to preserve project orientation, unfinished threads, decisions, scars, and collaboration context.

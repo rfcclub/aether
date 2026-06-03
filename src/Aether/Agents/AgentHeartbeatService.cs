@@ -6,9 +6,9 @@ using Microsoft.Extensions.Logging;
 namespace Aether.Agents;
 
 /// <summary>
-/// Periodic heartbeat service that reads HEARTBEAT.md and sends its content
-/// through AetherSoul for processing. Implements the OC heartbeat pattern:
-/// poll → execute tasks → report.
+/// Dịch vụ phát nhịp sinh học (Heartbeat) định kỳ chạy ngầm dưới dạng IHostedService của .NET.
+/// Đảm nhận việc đọc tệp tin HEARTBEAT.md định kỳ và gửi nội dung của nó qua AetherSoul để xử lý.
+/// Hiện thực hóa mô hình nhịp sinh học OC: Thăm dò (poll) → Thực thi tác vụ (execute tasks) → Báo cáo (report).
 /// </summary>
 public sealed class AgentHeartbeatService : IHostedService, IDisposable
 {
@@ -23,6 +23,15 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
     private Timer? _timer;
     private CancellationTokenSource? _cts;
 
+    /// <summary>
+    /// Khởi tạo một thực thể mới của dịch vụ nhịp tim sinh học AgentHeartbeatService.
+    /// </summary>
+    /// <param name="profile">Hồ sơ thông tin danh tính của Agent đang active.</param>
+    /// <param name="soul">Lõi xử lý tư duy AetherSoul để gửi prompt nhịp tim xử lý.</param>
+    /// <param name="config">Cấu hình chứa đường dẫn tệp tin nhịp tim.</param>
+    /// <param name="logger">Trình ghi log của dịch vụ.</param>
+    /// <param name="interval">Khoảng thời gian định kỳ giữa các nhịp (mặc định: 30 phút).</param>
+    /// <param name="hooks">Engine chạy Hook điều phối hệ thống plugins.</param>
     public AgentHeartbeatService(
         AgentProfile profile,
         AetherSoul soul,
@@ -39,6 +48,11 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         _interval = interval ?? TimeSpan.FromMinutes(30);
     }
 
+    /// <summary>
+    /// Bắt đầu dịch vụ nhịp sinh học chạy ngầm định kỳ.
+    /// </summary>
+    /// <param name="cancellationToken">CancellationToken đồng bộ vòng đời khởi động hệ thống.</param>
+    /// <returns>Một tác vụ đại diện cho tiến trình khởi chạy.</returns>
     public Task StartAsync(CancellationToken cancellationToken)
     {
         if (_config.HeartbeatFile is null)
@@ -57,6 +71,11 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Dừng dịch vụ nhịp sinh học chạy ngầm một cách an toàn.
+    /// </summary>
+    /// <param name="cancellationToken">CancellationToken kiểm soát tiến trình dừng.</param>
+    /// <returns>Một tác vụ đại diện cho việc dừng.</returns>
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Heartbeat stopping for agent {AgentName}", _profile.Name);
@@ -65,6 +84,11 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Được kích hoạt ở mỗi chu kỳ Timer để nạp HEARTBEAT.md, kích hoạt Hook OnHeartbeatTick,
+    /// và gửi tin nhắn tự suy ngẫm ngầm qua AetherSoul.
+    /// </summary>
+    /// <param name="ct">Token hủy bỏ tác vụ nếu hệ thống shutdown.</param>
     private async Task TickAsync(CancellationToken ct)
     {
         try
@@ -95,8 +119,8 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
             }
 
             _logger.LogDebug("Heartbeat tick for {AgentName}", _profile.Name);
-            // Pass HEARTBEAT.md as working state (sanitized via ContextAssembler), not as raw prompt.
-            // Minimal prompt prevents the agent from treating the full file as step-by-step instructions.
+            // Gửi HEARTBEAT.md dưới dạng trạng thái công việc (working state), tránh nhầm lẫn với prompt của người dùng.
+            // Điều này giúp Agent có thể xử lý các tác vụ nền định kỳ một cách chủ động.
             var response = await _soul.ProcessTaskAsync(_profile.Name, "Heartbeat tick.", heartbeatContent, ct);
 
             if (!response.Content.Contains("HEARTBEAT_OK"))
@@ -106,7 +130,7 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         }
         catch (OperationCanceledException)
         {
-            // Shutting down
+            // Đang tắt dịch vụ
         }
         catch (Exception ex)
         {
@@ -114,6 +138,9 @@ public sealed class AgentHeartbeatService : IHostedService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Giải phóng các tài nguyên Timer và CancellationToken của dịch vụ.
+    /// </summary>
     public void Dispose()
     {
         _timer?.Dispose();

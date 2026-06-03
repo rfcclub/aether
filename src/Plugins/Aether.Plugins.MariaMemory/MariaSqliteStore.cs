@@ -209,6 +209,12 @@ public sealed class MariaSqliteStore
 
     public async Task<List<MemoryNode>> SearchAsync(string query, int limit = 10, CancellationToken ct = default)
     {
+        var sanitized = System.Text.RegularExpressions.Regex.Replace(query, @"[^\w\s\u0080-\uFFFF]", " ").Trim();
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return new List<MemoryNode>();
+        }
+
         var results = new List<MemoryNode>();
         using var connection = new SqliteConnection($"Data Source={_dbPath}");
         await connection.OpenAsync(ct);
@@ -222,7 +228,7 @@ public sealed class MariaSqliteStore
             ORDER BY n.score DESC, n.timestamp DESC
             LIMIT @limit;
         ";
-        command.Parameters.AddWithValue("@query", query);
+        command.Parameters.AddWithValue("@query", sanitized);
         command.Parameters.AddWithValue("@limit", limit);
 
         using var reader = await command.ExecuteReaderAsync(ct);

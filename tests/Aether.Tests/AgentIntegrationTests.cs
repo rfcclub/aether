@@ -1,5 +1,6 @@
 using Aether.Agents;
 using Aether.Agent;
+using Aether.Config;
 using Aether.Memory;
 using Aether.Providers;
 using Aether.Sessions;
@@ -32,7 +33,7 @@ public sealed class AgentIntegrationTests : IDisposable
     public async Task AetherSoul_UsesAgentPersonaInSystemPrompt()
     {
         File.WriteAllText(Path.Combine(_agentDir, "AGENTS.md"), "You are Maria. User is Thoor.");
-        var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
+        var profile = new AgentProfile("maria", _agentDir, new AgentConfig(), new AgentModelConfig());
         var llm = new FakeLlmProvider("test", "test-model", new LlmResponse("Hello, bệ hạ!"));
         var tools = new FakeToolExecutor();
 

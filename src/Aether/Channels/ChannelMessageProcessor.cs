@@ -32,6 +32,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
     private readonly FileMemory _memory;
     private readonly HookEngine? _hooks;
     private readonly CallbackRouter? _callbackRouter;
+    private readonly SessionManager _sessionManager;
+    private readonly SessionCompactionService? _compactionService;
     private readonly ILogger<ChannelMessageProcessor> _logger;
 
     public ChannelMessageProcessor(
@@ -42,9 +44,11 @@ public sealed class ChannelMessageProcessor : BackgroundService
         ConfigLoader configLoader,
         SlashCommandHandler slashCommands,
         FileMemory memory,
+        SessionManager sessionManager,
         ILogger<ChannelMessageProcessor> logger,
         HookEngine? hooks = null,
-        CallbackRouter? callbackRouter = null)
+        CallbackRouter? callbackRouter = null,
+        SessionCompactionService? compactionService = null)
     {
         _channel = channel;
         _router = router;
@@ -53,9 +57,11 @@ public sealed class ChannelMessageProcessor : BackgroundService
         _configLoader = configLoader;
         _slashCommands = slashCommands;
         _memory = memory;
+        _sessionManager = sessionManager;
         _hooks = hooks;
         _callbackRouter = callbackRouter;
         _logger = logger;
+        _compactionService = compactionService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -113,8 +119,13 @@ public sealed class ChannelMessageProcessor : BackgroundService
 
     private async Task HandleMessageAsync(InboundMessage message, CancellationToken ct)
     {
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        SessionCancellationRegistry.Register(message.ChatId, sessionCts);
+
         try
         {
+            var linkedToken = sessionCts.Token;
+
             // ── OnMessageReceived hook ──
             if (_hooks is not null)
             {
@@ -126,7 +137,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     Text = message.Text,
                     WorkspacePath = ""
                 };
-                var msgResult = await _hooks.RunAsync(HookPoint.OnMessageReceived, msgCtx, ct);
+                var msgResult = await _hooks.RunAsync(HookPoint.OnMessageReceived, msgCtx, linkedToken);
                 if (!msgResult.Success || msgCtx.Dropped)
                     return;
                 if (msgCtx.OverrideText is not null)
@@ -134,24 +145,24 @@ public sealed class ChannelMessageProcessor : BackgroundService
             }
 
             // Access control — gate before routing
-            var access = await _channelAccess.CheckAccessAsync(message.SenderId, ct);
+            var access = await _channelAccess.CheckAccessAsync(message.SenderId, linkedToken);
             switch (access)
             {
                 case AccessResult.Denied:
                     return; // silently drop
 
                 case AccessResult.NeedsPairing:
-                    var code = await _channelAccess.RequestPairingAsync(message.SenderId, ct);
+                    var code = await _channelAccess.RequestPairingAsync(message.SenderId, linkedToken);
                     await _channel.SendMessageAsync(message.ChatId,
                         $"🔐 This bot is private.\n\nYour pairing code: **{code}**\n\nAsk the bot owner to run:\n`aether pair {code}`",
-                        ct);
+                        linkedToken);
                     return;
 
                 case AccessResult.Allowed:
                     break; // proceed
             }
 
-            var routed = await _router.RouteAsync(message, ct);
+            var routed = await _router.RouteAsync(message, linkedToken);
             if (routed is null) return;
 
             HookEngine? requestHooks = _hooks;
@@ -165,7 +176,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     Message = message,
                     ResolvedAgentName = routed.Value.AgentName
                 };
-                var routedResult = await _hooks.RunAsync(HookPoint.OnMessageRouted, routedCtx, ct);
+                var routedResult = await _hooks.RunAsync(HookPoint.OnMessageRouted, routedCtx, linkedToken);
                 if (!routedResult.Success)
                     return;
                 if (routedCtx.RerouteToAgent && routedCtx.RerouteAgentName is not null)
@@ -180,7 +191,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             // Slash commands — handle before LLM scope
             var slashCtx = new SlashCommandContext(
                 message.Text, routed.Value.AgentName, routed.Value.WorkspacePath, _services);
-            var slashResult = await _slashCommands.HandleAsync(slashCtx, ct);
+            var slashResult = await _slashCommands.HandleAsync(slashCtx, linkedToken);
             if (slashResult is not null && !slashResult.AutoGreet)
             {
                 if (slashResult.InteractiveUi is not null)
@@ -189,7 +200,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 }
                 else
                 {
-                    await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                    await _channel.SendMessageAsync(message.ChatId, slashResult.Text, linkedToken);
                 }
                 return;
             }
@@ -198,7 +209,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             var prompt = routed.Value.Prompt;
             if (slashResult is { AutoGreet: true })
             {
-                await _channel.SendMessageAsync(message.ChatId, slashResult.Text, ct);
+                await _channel.SendMessageAsync(message.ChatId, slashResult.Text, linkedToken);
                 prompt = "A new session was started via /new or /reset. " +
                          "Execute your Session Startup sequence now — " +
                          "read the required files, then greet the user warmly.";
@@ -214,7 +225,7 @@ public sealed class ChannelMessageProcessor : BackgroundService
             // Add user message to ephemeral context
             _memory.AddToContext($"User: {message.Text}", 0.5f);
 
-            await _channel.SetTypingAsync(message.ChatId, true, ct);
+            await _channel.SetTypingAsync(message.ChatId, true, linkedToken);
 
             using var scope = _services.CreateScope();
 
@@ -260,12 +271,14 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     scope.ServiceProvider.GetRequiredService<SqliteMemorySystem>(),
                     scope.ServiceProvider.GetRequiredService<SessionManager>());
 
-            await _channel.SetTypingAsync(message.ChatId, true, ct);
+            await _channel.SetTypingAsync(message.ChatId, true, linkedToken);
 
             var fullResponse = new StringBuilder();
-            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, prompt, ct))
+            int chunkIndex = 0;
+            await foreach (var chunk in soul.ProcessStreamingAsync(routed.Value.WorkspacePath, prompt, linkedToken))
             {
                 fullResponse.Append(chunk);
+                await _channel.SendStreamingChunkAsync(message.ChatId, chunk, chunkIndex++, linkedToken);
             }
 
             // Add assistant response to ephemeral context
@@ -282,21 +295,41 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     AgentName = routed.Value.AgentName,
                     WorkspacePath = routed.Value.WorkspacePath
                 };
-                await requestHooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, ct);
+                await requestHooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, linkedToken);
                 if (sentCtx.Suppress)
                 {
-                    await _channel.SetTypingAsync(message.ChatId, false, ct);
+                    await _channel.SetTypingAsync(message.ChatId, false, linkedToken);
                     return;
                 }
                 if (sentCtx.OverrideText is not null)
                     responseText = sentCtx.OverrideText;
             }
 
-            await _channel.SetTypingAsync(message.ChatId, false, ct);
-            await _channel.SendMessageAsync(message.ChatId, responseText, ct);
+            await _channel.SetTypingAsync(message.ChatId, false, linkedToken);
+            await _channel.SendStreamingCompleteAsync(message.ChatId, responseText, linkedToken);
+
+            // Trigger Tier 3 Compaction if history exceeds critical threshold
+            if (_compactionService is not null)
+            {
+                try
+                {
+                    var session = await _sessionManager.GetOrCreateSessionAsync(routed.Value.WorkspacePath, linkedToken);
+                    // Fetch recent history just to get the length/token estimate
+                    var recentHistory = await _sessionManager.GetHistoryAsync(session.Id, 20000, linkedToken); 
+                    if (recentHistory.Count > 50) // e.g., > 50 messages
+                    {
+                        _compactionService.EnqueueCompaction(session.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to evaluate session compaction.");
+                }
+            }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
         {
+            _logger.LogInformation("Message handling task was cancelled by user action for chat: {ChatId}", message.ChatId);
         }
         catch (Exception ex)
         {
@@ -306,6 +339,10 @@ public sealed class ChannelMessageProcessor : BackgroundService
                 await _channel.SendMessageAsync(message.ChatId, "Sorry, I encountered an error processing your message.", ct);
             }
             catch { }
+        }
+        finally
+        {
+            SessionCancellationRegistry.Remove(message.ChatId);
         }
     }
 }

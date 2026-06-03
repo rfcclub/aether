@@ -159,8 +159,8 @@ public sealed class ToolStartupRegistration : IHostedService
 
     private static ToolRisk RiskFor(string toolName) => toolName.ToLowerInvariant() switch
     {
-        "bash" or "shell" or "exec" => ToolRisk.Exec,
-        "write" or "edit" or "memory_write" or "session_reset" => ToolRisk.Write,
+        "bash" or "shell" or "exec" or "run_command" => ToolRisk.Exec,
+        "write" or "edit" or "memory_write" or "session_reset" or "mkdir" or "delete_file" or "move_file" or "apply_patch" => ToolRisk.Write,
         "web_search" or "web_fetch" => ToolRisk.Network,
         _ => ToolRisk.Read
     };

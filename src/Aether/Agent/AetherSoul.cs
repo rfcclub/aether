@@ -15,7 +15,7 @@ namespace Aether.Agent;
 
 public sealed class AetherSoul
 {
-    private const int MaxToolIterations = 16;
+    private const int MaxToolIterations = 64;
     private readonly ILLMProvider _llm;
     private readonly ToolExecutor? _legacyTools;
     private readonly RegistryToolExecutor? _registryTools;
@@ -143,7 +143,7 @@ public sealed class AetherSoul
         // If context is empty (only system prompt), load history
         if (_ctx.Messages.Count <= 1)
         {
-            var history = await _sessionManager.GetHistoryAsync(session.Id, 16, ct);
+            var history = await _sessionManager.GetHistoryAsync(session.Id, 16000, ct);
             foreach (var msg in history)
             {
                 if (msg.Role == "user") _ctx.AddUser(msg.Content);
@@ -226,6 +226,48 @@ public sealed class AetherSoul
         }
     }
 
+    private string FormatToolCallUserFriendly(LlmToolCall toolCall)
+    {
+        var summary = $"⚙️ [{toolCall.Name}] Calling...";
+        try
+        {
+            if (toolCall.Name == "bash")
+            {
+                if (toolCall.Arguments.TryGetValue("CommandLine", out var cmdVal) ||
+                    toolCall.Arguments.TryGetValue("commandLine", out cmdVal))
+                {
+                    summary = $"⚙️ [bash] Running: `{cmdVal}`";
+                }
+            }
+            else if (toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content" || 
+                     toolCall.Name == "multi_replace_file_content" || toolCall.Name == "view_file")
+            {
+                if (toolCall.Arguments.TryGetValue("TargetFile", out var pathVal) ||
+                    toolCall.Arguments.TryGetValue("targetFile", out pathVal) ||
+                    toolCall.Arguments.TryGetValue("AbsolutePath", out pathVal) ||
+                    toolCall.Arguments.TryGetValue("absolutePath", out pathVal))
+                {
+                    var fileBasename = System.IO.Path.GetFileName(pathVal);
+                    if (string.IsNullOrEmpty(fileBasename)) fileBasename = pathVal;
+                    summary = $"⚙️ [{toolCall.Name}] Path: `{fileBasename}`";
+                }
+            }
+            else if (toolCall.Name == "grep_search")
+            {
+                if (toolCall.Arguments.TryGetValue("Query", out var queryVal) ||
+                    toolCall.Arguments.TryGetValue("query", out queryVal))
+                {
+                    summary = $"⚙️ [grep] Query: `{queryVal}`";
+                }
+            }
+        }
+        catch
+        {
+            // Fallback to default summary
+        }
+        return summary;
+    }
+
     /// <summary>
     /// Process a prompt and stream text tokens back through the returned async enumerable.
     /// </summary>
@@ -279,70 +321,18 @@ public sealed class AetherSoul
         for (var iteration = 0; iteration < MaxToolIterations; iteration++)
         {
             // --- Streaming phase ---
-            var tokenBuffer = new List<string>();
-            IReadOnlyList<LlmToolCall>? toolCalls = null;
-            var sawToolCallOrFallback = false;
-            var isFallback = false;
-            var textContent = new StringBuilder();
-
+            var state = new StreamResultState();
             var toolsToUse = GetToolDefinitions();
 
-            while (true)
-            {
-                tokenBuffer.Clear();
-                toolCalls = null;
-                sawToolCallOrFallback = false;
-                isFallback = false;
-                textContent.Clear();
-
-                try
-                {
-                    await foreach (var evt in _llm.CompleteStreamingEventsAsync(
-                        new LlmRequest(messages, toolsToUse, _reasoningEffort, _thinkingBudgetTokens), ct))
-                    {
-                        switch (evt)
-                        {
-                            case StreamEvent.TextToken tt:
-                                textContent.Append(tt.Token);
-                                fullContent.Append(tt.Token);
-                                tokenBuffer.Add(tt.Token);
-                                break;
-
-                            case StreamEvent.Response responseEvent:
-                                toolCalls = responseEvent.LlmResponse.ToolCalls;
-                                sawToolCallOrFallback = toolCalls is { Count: > 0 };
-                                if (!string.IsNullOrEmpty(responseEvent.LlmResponse.Reasoning))
-                                {
-                                    _logger.LogInformation("LLM reasoning trace ({Length} chars): {Reasoning}",
-                                        responseEvent.LlmResponse.Reasoning.Length, responseEvent.LlmResponse.Reasoning);
-                                }
-                                break;
-                        }
-                    }
-                }
-                catch (InvalidOperationException ex) when (
-                    ex.Message.Contains("tool use") || ex.Message.Contains("tool"))
-                {
-                    // Model does not support tools -- retry without them
-                    if (toolsToUse is not null)
-                    {
-                        toolsToUse = null;
-                        sawToolCallOrFallback = true;
-                        isFallback = true;
-                        continue; // retry with tools disabled
-                    }
-
-                    throw;
-                }
-
-                break; // success -- exit the retry loop
-            }
-
-            // Yield all buffered tokens now that we are outside the try/catch scope
-            foreach (var token in tokenBuffer)
+            await foreach (var token in StreamTextWithRetryAsync(messages, toolsToUse, state, fullContent, ct))
             {
                 yield return token;
             }
+
+            var toolCalls = state.ToolCalls;
+            var sawToolCallOrFallback = state.SawToolCallOrFallback;
+            var isFallback = state.IsFallback;
+            var textContent = state.TextContent;
 
             if (isFallback || !sawToolCallOrFallback)
             {
@@ -360,13 +350,20 @@ public sealed class AetherSoul
             {
                 ct.ThrowIfCancellationRequested();
 
+                var summary = FormatToolCallUserFriendly(toolCall);
+                yield return $"\n{summary}\n";
+                fullContent.Append($"\n{summary}\n");
+
                 var toolDef = BuiltInTools.FirstOrDefault(t => t.Name == toolCall.Name);
                 if (toolDef is not null)
                 {
                     var errors = ParameterValidator.Validate(toolCall, toolDef);
                     if (errors.Count > 0)
                     {
-                        _ctx.AddToolResult(toolCall.Id, toolCall.Name, ParameterValidator.FormatErrors(errors));
+                        var formatErrors = ParameterValidator.FormatErrors(errors);
+                        _ctx.AddToolResult(toolCall.Id, toolCall.Name, formatErrors);
+                        yield return $"⚠️ [{toolCall.Name}] Validation failed.\n\n";
+                        fullContent.Append($"⚠️ [{toolCall.Name}] Validation failed.\n\n");
                         continue;
                     }
                 }
@@ -379,6 +376,8 @@ public sealed class AetherSoul
                     {
                         _logger.LogWarning("Axiom violation blocked: {Error}", validation.ErrorMessage);
                         _ctx.AddToolResult(toolCall.Id, toolCall.Name, validation.ErrorMessage ?? "Action blocked by security axioms.");
+                        yield return $"🛡️ [{toolCall.Name}] Axiom block: {validation.ErrorMessage ?? "Security block"}.\n\n";
+                        fullContent.Append($"🛡️ [{toolCall.Name}] Axiom block: {validation.ErrorMessage ?? "Security block"}.\n\n");
                         continue;
                     }
                 }
@@ -401,12 +400,16 @@ public sealed class AetherSoul
                     {
                         _ctx.AddToolResult(toolCall.Id, toolCall.Name,
                             $"Tool '{toolCall.Name}' blocked: {preToolCtx.DenyReason ?? "policy"}");
+                        yield return $"🚫 [{toolCall.Name}] Hook denied: {preToolCtx.DenyReason ?? "policy"}.\n\n";
+                        fullContent.Append($"🚫 [{toolCall.Name}] Hook denied: {preToolCtx.DenyReason ?? "policy"}.\n\n");
                         continue;
                     }
                     if (!preToolResult.Success)
                     {
                         _ctx.AddToolResult(toolCall.Id, toolCall.Name,
                             $"Tool aborted: {preToolResult.StopReason}");
+                        yield return $"🚫 [{toolCall.Name}] Aborted: {preToolResult.StopReason}.\n\n";
+                        fullContent.Append($"🚫 [{toolCall.Name}] Aborted: {preToolResult.StopReason}.\n\n");
                         continue;
                     }
                 }
@@ -432,6 +435,14 @@ public sealed class AetherSoul
                 }
 
                 _ctx.AddToolResult(toolCall.Id, toolCall.Name, result);
+
+                // Yield the completion indicator
+                var isFailed = result.StartsWith("Tool failed:") || result.Contains("error");
+                var completionIndicator = isFailed 
+                    ? $"❌ [{toolCall.Name}] Failed."
+                    : $"✅ [{toolCall.Name}] Completed.";
+                yield return $"{completionIndicator}\n\n";
+                fullContent.Append($"{completionIndicator}\n\n");
             }
             messages = new List<LlmMessage>(_ctx.Messages);
         }
@@ -457,6 +468,91 @@ public sealed class AetherSoul
         _ctx.AddAssistant(finalResponse);
         if (_sessionManager is not null)
             await _sessionManager.AppendMessageAsync(_ctx.SessionId, new SessionMessage("assistant", finalResponse, DateTimeOffset.UtcNow), ct);
+    }
+
+    private sealed class StreamResultState
+    {
+        public IReadOnlyList<LlmToolCall>? ToolCalls { get; set; }
+        public bool SawToolCallOrFallback { get; set; }
+        public bool IsFallback { get; set; }
+        public StringBuilder TextContent { get; } = new StringBuilder();
+    }
+
+    private IAsyncEnumerable<string> StreamTextWithRetryAsync(
+        List<LlmMessage> messages,
+        IReadOnlyList<LlmTool>? toolsToUse,
+        StreamResultState state,
+        StringBuilder fullContent,
+        CancellationToken ct)
+    {
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions
+        {
+            SingleWriter = true,
+            SingleReader = true
+        });
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var currentTools = toolsToUse;
+                while (true)
+                {
+                    state.ToolCalls = null;
+                    state.SawToolCallOrFallback = false;
+                    state.IsFallback = false;
+                    state.TextContent.Clear();
+
+                    try
+                    {
+                        await foreach (var evt in _llm.CompleteStreamingEventsAsync(
+                            new LlmRequest(messages, currentTools, _reasoningEffort, _thinkingBudgetTokens), ct))
+                        {
+                            switch (evt)
+                            {
+                                case StreamEvent.TextToken tt:
+                                    state.TextContent.Append(tt.Token);
+                                    fullContent.Append(tt.Token);
+                                    await channel.Writer.WriteAsync(tt.Token, ct);
+                                    break;
+
+                                case StreamEvent.Response responseEvent:
+                                    state.ToolCalls = responseEvent.LlmResponse.ToolCalls;
+                                    state.SawToolCallOrFallback = state.ToolCalls is { Count: > 0 };
+                                    if (!string.IsNullOrEmpty(responseEvent.LlmResponse.Reasoning))
+                                    {
+                                        _logger.LogInformation("LLM reasoning trace ({Length} chars): {Reasoning}",
+                                            responseEvent.LlmResponse.Reasoning.Length, responseEvent.LlmResponse.Reasoning);
+                                    }
+                                    break;
+                            }
+                        }
+                    }
+                    catch (InvalidOperationException ex) when (
+                        ex.Message.Contains("tool use") || ex.Message.Contains("tool"))
+                    {
+                        if (currentTools is not null)
+                        {
+                            currentTools = null;
+                            state.SawToolCallOrFallback = true;
+                            state.IsFallback = true;
+                            continue;
+                        }
+
+                        throw;
+                    }
+
+                    break;
+                }
+                channel.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                channel.Writer.Complete(ex);
+            }
+        }, ct);
+
+        return channel.Reader.ReadAllAsync(ct);
     }
 
     private async Task<LlmResponse> RunLlmToolLoopAsync(IReadOnlyList<LlmMessage> messages, WorkingContext ctx, CancellationToken ct)

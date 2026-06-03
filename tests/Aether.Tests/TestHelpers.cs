@@ -1,4 +1,5 @@
 using Aether.Agents;
+using Aether.Config;
 using System.Net;
 using Aether.Providers;
 using Aether.Agent;
@@ -15,8 +16,19 @@ internal sealed class FakeLlmProvider : ILLMProvider
     private readonly LlmResponse? _response;
     private readonly bool _throwOnCall;
     private readonly bool _throwOnHealthCheck;
-    public int CallCount { get; private set; }
-    public LlmRequest? LastRequest { get; private set; }
+    private readonly object _lock = new();
+    private int _callCount;
+    private LlmRequest? _lastRequest;
+
+    public int CallCount
+    {
+        get { lock (_lock) return _callCount; }
+    }
+
+    public LlmRequest? LastRequest
+    {
+        get { lock (_lock) return _lastRequest; }
+    }
 
     public string Name { get; }
     public string Model { get; }
@@ -34,8 +46,11 @@ internal sealed class FakeLlmProvider : ILLMProvider
 
     public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
-        LastRequest = request;
-        CallCount++;
+        lock (_lock)
+        {
+            _lastRequest = request;
+            _callCount++;
+        }
         if (_throwOnCall) throw new InvalidOperationException("Simulated failure");
         return Task.FromResult(_response ?? new LlmResponse(""));
     }
@@ -200,9 +215,9 @@ internal sealed class FakeSessionManager : SessionManager
         return Task.CompletedTask;
     }
 
-    public override Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxMessages, CancellationToken ct)
+    public override Task<IReadOnlyList<SessionMessage>> GetHistoryAsync(string sessionId, int maxTokens, CancellationToken ct)
     {
-        return Task.FromResult<IReadOnlyList<SessionMessage>>(Array.Empty<SessionMessage>());
+        return Task.FromResult<IReadOnlyList<SessionMessage>>(new List<SessionMessage>());
     }
 
     public override Task<IReadOnlyList<Session>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
@@ -360,6 +375,6 @@ internal static class TestAgentProfile
         var dir = Path.Combine(Path.GetTempPath(), "aether-test-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "IDENTITY.md"), "You are Aether. Be helpful.");
-        return new Aether.Agents.AgentProfile("aether", dir, new AgentConfig());
+        return new Aether.Agents.AgentProfile("aether", dir, new AgentConfig(), new AgentModelConfig());
     }
 }

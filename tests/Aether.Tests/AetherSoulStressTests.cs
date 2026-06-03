@@ -1,6 +1,7 @@
 using Aether.Providers;
 using Aether.Agent;
 using Aether.Agents;
+using Aether.Config;
 using Microsoft.Extensions.Logging.Abstractions;
 using Aether.Tooling;
 
@@ -23,7 +24,7 @@ public class AetherSoulStressTests
         var tools = new FakeToolExecutor();
         // Create profile without identity to get empty system prompt
         // Use a non-existent directory to ensure empty identity
-        var profile = new AgentProfile("test", "/tmp/non-existent-" + Guid.NewGuid(), new AgentConfig());
+        var profile = new AgentProfile("test", "/tmp/non-existent-" + Guid.NewGuid(), new AgentConfig(), new AgentModelConfig());
         var soul = new AetherSoul(provider, tools, profile);
 
         var response = await soul.ProcessAsync("main", "hello");
@@ -50,13 +51,13 @@ public class AetherSoulStressTests
         var tools = new FakeToolExecutor(new Aether.Agent.ToolResult(true, "contents"));
         var soul = new AetherSoul(provider, tools, TestAgentProfile.NoOp());
 
-        // Currently, AetherSoul throws an exception when the limit (16) is exceeded.
+        // Currently, AetherSoul throws an exception when the limit (64) is exceeded.
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => soul.ProcessAsync("main", "keep calling tools"));
-        Assert.Contains("exceeded 16 tool iterations", ex.Message);
+        Assert.Contains("exceeded 64 tool iterations", ex.Message);
 
-        // The limit is 16.
-        Assert.Equal(16, provider.CallCount);
-        Assert.Equal(16, tools.Calls.Count);
+        // The limit is 64.
+        Assert.Equal(64, provider.CallCount);
+        Assert.Equal(64, tools.Calls.Count);
     }
 
     [Fact]

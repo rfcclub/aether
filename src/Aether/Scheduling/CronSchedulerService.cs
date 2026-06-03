@@ -149,6 +149,8 @@ public sealed class CronSchedulerService : BackgroundService
     {
         try
         {
+            if (e.Name is null) return;
+
             _logger.LogDebug("Cron file changed: {Path}", e.Name);
             var path = Path.Combine(_cronDir, e.Name);
             if (e.ChangeType == WatcherChangeTypes.Deleted)

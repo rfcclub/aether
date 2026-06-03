@@ -1,18 +1,36 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.Agents;
 
-public enum IntegrityStatus { Valid, Invalid, Unsigned, KeyMissing }
+/// <summary>
+/// Trạng thái xác thực tính toàn vẹn của tệp tin.
+/// </summary>
+public enum IntegrityStatus
+{
+    /// <summary>Chữ ký hợp lệ, dữ liệu nguyên vẹn.</summary>
+    Valid,
+    /// <summary>Dữ liệu bị sửa đổi hoặc chữ ký không hợp lệ.</summary>
+    Invalid,
+    /// <summary>Tệp tin chưa được ký nhận.</summary>
+    Unsigned,
+    /// <summary>Không tìm thấy khóa công khai/khóa bảo mật.</summary>
+    KeyMissing
+}
 
+/// <summary>
+/// Đại diện cho kết quả kiểm tra tính toàn vẹn của một tệp tin.
+/// </summary>
+/// <param name="Status">Trạng thái xác thực chi tiết.</param>
+/// <param name="Error">Thông điệp mô tả lỗi chi tiết nếu có.</param>
 public sealed record IntegrityResult(IntegrityStatus Status, string? Error);
 
 /// <summary>
-/// Ed25519-style signing layer over FEOFALLS SHA-256 integrity.
-/// Uses ECDSA P-256 (built-in .NET) — algorithm name stored in artifacts for future swap.
+/// Bộ kiểm soát và xác thực chữ ký số (IntegritySigner) cho Agent.
+/// Triển khai thuật toán chữ ký số ECDSA P-256 (SHA-256) trên nền tảng .NET nhằm kiểm soát tính toàn vẹn
+/// của hiến pháp và các tệp danh tính cốt lõi của Agent, chống việc tiêm mã độc hoặc chỉnh sửa ngoài ý muốn.
 /// </summary>
 public sealed class IntegritySigner
 {
@@ -25,6 +43,11 @@ public sealed class IntegritySigner
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    /// <summary>
+    /// Khởi tạo một thực thể kiểm soát chữ ký số cho Agent.
+    /// </summary>
+    /// <param name="agentDir">Thư mục gốc làm việc của Agent.</param>
+    /// <param name="logger">Trình ghi log của hệ thống.</param>
     public IntegritySigner(string agentDir, ILogger<IntegritySigner> logger)
     {
         _agentDir = agentDir;
@@ -36,11 +59,14 @@ public sealed class IntegritySigner
     private string SignaturesDir => Path.Combine(IntegrityDir, "signatures");
 
     /// <summary>
-    /// Override path to the private key. When set, this path is used directly.
-    /// When null, falls back to ~/keys/{agent}-private.key, then _INTEGRITY/private.key.
+    /// Ghi đè đường dẫn cụ thể tới khóa bí mật (Private Key).
+    /// Nếu không được thiết lập, hệ thống tự động tìm kiếm tại ~/keys/{agent}-private.key trước khi fallback về _INTEGRITY/private.key.
     /// </summary>
     public string? PrivateKeyPathOverride { get; set; }
 
+    /// <summary>
+    /// Giải quyết đường dẫn chính xác của khóa bí mật dựa trên cấu hình và biến môi trường.
+    /// </summary>
     private string ResolvePrivateKeyPath()
     {
         if (PrivateKeyPathOverride is not null && File.Exists(PrivateKeyPathOverride))
@@ -56,8 +82,11 @@ public sealed class IntegritySigner
     }
 
     /// <summary>
-    /// Generate a new ECDSA keypair for the agent. Idempotent — skips if keys exist.
+    /// Khởi tạo cặp khóa ECDSA P-256 bảo mật cho Agent. 
+    /// Phương thức có tính lặp (Idempotent) — sẽ tự động bỏ qua nếu cặp khóa đã tồn tại sẵn.
     /// </summary>
+    /// <param name="ct">Token hủy bỏ tác vụ.</param>
+    /// <returns>Chuỗi PEM chứa khóa công khai vừa nạp hoặc tạo mới.</returns>
     public async Task<string> InitializeAsync(CancellationToken ct = default)
     {
         Directory.CreateDirectory(IntegrityDir);
@@ -77,7 +106,7 @@ public sealed class IntegritySigner
         await File.WriteAllTextAsync(PublicKeyPath, publicKey, ct);
         await File.WriteAllTextAsync(ResolvePrivateKeyPath(), privateKey, ct);
 
-        // Restrict private key permissions on non-Windows
+        // Hạn chế quyền đọc tệp khóa bí mật (chmod 600) trên các hệ điều hành Unix-like
         if (!OperatingSystem.IsWindows())
         {
             try { System.Diagnostics.Process.Start("chmod", $"600 \"{ResolvePrivateKeyPath()}\"")?.WaitForExit(1000); }
@@ -89,8 +118,11 @@ public sealed class IntegritySigner
     }
 
     /// <summary>
-    /// Sign a file relative to the agent directory. Writes {file}.sig to signatures/.
+    /// Ký nhận số cho một tệp tin cục bộ tương đối. Ghi tệp tin chữ ký *.sig tương ứng vào thư mục signatures/.
     /// </summary>
+    /// <param name="relativePath">Đường dẫn tệp tương đối cần ký.</param>
+    /// <param name="ct">Token hủy bỏ tác vụ.</param>
+    /// <returns>Kết quả thực thi ký nhận và trạng thái.</returns>
     public async Task<IntegrityResult> SignAsync(string relativePath, CancellationToken ct = default)
     {
         var filePath = Path.Combine(_agentDir, relativePath);
@@ -128,8 +160,11 @@ public sealed class IntegritySigner
     }
 
     /// <summary>
-    /// Verify a file's signature against the agent's public key.
+    /// Xác thực chữ ký số của một tệp tin cục bộ dựa trên khóa công khai đã lưu.
     /// </summary>
+    /// <param name="relativePath">Đường dẫn tệp tương đối cần xác thực.</param>
+    /// <param name="ct">Token hủy bỏ tác vụ.</param>
+    /// <returns>Kết quả xác thực tính toàn vẹn (Hợp lệ, Không hợp lệ, Chưa ký).</returns>
     public async Task<IntegrityResult> VerifyAsync(string relativePath, CancellationToken ct = default)
     {
         var filePath = Path.Combine(_agentDir, relativePath);
@@ -169,8 +204,10 @@ public sealed class IntegritySigner
     }
 
     /// <summary>
-    /// Verify all signed files. Returns list of failures.
+    /// Xác thực đồng loạt tất cả các tệp tin đã được ký trong thư mục signatures/.
     /// </summary>
+    /// <param name="ct">Token hủy bỏ tác vụ.</param>
+    /// <returns>Danh sách các tệp tin bị lỗi xác thực kèm lý do chi tiết.</returns>
     public async Task<IReadOnlyList<(string file, IntegrityResult result)>> VerifyAllAsync(CancellationToken ct = default)
     {
         var results = new List<(string, IntegrityResult)>();
@@ -191,10 +228,13 @@ public sealed class IntegritySigner
     }
 
     /// <summary>
-    /// Sign all constitution and identity files defined in the config.
+    /// Thực hiện ký hàng loạt các tệp tin cấu hình BootFiles (hiến pháp và danh tính) được định nghĩa trong BootConfig.
     /// </summary>
+    /// <param name="config">Cấu hình khởi chạy chứa các tệp boot.</param>
+    /// <param name="ct">Token hủy bỏ tác vụ.</param>
     public async Task SignBootFilesAsync(BootConfig config, CancellationToken ct = default)
     {
+#pragma warning disable CS0618
         foreach (var file in config.ConstitutionFiles.Concat(config.IdentityFiles))
         {
             var result = await SignAsync(file, ct);
@@ -203,6 +243,7 @@ public sealed class IntegritySigner
             else
                 _logger.LogWarning("Failed to sign {File}: {Error}", file, result.Error);
         }
+#pragma warning restore CS0618
     }
 
     private static string SanitizeFileName(string path)

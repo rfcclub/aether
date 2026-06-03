@@ -255,7 +255,7 @@ public class AetherSoulTests
         }
 
         var finalText = string.Concat(tokens);
-        Assert.Equal("file read successfully", finalText);
+        Assert.Equal("\n⚙️ [read] Calling...\n✅ [read] Completed.\n\nfile read successfully", finalText);
         Assert.Single(tools.Calls);
         Assert.Equal("read", tools.Calls[0].Name);
     }
@@ -436,7 +436,7 @@ public class AetherSoulTests
             tokens.Add(token);
         }
 
-        Assert.Equal("I need a path argument", string.Concat(tokens));
+        Assert.Equal("\n⚙️ [read] Calling...\n⚠️ [read] Validation failed.\n\nI need a path argument", string.Concat(tokens));
         // Tool was never executed because validation caught the error
         Assert.Empty(tools.Calls);
         // Second request should include the validation error tool result

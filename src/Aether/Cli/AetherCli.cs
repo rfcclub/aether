@@ -695,6 +695,7 @@ public sealed class AetherCli
 
     private static AgentConfig AgentConfigForDir(string agentDir)
     {
+#pragma warning disable CS0618
         return new AgentConfig
         {
             Boot = new BootConfig
@@ -703,6 +704,7 @@ public sealed class AetherCli
                 IdentityFiles = new() { "SOUL.md", "USER.md", "IDENTITY.md" }
             }
         };
+#pragma warning restore CS0618
     }
 
     private async Task ListBindingsAsync(string agentName, System.CommandLine.Invocation.InvocationContext context)

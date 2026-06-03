@@ -321,7 +321,7 @@ static async Task VerifySessionManagerAsync(string root)
         await sessions.AppendMessageAsync(session.Id, new SessionMessage("user", "hello", DateTimeOffset.UnixEpoch), CancellationToken.None);
         await sessions.AppendMessageAsync(session.Id, new SessionMessage("assistant", "hi", DateTimeOffset.UnixEpoch.AddSeconds(1)), CancellationToken.None);
 
-        var history = await sessions.GetHistoryAsync(session.Id, maxMessages: 10, CancellationToken.None);
+        var history = await sessions.GetHistoryAsync(session.Id, maxTokens: 4000, CancellationToken.None);
         Require(history.Count == 2, "SessionManager must return saved history.");
         Require(history[0].Role == "user", "SessionManager must preserve user message role.");
         Require(history[1].Content == "hi", "SessionManager must preserve assistant message content.");

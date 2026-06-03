@@ -1,66 +1,72 @@
 using Aether;
 using Aether.Agent;
 using Aether.Agents;
+using Aether.Channels;
+using Aether.Config;
 using Aether.Data;
 using Aether.Memory;
+using Aether.Plugins;
 using Aether.Providers;
+using Aether.Routing;
 using Aether.Sessions;
 using Aether.Skills;
 using Aether.Tooling;
+using Aether.Tui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Terminal.Gui;
-using ToolExecutor = Aether.Agent.ToolExecutor;
 
 var configuration = LoadConfiguration();
 var services = BuildServices(configuration);
 var provider = services.GetRequiredService<IServiceProvider>();
 
+var cts = new CancellationTokenSource();
+var profile = provider.GetRequiredService<AgentProfile>();
+var channel = (TuiChannel)provider.GetRequiredService<IChannel>();
+
+// Start background services (ChannelMessageProcessor, etc.)
+var hostedServices = provider.GetServices<IHostedService>();
+foreach (var hs in hostedServices)
+{
+    await hs.StartAsync(cts.Token);
+}
+
 Application.Init();
 
 var top = Application.Top;
-top.ColorScheme = Colors.Base;
 
-var groups = LoadGroups(configuration);
-var selectedGroup = groups.FirstOrDefault() ?? "main";
+// Athanor Fiery Theme
+var athanorScheme = new ColorScheme
+{
+    Normal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
+    HotNormal = new Terminal.Gui.Attribute(Color.BrightRed, Color.Black),
+    Focus = new Terminal.Gui.Attribute(Color.White, Color.DarkGray),
+    HotFocus = new Terminal.Gui.Attribute(Color.BrightRed, Color.DarkGray)
+};
+top.ColorScheme = athanorScheme;
 
 // ---- Scrollback state ----
 var userScrolledUp = false;
 var newMessagesAvailable = false;
 
 // ---- Build UI ----
-
-var win = new Window("Aether")
+var win = new Window($"Aether [{profile.Name}]")
 {
     X = 0, Y = 0,
     Width = Dim.Fill(),
-    Height = Dim.Fill()
+    Height = Dim.Fill(),
+    ColorScheme = athanorScheme
 };
 
-var leftPane = new FrameView("Groups")
+var chatPane = new FrameView($"Athanor Forge (Workspace: {profile.AgentDirectory})")
 {
-    X = 0, Y = 0,
-    Width = Dim.Percent(30),
-    Height = Dim.Fill(3)
-};
-
-var groupList = new ListView(groups)
-{
-    X = 0, Y = 0,
-    Width = Dim.Fill(),
-    Height = Dim.Fill()
-};
-groupList.SelectedItem = groups.IndexOf(selectedGroup);
-leftPane.Add(groupList);
-
-var rightPane = new FrameView("Chat")
-{
-    X = Pos.Right(leftPane),
+    X = 0,
     Y = 0,
     Width = Dim.Fill(),
-    Height = Dim.Fill(3)   // leave room for input + status
+    Height = Dim.Fill(3)
 };
 
 var chatView = new TextView
@@ -71,16 +77,18 @@ var chatView = new TextView
     Height = Dim.Fill(),
     ReadOnly = true,
     WordWrap = true,
-    CanFocus = true
+    CanFocus = true,
+    ColorScheme = athanorScheme
 };
-rightPane.Add(chatView);
+chatPane.Add(chatView);
 
 var inputFrame = new FrameView(null)
 {
     X = 0,
-    Y = Pos.Bottom(rightPane),
+    Y = Pos.Bottom(chatPane),
     Width = Dim.Fill(),
-    Height = 3
+    Height = 3,
+    ColorScheme = athanorScheme
 };
 
 var inputField = new TextField("")
@@ -91,7 +99,7 @@ var inputField = new TextField("")
     Height = 1
 };
 
-var sendButton = new Button("Send")
+var sendButton = new Button("Forge")
 {
     X = Pos.Right(inputField) + 1,
     Y = 0
@@ -108,49 +116,31 @@ inputFrame.Add(inputField);
 inputFrame.Add(sendButton);
 inputFrame.Add(statusLabel);
 
-win.Add(leftPane);
-win.Add(rightPane);
+win.Add(chatPane);
 win.Add(inputFrame);
 
 // ---- StatusBar ----
-// Use Key.Null for display-only items so they don't register global hotkeys.
-// Only the Quit item gets a real shortcut binding.
-var sbGroupItem = new StatusItem(Key.Null, "Group: main", null);
+var sbAgentItem = new StatusItem(Key.Null, $"Agent: {profile.Name}", null);
 var sbWrapItem = new StatusItem(Key.Null, "Wrap: ON", null);
 var sbScrollItem = new StatusItem(Key.Null, "", null);
 var sbQuitItem = new StatusItem(Key.Q | Key.CtrlMask, "~Ctrl+Q~ Quit", () => Application.RequestStop());
-var sbSwitchItem = new StatusItem(Key.Null, "~F5~ Switch", null);
 var sbWrapToggleItem = new StatusItem(Key.Null, "~Ctrl+W~ Wrap", null);
 
 var statusBar = new StatusBar(
-    new[] { sbGroupItem, sbWrapItem, sbScrollItem, sbQuitItem, sbSwitchItem, sbWrapToggleItem });
+    new[] { sbAgentItem, sbWrapItem, sbScrollItem, sbQuitItem, sbWrapToggleItem })
+{
+    ColorScheme = athanorScheme
+};
 
 top.Add(win);
 top.Add(statusBar);
 
 // ---- Helpers ----
 
-var cts = new CancellationTokenSource();
-var soul = provider.GetRequiredService<AetherSoul>();
+static int GetTotalLines(TextView view) => view.Lines;
 
-/// Returns the total number of lines in the chat buffer.
-static int GetTotalLines(TextView view)
-{
-    // v1.19: Lines is an int, the number of text rows in the buffer
-    return view.Lines;
-}
+static int GetVisibleLines(TextView view) => Math.Max(1, view.Frame.Height - 2);
 
-/// Approximate number of visible lines in the view area (excluding borders).
-static int GetVisibleLines(TextView view)
-{
-    // Frame.Height includes borders; subtract 2 for top/bottom border
-    var frameHeight = view.Frame.Height;
-    return Math.Max(1, frameHeight - 2);
-}
-
-/// Updates the scroll position indicator in the status bar.
-/// Shows "L{top+1}-{bottom}/{total}" or "↓ New" when there are unread messages
-/// below the current viewport.
 void UpdateScrollIndicator()
 {
     var total = GetTotalLines(chatView);
@@ -169,25 +159,19 @@ void UpdateScrollIndicator()
     Application.Refresh();
 }
 
-/// Updates all status bar labels (group, wrap, scroll position) in one call.
 void UpdateStatusBar()
 {
-    sbGroupItem.Title = $"Group: {selectedGroup}";
     sbWrapItem.Title = chatView.WordWrap ? "Wrap: ON" : "Wrap: OFF";
     UpdateScrollIndicator();
     Application.Refresh();
 }
 
-/// Appends text to the chat view. Auto-scrolls to the bottom unless the user
-/// has scrolled up manually. If the user is scrolled up and new content arrives,
-/// displays a "↓ New" indicator.
 void AppendChat(string text)
 {
     chatView.Text += text + Environment.NewLine;
 
     if (!userScrolledUp)
     {
-        // Auto-scroll to bottom
         var total = GetTotalLines(chatView);
         chatView.ScrollTo(total - 1, true);
         newMessagesAvailable = false;
@@ -200,7 +184,33 @@ void AppendChat(string text)
     UpdateStatusBar();
 }
 
-/// Scrolls the chat view up by the given number of lines.
+void AppendStreamingChunk(string chunk)
+{
+    chatView.Text += chunk;
+
+    if (!userScrolledUp)
+    {
+        var total = GetTotalLines(chatView);
+        chatView.ScrollTo(total - 1, true);
+    }
+    else
+    {
+        newMessagesAvailable = true;
+    }
+}
+
+void CompleteStreaming()
+{
+    chatView.Text += Environment.NewLine;
+    statusLabel.Text = "Ready";
+    if (!userScrolledUp)
+    {
+        var total = GetTotalLines(chatView);
+        chatView.ScrollTo(total - 1, true);
+    }
+    UpdateStatusBar();
+}
+
 void ScrollUp(int lines)
 {
     var target = Math.Max(0, chatView.TopRow - lines);
@@ -209,8 +219,6 @@ void ScrollUp(int lines)
     UpdateStatusBar();
 }
 
-/// Scrolls the chat view down by the given number of lines.
-/// If the bottom is reached, auto-scroll resumes.
 void ScrollDown(int lines)
 {
     var total = GetTotalLines(chatView);
@@ -219,7 +227,6 @@ void ScrollDown(int lines)
     var target = Math.Min(maxTop, chatView.TopRow + lines);
     chatView.ScrollTo(target, true);
 
-    // If user scrolled to end, resume auto-scroll
     if (chatView.TopRow >= maxTop)
     {
         userScrolledUp = false;
@@ -228,7 +235,6 @@ void ScrollDown(int lines)
     UpdateStatusBar();
 }
 
-/// Jumps to the bottom of the chat view and resumes auto-scroll.
 void ScrollToBottom()
 {
     var total = GetTotalLines(chatView);
@@ -238,71 +244,24 @@ void ScrollToBottom()
     UpdateStatusBar();
 }
 
-/// Sends a user message to AetherSoul and displays the response.
-async void SendMessage()
+void SendMessage()
 {
     var message = inputField.Text?.ToString()?.Trim();
     if (string.IsNullOrWhiteSpace(message)) return;
 
     inputField.Text = "";
-    AppendChat($"You: {message}");
-    statusLabel.Text = "Thinking...";
-    Application.Refresh();
-
-    try
-    {
-        var response = await Task.Run(
-            () => soul.ProcessAsync(selectedGroup, message, cts.Token),
-            cts.Token);
-
-        Application.MainLoop.Invoke(() =>
-        {
-            var lines = response.Content.Split(Environment.NewLine);
-            foreach (var line in lines)
-            {
-                AppendChat(line);
-            }
-            statusLabel.Text = "Ready";
-            UpdateStatusBar();
-            Application.Refresh();
-        });
-    }
-    catch (Exception ex)
-    {
-        Application.MainLoop.Invoke(() =>
-        {
-            AppendChat($"[Error: {ex.Message}]");
-            statusLabel.Text = "Error";
-            Application.Refresh();
-        });
-    }
-}
-
-/// Switches to the given group, clearing the chat view and resetting scroll state.
-void SwitchGroup(string group)
-{
-    selectedGroup = group;
-    rightPane.Title = $"Chat — {group}";
-    chatView.Text = $"Switched to group: {group}" + Environment.NewLine;
-    userScrolledUp = false;
-    newMessagesAvailable = false;
-    statusLabel.Text = $"Group: {group}";
+    AppendChat($"Thoor> {message}");
+    statusLabel.Text = "Forging...";
+    
+    // Output prefix for the agent before streaming begins
+    chatView.Text += $"{profile.Name}> ";
     UpdateStatusBar();
     Application.Refresh();
+
+    // Delegate routing and processing entirely to the ChannelMessageProcessor!
+    channel.ReceiveUserInput(message);
 }
 
-/// Cycles through available groups in order. Wraps around at the end.
-void CycleGroup()
-{
-    if (groups.Count == 0) return;
-
-    var currentIndex = groups.IndexOf(selectedGroup);
-    var nextIndex = (currentIndex + 1) % groups.Count;
-    SwitchGroup(groups[nextIndex]);
-    groupList.SelectedItem = nextIndex;
-}
-
-/// Toggles word wrap on the chat view.
 void ToggleWordWrap()
 {
     chatView.WordWrap = !chatView.WordWrap;
@@ -323,48 +282,26 @@ inputField.KeyPress += e =>
     }
 };
 
-groupList.SelectedItemChanged += args =>
-{
-    if (args.Item >= 0 && args.Item < groups.Count)
-    {
-        SwitchGroup(groups[args.Item]);
-    }
-};
-
-// ---- Global key handling ----
-// RootKeyEvent fires before any view gets the key event.
-// Returns true to suppress further processing.
 Application.RootKeyEvent += keyEvent =>
 {
     switch (keyEvent.Key)
     {
-        case Key.F5:
-            CycleGroup();
-            return true;
-
         case Key.W when keyEvent.IsCtrl:
             ToggleWordWrap();
             return true;
-
         case Key.PageUp:
             ScrollUp(GetVisibleLines(chatView));
             return true;
-
         case Key.PageDown:
             ScrollDown(GetVisibleLines(chatView));
             return true;
-
         case Key.End:
             ScrollToBottom();
             return true;
     }
-
-    // Let other keys propagate normally
     return false;
 };
 
-// ---- Mouse wheel scrolling ----
-// Forward mouse wheel events to scroll the chat view.
 Application.RootMouseEvent += mouseEvent =>
 {
     if (mouseEvent.Flags.HasFlag(MouseFlags.WheeledUp))
@@ -379,9 +316,15 @@ Application.RootMouseEvent += mouseEvent =>
     }
 };
 
+// ---- Connect Channel Callbacks to UI ----
+
+channel = (Aether.Tui.TuiChannel)provider.GetRequiredService<IChannel>();
+channel.GetType().GetProperty("OnMessageReceived")?.SetValue(channel, (Action<string>)(text => Application.MainLoop.Invoke(() => AppendChat(text))));
+channel.GetType().GetProperty("OnStreamingChunk")?.SetValue(channel, (Action<string>)(chunk => Application.MainLoop.Invoke(() => { AppendStreamingChunk(chunk); })));
+channel.GetType().GetProperty("OnStreamingComplete")?.SetValue(channel, (Action)(() => Application.MainLoop.Invoke(() => { CompleteStreaming(); })));
+
 // ---- Initial state ----
-rightPane.Title = $"Chat — {selectedGroup}";
-chatView.Text = $"Aether TUI ready. {groups.Count} group(s) loaded.{Environment.NewLine}";
+chatView.Text = $"Athanor TUI ready. Connected to Agent: {profile.Name}{Environment.NewLine}";
 UpdateStatusBar();
 
 Application.Run();
@@ -423,25 +366,49 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         Directory.CreateDirectory(groupsPath);
         return new FileMemory(groupsPath);
     });
+    
+    // Core Agent Services
     services.AddSingleton<ToolRegistry, ToolRegistry>();
-    services.AddSingleton<ToolExecutor, ToolExecutor>();
+    services.AddSingleton<Aether.Tooling.ToolExecutor, Aether.Tooling.ToolExecutor>();
     services.AddSingleton<SkillRegistry, SkillRegistry>();
     services.AddSingleton<SkillParser, SkillParser>();
     services.AddSingleton<SkillTrigger, SkillTrigger>();
     services.AddSingleton<SkillEvolution, SkillEvolution>();
 
-    services.AddSingleton<ILLMProvider>(provider =>
-    {
-        var config = provider.GetRequiredService<IConfiguration>();
-        var baseUrl = config["providers:openrouter:base_url"]
-                      ?? config["llm:base_url"]
-                      ?? "https://openrouter.ai/api/v1";
-        var apiKey = config["providers:openrouter:api_key"] ?? config["llm:api_key"] ?? "";
-        var model = config["providers:openrouter:model"] ?? config["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
+    // Dynamic provider registration matching Core Server
+    var aetherHomeDir = Environment.GetEnvironmentVariable("AETHER_HOME");
+    var aetherCfgDir = aetherHomeDir ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var bootstrapLoader = new ConfigLoader(
+        configuration, aetherCfgDir,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
+    var bootstrapConfig = bootstrapLoader.LoadAsync().Result;
 
-        var client = new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
-        return new OpenRouterProvider(client, new OpenRouterOptions(apiKey, model, baseUrl));
-    });
+    foreach (var (name, entry) in bootstrapConfig.Providers)
+    {
+        var providers = ProviderFactory.CreateAll(entry, name, null);
+        foreach (var p in providers)
+        {
+            var captured = p;
+            services.AddSingleton<ILLMProvider>(_ => captured);
+        }
+    }
+
+    if (bootstrapConfig.Providers.Count == 0)
+    {
+        services.AddSingleton<ILLMProvider>(provider =>
+        {
+            var config = provider.GetRequiredService<IConfiguration>();
+            var baseUrl = config["providers:openrouter:base_url"]
+                          ?? config["llm:base_url"]
+                          ?? "https://openrouter.ai/api/v1";
+            var apiKey = config["providers:openrouter:api_key"] ?? config["llm:api_key"] ?? "";
+            var model = config["providers:openrouter:model"] ?? config["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
+
+            var client = new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
+            return new OpenRouterProvider(client, new OpenRouterOptions(apiKey, model, baseUrl));
+        });
+    }
 
     services.AddSingleton<AgentConfig>(provider =>
     {
@@ -463,36 +430,80 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     {
         var config = provider.GetRequiredService<AgentConfig>();
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var agentName = configuration["agent:name"] ?? "aether";
+        var agentName = configuration["agent:name"] ?? "maria";
         var agentsRoot = configuration["agent:root"] ?? ".";
         return new AgentProfile(agentName, agentsRoot, config, new AgentModelConfig());
     });
 
     services.AddSingleton<AetherSoul>(provider =>
     {
-        var llm = provider.GetRequiredService<ILLMProvider>();
-        var tools = provider.GetRequiredService<ToolExecutor>();
+        var llm = provider.GetRequiredService<ProviderRouter>();
+        var tools = provider.GetRequiredService<Aether.Tooling.ToolExecutor>();
+        var registry = provider.GetRequiredService<ToolRegistry>();
         var profile = provider.GetRequiredService<AgentProfile>();
-        return new AetherSoul(llm, tools, profile);
+        var logger = provider.GetRequiredService<ILogger<AetherSoul>>();
+        var sqliteMemory = provider.GetRequiredService<SqliteMemorySystem>();
+        var sessionManager = provider.GetRequiredService<SessionManager>();
+        return new AetherSoul(llm, tools, registry, profile, logger, null, sqliteMemory, sessionManager);
+    });
+    
+    // Database Memory System
+    services.AddSingleton<SqliteMemorySystem>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var profile = provider.GetRequiredService<AgentProfile>();
+        var databasePath = configuration["database:path"] ?? "store/aether.db";
+        var memoryFilePath = Path.Combine(profile.AgentDirectory, "MEMORY.md");
+        var logger = provider.GetRequiredService<ILogger<SqliteMemorySystem>>();
+        return new SqliteMemorySystem(databasePath, memoryFilePath, logger, null);
     });
 
-    services.AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance);
+    // ---- CHANNEL INTEGRATION SERVICES ----
+    services.AddSingleton<ConfigLoader>(provider =>
+    {
+        var logger = provider.GetRequiredService<ILogger<ConfigLoader>>();
+        return new ConfigLoader(configuration, ".", logger, null);
+    });
+    
+    services.AddSingleton<ChannelAccess>(provider =>
+    {
+        var logger = provider.GetRequiredService<ILogger<ChannelAccess>>();
+        return new ChannelAccess("tui", ".", logger);
+    });
+    
+    services.AddSingleton<ChannelMessageQueue>();
+    services.AddSingleton<MessageRouter>(provider =>
+    {
+        var configLoader = provider.GetRequiredService<ConfigLoader>();
+        var logger = provider.GetRequiredService<ILogger<MessageRouter>>();
+        var db = provider.GetRequiredService<AetherDb>();
+        return new MessageRouter(db, provider.GetRequiredService<ChannelMessageQueue>());
+    });
+    services.AddSingleton<SlashCommandHandler>();
+    
+    services.AddSingleton<ProviderRoutingOptions>(new ProviderRoutingOptions { });
+    
+    services.AddSingleton<IReadOnlyList<ILLMProvider>>(provider => 
+        provider.GetServices<ILLMProvider>().ToList());
+
+    services.AddSingleton<ProviderRouter>();
+
+    // The TUI Channel itself
+    services.AddSingleton<IChannel>(provider =>
+    {
+        return new Aether.Tui.TuiChannel(
+            text => {}, 
+            chunk => {}, 
+            () => {}
+        );
+    });
+
+    // The core processor that connects IChannel to AetherSoul
+    services.AddHostedService<ChannelMessageProcessor>();
+
+    services.AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Warning));
 
     return services.BuildServiceProvider();
-}
-
-static List<string> LoadGroups(IConfiguration configuration)
-{
-    var groupsPath = configuration["groups:path"] ?? "groups";
-    if (!Directory.Exists(groupsPath))
-        return new List<string> { "main" };
-
-    return Directory.GetDirectories(groupsPath)
-        .Select(Path.GetFileName)
-        .Where(name => name is not null)
-        .Cast<string>()
-        .OrderBy(n => n)
-        .ToList();
 }
 
 static string ResolvePath(string path)

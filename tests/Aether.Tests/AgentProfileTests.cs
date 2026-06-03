@@ -1,4 +1,5 @@
 using Aether.Agents;
+using Aether.Agents;
 using Aether.Config;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -31,7 +32,7 @@ public sealed class AgentProfileTests : IDisposable
         File.WriteAllText(Path.Combine(_agentDir, "USER.md"), "User is Thoor.");
 
         var config = new AgentConfig { StartupFiles = new() { "SOUL.md", "USER.md" } };
-        var profile = new AgentProfile("maria", _agentDir, config);
+        var profile = new AgentProfile("maria", _agentDir, config, new AgentModelConfig());
 
         var persona = await profile.LoadPersonaAsync();
 
@@ -46,7 +47,7 @@ public sealed class AgentProfileTests : IDisposable
     public async Task LoadPersonaAsync_SkipsMissingOptionalFiles()
     {
         var config = new AgentConfig { StartupFiles = new() { "SOUL.md", "NONEXISTENT.md" } };
-        var profile = new AgentProfile("maria", _agentDir, config);
+        var profile = new AgentProfile("maria", _agentDir, config, new AgentModelConfig());
 
         var persona = await profile.LoadPersonaAsync();
 
@@ -61,7 +62,7 @@ public sealed class AgentProfileTests : IDisposable
         File.WriteAllText(Path.Combine(_agentDir, "memory", $"{today}.md"), "Today's notes.");
         File.WriteAllText(Path.Combine(_agentDir, "memory", $"{yesterday}.md"), "Yesterday's notes.");
 
-        var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
+        var profile = new AgentProfile("maria", _agentDir, new AgentConfig(), new AgentModelConfig());
 
         var memory = await profile.LoadDailyMemoryAsync();
 
@@ -72,7 +73,7 @@ public sealed class AgentProfileTests : IDisposable
     [Fact]
     public async Task LoadFileAsync_ReturnsNullForMissingFile()
     {
-        var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
+        var profile = new AgentProfile("maria", _agentDir, new AgentConfig(), new AgentModelConfig());
 
         var result = await profile.LoadFileAsync("NONEXISTENT.md");
 
@@ -82,7 +83,7 @@ public sealed class AgentProfileTests : IDisposable
     [Fact]
     public void Name_ReturnsConfiguredName()
     {
-        var profile = new AgentProfile("maria", _agentDir, new AgentConfig());
+        var profile = new AgentProfile("maria", _agentDir, new AgentConfig(), new AgentModelConfig());
 
         Assert.Equal("maria", profile.Name);
     }

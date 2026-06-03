@@ -1,5 +1,6 @@
 using Aether.Agents;
 using Aether.Agent;
+using Aether.Config;
 using Aether.Providers;
 using Aether.Skills;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,7 +27,7 @@ public sealed class AgentHeartbeatServiceTests : IDisposable
     public async Task StartAsync_DoesNotThrow_WithNullHeartbeatFile()
     {
         var config = new AgentConfig { HeartbeatFile = null };
-        var profile = new AgentProfile("maria", _agentDir, config);
+        var profile = new AgentProfile("maria", _agentDir, config, new AgentModelConfig());
         var soul = CreateSoul();
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHeartbeatService>();
 
@@ -41,7 +42,7 @@ public sealed class AgentHeartbeatServiceTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_agentDir, "HEARTBEAT.md"), "- [x] Check inbox\nHEARTBEAT_OK");
         var config = new AgentConfig { HeartbeatFile = "HEARTBEAT.md" };
-        var profile = new AgentProfile("maria", _agentDir, config);
+        var profile = new AgentProfile("maria", _agentDir, config, new AgentModelConfig());
         var soul = CreateSoul("HEARTBEAT_OK");
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHeartbeatService>();
 

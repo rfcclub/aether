@@ -5,6 +5,8 @@ using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Aether.Providers;
+using Aether.Sessions;
 using Aether.Ui;
 using Microsoft.Extensions.Logging;
 
@@ -21,6 +23,10 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 {
     private readonly int _port;
     private readonly ILogger<WebSocketChannel> _logger;
+    private readonly ProviderRouter? _providerRouter;
+    private readonly SlashCommandHandler? _slashCommandHandler;
+    private readonly SessionManager? _sessionManager;
+    private readonly IServiceProvider? _services;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
@@ -47,17 +53,29 @@ public sealed class WebSocketChannel : IChannel, IDisposable
     public bool IsConnected => _listener is not null;
 
     public event EventHandler<InboundMessage>? OnMessage;
+#pragma warning disable CS0067
     public event Func<string, Ui.UiCallback, Task<Ui.UiDocument?>>? OnUiCallback;
+#pragma warning restore CS0067
 
     /// <summary>
     /// The actual port the listener is bound to. Useful when passing port 0 for tests.
     /// </summary>
     public int BoundPort { get; private set; }
 
-    public WebSocketChannel(int port, ILogger<WebSocketChannel> logger)
+    public WebSocketChannel(
+        int port,
+        ILogger<WebSocketChannel> logger,
+        ProviderRouter? providerRouter = null,
+        SlashCommandHandler? slashCommandHandler = null,
+        SessionManager? sessionManager = null,
+        IServiceProvider? services = null)
     {
         _port = port;
         _logger = logger;
+        _providerRouter = providerRouter;
+        _slashCommandHandler = slashCommandHandler;
+        _sessionManager = sessionManager;
+        _services = services;
     }
 
     public Task ConnectAsync(CancellationToken ct)
@@ -110,9 +128,26 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         _logger.LogInformation("WebSocket channel disconnected");
     }
 
+    private WebSocketConnection? GetConnection(string chatId)
+    {
+        if (_connections.TryGetValue(chatId, out var conn))
+            return conn;
+
+        var parts = chatId.Split(':');
+        if (parts.Length > 2)
+        {
+            var baseChatId = $"{parts[0]}:{parts[1]}";
+            if (_connections.TryGetValue(baseChatId, out conn))
+                return conn;
+        }
+
+        return null;
+    }
+
     public async Task SendMessageAsync(string chatId, string text, CancellationToken ct)
     {
-        if (!_connections.TryGetValue(chatId, out var conn))
+        var conn = GetConnection(chatId);
+        if (conn is null)
         {
             _logger.LogWarning("Cannot send message to unknown chat_id: {ChatId}", chatId);
             return;
@@ -130,7 +165,8 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
     public async Task SetTypingAsync(string chatId, bool isTyping, CancellationToken ct)
     {
-        if (!_connections.TryGetValue(chatId, out var conn))
+        var conn = GetConnection(chatId);
+        if (conn is null)
             return;
 
         var payload = JsonSerializer.Serialize(new
@@ -144,7 +180,8 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
     public async Task SendStreamingChunkAsync(string chatId, string chunk, int chunkIndex, CancellationToken ct)
     {
-        if (!_connections.TryGetValue(chatId, out var conn))
+        var conn = GetConnection(chatId);
+        if (conn is null)
             return;
 
         var payload = JsonSerializer.Serialize(new
@@ -159,7 +196,8 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
     public async Task SendStreamingCompleteAsync(string chatId, string fullText, CancellationToken ct)
     {
-        if (!_connections.TryGetValue(chatId, out var conn))
+        var conn = GetConnection(chatId);
+        if (conn is null)
             return;
 
         var payload = JsonSerializer.Serialize(new
@@ -175,7 +213,7 @@ public sealed class WebSocketChannel : IChannel, IDisposable
     public bool OwnsChatId(string chatId)
     {
         return chatId.StartsWith("websocket:", StringComparison.Ordinal)
-            && _connections.ContainsKey(chatId);
+            && GetConnection(chatId) is not null;
     }
 
     /// <summary>
@@ -465,6 +503,30 @@ public sealed class WebSocketChannel : IChannel, IDisposable
                     await SendJsonAsync(conn, pong, ct);
                     break;
 
+                case "cancel":
+                    var cancelGroup = root.TryGetProperty("group", out var cancelGroupProp)
+                        ? cancelGroupProp.GetString() ?? "main"
+                        : "main";
+                    var sessionKey = $"{conn.ChatId}:{cancelGroup}";
+                    if (SessionCancellationRegistry.TryGet(sessionKey, out var activeCts) && activeCts is not null)
+                    {
+                        activeCts.Cancel();
+                        _logger.LogInformation("Cancelled active generation for session: {SessionKey}", sessionKey);
+                    }
+                    break;
+
+                case "list_models":
+                    await HandleListModelsAsync(conn, ct);
+                    break;
+
+                case "get_history":
+                    await HandleGetHistoryAsync(conn, root, ct);
+                    break;
+
+                case "command":
+                    await HandleCommandAsync(conn, root, ct);
+                    break;
+
                 default:
                     await SendErrorAsync(conn, $"Unknown message type: '{type}'", ct);
                     break;
@@ -495,16 +557,157 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         var inbound = new InboundMessage(
             Id: messageId,
             ChannelName: "websocket",
-            ChatId: conn.ChatId,
+            ChatId: $"{conn.ChatId}:{group}",
             SenderId: $"ws:{conn.RemoteEndPoint}",
             Text: text,
             Timestamp: DateTimeOffset.UtcNow);
 
         _logger.LogDebug(
             "WebSocket message from {ChatId}: {Text} (group={Group})",
-            conn.ChatId, text, group);
+            inbound.ChatId, text, group);
 
         OnMessage?.Invoke(this, inbound);
+    }
+
+    private async Task HandleListModelsAsync(WebSocketConnection conn, CancellationToken ct)
+    {
+        if (_providerRouter is null)
+        {
+            await SendErrorAsync(conn, "list_models not available: ProviderRouter not injected", ct);
+            return;
+        }
+
+        var available = _providerRouter.GetAvailableModels();
+        var current = _providerRouter.EffectiveModel ?? "none";
+
+        // Group by provider name
+        var grouped = available
+            .GroupBy(m => m.Provider)
+            .Select(g => new
+            {
+                name = g.Key,
+                models = g.Select(m => m.Model).ToList()
+            })
+            .ToList();
+
+        // Check for ThinkEffort property via reflection (may not exist on all builds)
+        string? thinkEffort = null;
+        var thinkProp = typeof(ProviderRouter).GetProperty("ThinkEffort");
+        if (thinkProp is not null)
+            thinkEffort = thinkProp.GetValue(_providerRouter)?.ToString();
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "models",
+            current,
+            think_effort = thinkEffort,
+            providers = grouped
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("list_models response sent to {ChatId}: {Count} providers",
+            conn.ChatId, grouped.Count);
+    }
+
+    private async Task HandleGetHistoryAsync(
+        WebSocketConnection conn, JsonElement root, CancellationToken ct)
+    {
+        if (_sessionManager is null)
+        {
+            await SendErrorAsync(conn, "get_history not available: SessionManager not injected", ct);
+            return;
+        }
+
+        var group = root.TryGetProperty("group", out var groupProp)
+            ? groupProp.GetString() ?? "main"
+            : "main";
+
+        var limit = root.TryGetProperty("limit", out var limitProp)
+            ? limitProp.GetInt32()
+            : 50;
+
+        var session = await _sessionManager.GetOrCreateSessionAsync(group, ct);
+        var history = await _sessionManager.GetHistoryAsync(session.Id, maxTokens: 20000, ct);
+
+        var messages = history
+            .Take(limit)
+            .Select(m => new
+            {
+                role = m.Role.ToLowerInvariant(),
+                content = m.Content,
+                timestamp = m.Timestamp.ToString("o")
+            })
+            .ToList();
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "history",
+            messages
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("get_history for group={Group}: {Count} messages sent to {ChatId}",
+            group, messages.Count, conn.ChatId);
+    }
+
+    private async Task HandleCommandAsync(
+        WebSocketConnection conn, JsonElement root, CancellationToken ct)
+    {
+        if (_slashCommandHandler is null)
+        {
+            await SendErrorAsync(conn, "command not available: SlashCommandHandler not injected", ct);
+            return;
+        }
+
+        if (!root.TryGetProperty("text", out var textProp)
+            || string.IsNullOrWhiteSpace(textProp.GetString()))
+        {
+            await SendErrorAsync(conn, "Missing 'text' field in command", ct);
+            return;
+        }
+
+        var text = textProp.GetString()!;
+        var group = root.TryGetProperty("group", out var groupProp)
+            ? groupProp.GetString() ?? "main"
+            : "main";
+
+        // Resolve workspace path for the group (empty string fallback = root)
+        var workspacePath = string.Empty;
+
+        var ctx = new SlashCommandContext(
+            Text: text,
+            AgentName: group,
+            WorkspacePath: workspacePath,
+            Services: _services ?? new EmptyServiceProvider());
+
+        SlashCommandResult? result;
+        try
+        {
+            result = await _slashCommandHandler.HandleAsync(ctx, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SlashCommandHandler threw for command: {Text}", text);
+            await SendErrorAsync(conn, $"Command error: {ex.Message}", ct);
+            return;
+        }
+
+        var responseText = result?.Text ?? "Unknown command";
+        var messageId = Guid.NewGuid().ToString("N");
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "message",
+            text = responseText,
+            message_id = messageId
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("command '{Text}' for group={Group} sent to {ChatId}",
+            text, group, conn.ChatId);
     }
 
     private async Task SendErrorAsync(WebSocketConnection conn, string errorText, CancellationToken ct)
@@ -575,4 +778,12 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         NetworkStream Stream,
         TcpClient TcpClient,
         IPEndPoint? RemoteEndPoint);
+
+    /// <summary>
+    /// Minimal IServiceProvider fallback when none is injected (e.g. in unit tests).
+    /// </summary>
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
+    }
 }

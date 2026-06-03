@@ -1,5 +1,6 @@
 using Aether.Agent;
 using Aether.Agents;
+using Aether.Config;
 using Aether.Providers;
 using Aether.Tooling;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,6 +40,6 @@ public class AgentProfileStressTests
         var dir = Path.Combine(Path.GetTempPath(), "aether_test_" + name);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "IDENTITY.md"), identity);
-        return new AgentProfile(name, dir, new AgentConfig());
+        return new AgentProfile(name, dir, new AgentConfig(), new AgentModelConfig());
     }
 }

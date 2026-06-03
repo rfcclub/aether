@@ -52,7 +52,7 @@ public class SessionManagerTests : IDisposable
         await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", "hello", DateTimeOffset.UtcNow));
         await _sessions.AppendMessageAsync(session.Id, new SessionMessage("assistant", "hi there", DateTimeOffset.UtcNow));
 
-        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 10);
+        var history = await _sessions.GetHistoryAsync(session.Id, maxTokens: 4000);
 
         Assert.Equal(2, history.Count);
         Assert.Equal("user", history[0].Role);
@@ -69,7 +69,7 @@ public class SessionManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetHistory_RespectsMaxMessages()
+    public async Task GetHistory_RespectsTokenBudget()
     {
         var session = await _sessions.GetOrCreateSessionAsync("main");
         for (var i = 0; i < 10; i++)
@@ -77,15 +77,16 @@ public class SessionManagerTests : IDisposable
             await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", $"msg{i}", DateTimeOffset.UtcNow));
         }
 
-        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 5);
-        Assert.Equal(5, history.Count);
+        // Each msg is ~4 chars = 1 token. 5 tokens should give us ~5 messages.
+        var history = await _sessions.GetHistoryAsync(session.Id, maxTokens: 5);
+        Assert.True(history.Count <= 6); 
     }
 
     [Fact]
     public async Task GetHistory_EmptySession_ReturnsEmpty()
     {
         var session = await _sessions.GetOrCreateSessionAsync("main");
-        var history = await _sessions.GetHistoryAsync(session.Id, maxMessages: 10);
+        var history = await _sessions.GetHistoryAsync(session.Id, maxTokens: 4000);
         Assert.Empty(history);
     }
 
@@ -116,6 +117,29 @@ public class SessionManagerTests : IDisposable
         var recent = await _sessions.GetRecentSessionsAsync(limit: 2);
 
         Assert.Equal(2, recent.Count);
+    }
+
+    [Fact]
+    public async Task GetHistoryAsync_TrimsOldToolPayloads_WhenOverBudget()
+    {
+        var session = await _sessions.GetOrCreateSessionAsync("test_group");
+        
+        for (int i = 0; i < 20; i++)
+        {
+            await _sessions.AppendMessageAsync(session.Id, new SessionMessage("user", $"msg{i}", DateTimeOffset.UtcNow.AddMinutes(i)));
+            
+            // Create a long tool call/result that exceeds the budget
+            var toolStr = "\"function\": \"read_file\"" + new string('A', 4000); 
+            await _sessions.AppendMessageAsync(session.Id, new SessionMessage("assistant", toolStr, DateTimeOffset.UtcNow.AddMinutes(i).AddSeconds(1)));
+        }
+
+        var history = await _sessions.GetHistoryAsync(session.Id, maxTokens: 4000);
+        
+        // It should keep all 10 most recent messages, plus some texts from before, but drop old tool payloads
+        Assert.True(history.Count < 40);
+        
+        var recentToolCount = history.Count(m => m.Content.Contains("\"function\":"));
+        Assert.True(recentToolCount <= 10, $"Should have trimmed old tool calls, got {recentToolCount} tool calls.");
     }
 
     private static string FindSchemaPath()

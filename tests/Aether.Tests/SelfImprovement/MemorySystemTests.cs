@@ -32,12 +32,14 @@ public class MemorySystemTests : IDisposable
 
     private static string FindSchemaPath()
     {
-        var cwd = Environment.CurrentDirectory;
-        for (var i = 0; i < 6; i++)
+        var candidates = new[]
         {
-            var candidate = Path.Combine(cwd, "src", "Aether", "Data", "Schema.sql");
-            if (File.Exists(candidate)) return candidate;
-            cwd = Path.GetDirectoryName(cwd) ?? cwd;
+            Path.Combine(AppContext.BaseDirectory, "Data", "Schema.sql"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Aether", "Data", "Schema.sql"),
+        };
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path)) return Path.GetFullPath(path);
         }
         throw new FileNotFoundException("Cannot find Schema.sql");
     }

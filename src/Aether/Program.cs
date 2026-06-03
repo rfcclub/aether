@@ -551,6 +551,13 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<MemorySearchTool>();
     builder.Services.AddSingleton<SessionStatusTool>();
     builder.Services.AddSingleton<SessionResetTool>();
+    builder.Services.AddSingleton<MkdirTool>();
+    builder.Services.AddSingleton<DeleteFileTool>();
+    builder.Services.AddSingleton<MoveFileTool>();
+    builder.Services.AddSingleton<GitStatusTool>();
+    builder.Services.AddSingleton<GitDiffTool>();
+    builder.Services.AddSingleton<RunCommandTool>();
+    builder.Services.AddSingleton<ApplyPatchTool>();
 
     // Register all IToolImplementation instances for tool-code bridge
     builder.Services.AddSingleton<IEnumerable<IToolImplementation>>(provider =>
@@ -570,6 +577,13 @@ static async Task RunServeAsync(bool traceStartup)
             provider.GetRequiredService<MemorySearchTool>(),
             provider.GetRequiredService<SessionStatusTool>(),
             provider.GetRequiredService<SessionResetTool>(),
+            provider.GetRequiredService<MkdirTool>(),
+            provider.GetRequiredService<DeleteFileTool>(),
+            provider.GetRequiredService<MoveFileTool>(),
+            provider.GetRequiredService<GitStatusTool>(),
+            provider.GetRequiredService<GitDiffTool>(),
+            provider.GetRequiredService<RunCommandTool>(),
+            provider.GetRequiredService<ApplyPatchTool>(),
         };
     });
 
@@ -810,13 +824,6 @@ static async Task RunServeAsync(bool traceStartup)
         return config.Boot ?? new BootConfig();
     });
 
-    builder.Services.AddSingleton<BootContract>(provider =>
-    {
-        var profile = provider.GetRequiredService<AgentProfile>();
-        var bootConfig = provider.GetRequiredService<BootConfig>();
-        return new BootContract(profile.AgentDirectory, bootConfig);
-    });
-
     builder.Services.AddSingleton<IntegritySigner>(provider =>
     {
         var profile = provider.GetRequiredService<AgentProfile>();
@@ -835,12 +842,6 @@ static async Task RunServeAsync(bool traceStartup)
     {
         var bootConfig = provider.GetRequiredService<BootConfig>();
         return new LifecycleStateMachine(bootConfig);
-    });
-
-    builder.Services.AddSingleton<WriteValidator>(provider =>
-    {
-        var bootConfig = provider.GetRequiredService<BootConfig>();
-        return new WriteValidator(bootConfig);
     });
 
     builder.Services.AddSingleton<ContextAssembler>(provider =>
@@ -925,7 +926,13 @@ static async Task RunServeAsync(bool traceStartup)
         var configuration = provider.GetRequiredService<IConfiguration>();
         var port = configuration.GetValue("channels:websocket:port", 5099);
         var logger = provider.GetRequiredService<ILogger<WebSocketChannel>>();
-        return new WebSocketChannel(port, logger);
+        return new WebSocketChannel(
+            port,
+            logger,
+            provider.GetRequiredService<ProviderRouter>(),
+            provider.GetRequiredService<SlashCommandHandler>(),
+            provider.GetRequiredService<SessionManager>(),
+            provider);
     });
     builder.Services.AddHostedService<WebSocketChannelService>();
 
@@ -937,6 +944,9 @@ static async Task RunServeAsync(bool traceStartup)
         var logger = provider.GetRequiredService<ILogger<ChannelAccess>>();
         return new ChannelAccess("telegram", aetherDir, logger);
     });
+
+    builder.Services.AddSingleton<SessionCompactionService>();
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<SessionCompactionService>());
 
     builder.Services.AddHostedService<ChannelMessageProcessor>();
 
@@ -972,6 +982,7 @@ static async Task RunServeAsync(bool traceStartup)
                     else
                         logger.LogInformation("Integrity: {File} modified — re-signing ({Error}).", file, result.Error);
                 }
+#pragma warning disable CS0618
                 await integritySigner.SignBootFilesAsync(bootConfig);
                 logger.LogInformation("Boot files re-signed ({Count} files).",
                     bootConfig.ConstitutionFiles.Count + bootConfig.IdentityFiles.Count);
@@ -982,6 +993,7 @@ static async Task RunServeAsync(bool traceStartup)
                 logger.LogInformation("Boot file integrity verified ({Count} signed, 0 failures).",
                     bootConfig.ConstitutionFiles.Count + bootConfig.IdentityFiles.Count);
             }
+#pragma warning restore CS0618
         }
         catch (Exception ex)
         {
