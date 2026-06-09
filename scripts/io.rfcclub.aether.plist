@@ -24,9 +24,7 @@
     <key>WorkingDirectory</key>
     <string>/Users/thoor/.aether</string>
 
-    <!-- Run as user thoor, not root -->
-    <key>UserName</key>
-    <string>thoor</string>
+
 
     <!-- Auto-start on login and keep alive -->
     <key>RunAtLoad</key>
