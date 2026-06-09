@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.rfcclub.aether</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/lib/aether/Aether</string>
+        <string>serve</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AETHER_HOME</key>
+        <string>/Users/thoor/.aether</string>
+        <key>DOTNET_ENVIRONMENT</key>
+        <string>Production</string>
+        <key>HOME</key>
+        <string>/Users/thoor</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/thoor/.aether</string>
+
+    <!-- Run as user thoor, not root -->
+    <key>UserName</key>
+    <string>thoor</string>
+
+    <!-- Auto-start on login and keep alive -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle rapid restarts (10s cooldown) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/thoor/.aether/logs/aether.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/thoor/.aether/logs/aether.stderr.log</string>
+
+    <!-- Process priority: default -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
