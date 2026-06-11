@@ -885,37 +885,90 @@ fn highlight_code_line(text: &str) -> Line<'static> {
     let comment_style = Style::default().fg(Color::Rgb(100, 100, 100)).add_modifier(Modifier::ITALIC);
     let default_style = Style::default().fg(Color::Rgb(220, 220, 220));
 
-    // Handle comments first
-    let comment_pos = text.find("//").or_else(|| text.find('#'));
-    if let Some(pos) = comment_pos {
-        let code_part = &text[..pos];
-        let comment_part = &text[pos..];
-
-        let mut code_line = highlight_code_line(code_part);
-        code_line.spans.push(Span::styled(comment_part.to_string(), comment_style));
-        return code_line;
-    }
-
     let mut chars = text.chars().peekable();
 
     while let Some(&c) = chars.peek() {
+        if c == '/' {
+            // Check for line comment //
+            let mut temp_chars = chars.clone();
+            temp_chars.next(); // consume '/'
+            if temp_chars.peek() == Some(&'/') {
+                // Yes, it is a comment, consume the rest of the line
+                let mut comment = String::new();
+                while let Some(cc) = chars.next() {
+                    comment.push(cc);
+                }
+                spans.push(Span::styled(comment, comment_style));
+                break;
+            }
+        }
+        
+        if c == '#' {
+            // Line comment # (for Python/Shell scripts)
+            let mut comment = String::new();
+            while let Some(cc) = chars.next() {
+                comment.push(cc);
+            }
+            spans.push(Span::styled(comment, comment_style));
+            break;
+        }
+
         if c == '"' {
             // String literal
             let mut string_lit = String::new();
             string_lit.push(chars.next().unwrap()); // consume opening quote
-            while let Some(&sc) = chars.peek() {
-                string_lit.push(chars.next().unwrap());
-                if sc == '"' {
+            let mut escaped = false;
+            while let Some(_) = chars.peek() {
+                let next_char = chars.next().unwrap();
+                string_lit.push(next_char);
+                if escaped {
+                    escaped = false;
+                } else if next_char == '\\' {
+                    escaped = true;
+                } else if next_char == '"' {
                     break;
                 }
             }
             spans.push(Span::styled(string_lit, string_style));
         } else if c.is_ascii_digit() {
-            // Number literal (supports hex 0x..., binary 0b..., floats, integers)
+            // Number literal
             let mut num_lit = String::new();
+            num_lit.push(chars.next().unwrap()); // consume first digit
+
+            // Check if hex (0x/0X), binary (0b/0B), octal (0o/0O)
+            let mut is_hex = false;
+            if num_lit == "0" {
+                if let Some(&nc) = chars.peek() {
+                    if nc == 'x' || nc == 'X' {
+                        is_hex = true;
+                        num_lit.push(chars.next().unwrap());
+                    } else if nc == 'b' || nc == 'B' || nc == 'o' || nc == 'O' {
+                        num_lit.push(chars.next().unwrap());
+                    }
+                }
+            }
+
             while let Some(&nc) = chars.peek() {
-                if nc.is_ascii_alphanumeric() || nc == '.' || nc == '_' {
+                if is_hex && nc.is_ascii_hexdigit() {
                     num_lit.push(chars.next().unwrap());
+                } else if !is_hex && nc.is_ascii_digit() {
+                    num_lit.push(chars.next().unwrap());
+                } else if nc == '_' {
+                    num_lit.push(chars.next().unwrap());
+                } else if nc == '.' {
+                    // Peek ahead to see if it is a float digit or a method call
+                    let mut double_peek = chars.clone();
+                    double_peek.next(); // consume '.'
+                    if let Some(&dpc) = double_peek.peek() {
+                        if dpc.is_ascii_digit() {
+                            num_lit.push(chars.next().unwrap()); // consume '.'
+                            num_lit.push(chars.next().unwrap()); // consume digit
+                        } else {
+                            break; // Method call, stop parsing number
+                        }
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
