@@ -888,22 +888,23 @@ fn highlight_code_line(text: &str) -> Line<'static> {
     let mut chars = text.chars().peekable();
 
     while let Some(&c) = chars.peek() {
-        if c == '/' {
-            // Check for line comment //
-            let mut temp_chars = chars.clone();
-            temp_chars.next(); // consume '/'
-            if temp_chars.peek() == Some(&'/') {
-                // Yes, it is a comment, consume the rest of the line
-                let mut comment = String::new();
-                while let Some(cc) = chars.next() {
-                    comment.push(cc);
-                }
-                spans.push(Span::styled(comment, comment_style));
-                break;
+        // Check for line comment //
+        let is_slash_comment = if c == '/' {
+            let mut temp = chars.clone();
+            temp.next(); // consume '/'
+            temp.peek() == Some(&'/')
+        } else {
+            false
+        };
+
+        if is_slash_comment {
+            let mut comment = String::new();
+            while let Some(cc) = chars.next() {
+                comment.push(cc);
             }
-        }
-        
-        if c == '#' {
+            spans.push(Span::styled(comment, comment_style));
+            break;
+        } else if c == '#' {
             // Line comment # (for Python/Shell scripts)
             let mut comment = String::new();
             while let Some(cc) = chars.next() {
@@ -911,14 +912,12 @@ fn highlight_code_line(text: &str) -> Line<'static> {
             }
             spans.push(Span::styled(comment, comment_style));
             break;
-        }
-
-        if c == '"' {
+        } else if c == '"' {
             // String literal
             let mut string_lit = String::new();
             string_lit.push(chars.next().unwrap()); // consume opening quote
             let mut escaped = false;
-            while let Some(_) = chars.peek() {
+            while let Some(&_) = chars.peek() {
                 let next_char = chars.next().unwrap();
                 string_lit.push(next_char);
                 if escaped {
@@ -991,19 +990,79 @@ fn highlight_code_line(text: &str) -> Line<'static> {
                 "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" | 
                 "static" | "void" | "string" | "int" | "var" | "new" | "get" | "set" => keyword_style,
 
-                // Types
-                "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" => type_style,
+                // Types & Primitives
+                "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" |
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "f32" | "f64" | "bool" | "char" |
+                "double" | "float" | "long" | "object" => type_style,
 
                 _ => default_style,
             };
             spans.push(Span::styled(ident, style));
         } else {
-            // Punctuation, operators, spaces
+            // Punctuation, operators, spaces (grouped to optimize allocations)
             let mut other = String::new();
-            other.push(chars.next().unwrap());
+            while let Some(&oc) = chars.peek() {
+                if oc == '/' {
+                    let mut temp = chars.clone();
+                    temp.next();
+                    if temp.peek() == Some(&'/') {
+                        break;
+                    }
+                }
+                if oc == '#' || oc == '"' || oc.is_ascii_digit() || oc.is_alphanumeric() || oc == '_' {
+                    break;
+                }
+                other.push(chars.next().unwrap());
+            }
             spans.push(Span::styled(other, default_style));
         }
     }
 
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_highlight_code_line() {
+        // Test keyword
+        let line = highlight_code_line("fn main() {");
+        assert_eq!(line.spans.len(), 4);
+        assert_eq!(line.spans[0].content, "fn");
+        assert_eq!(line.spans[2].content, "main");
+
+        // Test multi-word string
+        let line = highlight_code_line("let x = \"hello world\";");
+        assert_eq!(line.spans.len(), 6);
+        assert_eq!(line.spans[4].content, "\"hello world\"");
+
+        // Test escaped quotes in string
+        let line = highlight_code_line("let s = \"hello \\\"world\\\"\";");
+        assert_eq!(line.spans.len(), 6);
+        assert_eq!(line.spans[4].content, "\"hello \\\"world\\\"\"");
+
+        // Test comment in string URL
+        let line = highlight_code_line("let url = \"https://google.com\";");
+        assert_eq!(line.spans.len(), 6);
+        assert_eq!(line.spans[4].content, "\"https://google.com\"");
+
+        // Test trailing comment
+        let line = highlight_code_line("let x = 1; // comment");
+        assert_eq!(line.spans.len(), 7);
+        assert_eq!(line.spans[6].content, "// comment");
+
+        // Test number method call
+        let line = highlight_code_line("5.to_string()");
+        assert_eq!(line.spans[0].content, "5");
+        assert_eq!(line.spans[1].content, ".");
+        assert_eq!(line.spans[2].content, "to_string");
+
+        // Test float number method call
+        let line = highlight_code_line("3.14.abs()");
+        assert_eq!(line.spans[0].content, "3.14");
+        assert_eq!(line.spans[1].content, ".");
+        assert_eq!(line.spans[2].content, "abs");
+    }
 }
