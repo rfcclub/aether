@@ -462,6 +462,7 @@ fn draw_input(f: &mut Frame, state: &AppState, area: Rect) {
 
     let input_block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(BG));
 
@@ -639,6 +640,7 @@ fn draw_model_picker(f: &mut Frame, state: &AppState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER_FOCUS))
         .style(Style::default().bg(BG))
         .title(Span::styled(" Models ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD)))
@@ -702,6 +704,7 @@ fn draw_agent_picker(f: &mut Frame, state: &AppState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER_FOCUS))
         .style(Style::default().bg(BG))
         .title(Span::styled(" Choose Agent ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD)))
@@ -812,6 +815,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(BORDER_FOCUS))
                 .style(Style::default().bg(BG))
                 .title(Span::styled(" Help ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD))),
