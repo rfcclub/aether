@@ -880,10 +880,12 @@ fn highlight_code_line(text: &str) -> Line<'static> {
     let mut spans = vec![];
     let words: Vec<&str> = text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_').collect();
 
-    let keyword_style = Style::default().fg(Color::Rgb(255, 107, 0)).add_modifier(Modifier::BOLD);
-    let type_style = Style::default().fg(Color::Rgb(91, 200, 245));
+    let keyword_style = Style::default().fg(Color::Rgb(168, 85, 247)).add_modifier(Modifier::BOLD); // Violet
+    let type_style = Style::default().fg(Color::Rgb(91, 200, 245)); // Ice Blue
+    let string_style = Style::default().fg(Color::Rgb(100, 220, 120)); // Soft Green
+    let number_style = Style::default().fg(Color::Rgb(255, 180, 50)); // Amber
     let comment_style = Style::default().fg(Color::Rgb(100, 100, 100)).add_modifier(Modifier::ITALIC);
-    let default_style = Style::default().fg(Color::Rgb(150, 250, 150));
+    let default_style = Style::default().fg(Color::Rgb(220, 220, 220));
 
     let comment_pos = text.find("//").or_else(|| text.find('#'));
     if let Some(pos) = comment_pos {
@@ -897,16 +899,24 @@ fn highlight_code_line(text: &str) -> Line<'static> {
 
     for word in words {
         let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-        let style = match trimmed {
-            // Rust keywords
-            "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" | "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" |
-            // C# keywords
-            "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" | "static" | "void" | "string" | "int" | "var" | "new" | "get" | "set" => keyword_style,
+        
+        let style = if trimmed.starts_with('"') || word.contains('"') {
+            string_style
+        } else if trimmed.chars().all(|c| c.is_ascii_digit()) && !trimmed.is_empty() {
+            number_style
+        } else {
+            match trimmed {
+                // Keywords
+                "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" | 
+                "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" | "true" | "false" |
+                "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" | 
+                "static" | "void" | "string" | "int" | "var" | "new" | "get" | "set" => keyword_style,
 
-            // Core types
-            "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" => type_style,
+                // Types
+                "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" => type_style,
 
-            _ => default_style,
+                _ => default_style,
+            }
         };
         spans.push(Span::styled(word.to_string(), style));
     }
