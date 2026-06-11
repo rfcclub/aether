@@ -243,14 +243,14 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                             if is_bullet {
                                 spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
                             } else if is_quote {
-                                spans.push(Span::styled("│ ", Style::default().fg(DIM)));
+                                spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
                             }
                         } else {
                             spans.push(Span::raw("   "));
                             if is_bullet {
                                 spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
                             } else if is_quote {
-                                spans.push(Span::styled("│ ", Style::default().fg(DIM)));
+                                spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
                             }
                         }
 
@@ -341,14 +341,14 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                     if is_bullet {
                         spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
                     } else if is_quote {
-                        spans.push(Span::styled("│ ", Style::default().fg(DIM)));
+                        spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
                     }
                 } else {
                     spans.push(Span::raw("     "));
                     if is_bullet {
                         spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
                     } else if is_quote {
-                        spans.push(Span::styled("│ ", Style::default().fg(DIM)));
+                        spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
                     }
                 }
 
@@ -544,25 +544,25 @@ fn draw_status(f: &mut Frame, state: &AppState, area: Rect) {
 
     let mut spans = vec![
         Span::styled(format!(" {} ", conn_dot), Style::default().fg(conn_color)),
-        Span::styled(format!("{} · ", group_cap), Style::default().fg(DIM)),
+        Span::styled(format!("{} │ ", group_cap), Style::default().fg(DIM)),
         Span::styled(mode_text, mode_style),
-        Span::styled(" ── ", Style::default().fg(DIM)),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F1] Help", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[Ctrl+Q] Quit", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[Esc] Scroll", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F2] Models", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F3] Agents", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F4] Context", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F5] Brainstorm", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F6] TDD", Style::default().fg(DIM)),
-        Span::styled("  ", Style::default()),
+        Span::styled(" │ ", Style::default().fg(DIM)),
         Span::styled("[F7] Git", Style::default().fg(DIM)),
     ];
 
