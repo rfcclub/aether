@@ -878,8 +878,6 @@ fn parse_markdown_line(text: &str, default_style: Style) -> Line<'static> {
 // ── Code Syntax Highlighting Helper ───────────────────────────────────────────
 fn highlight_code_line(text: &str) -> Line<'static> {
     let mut spans = vec![];
-    let words: Vec<&str> = text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_').collect();
-
     let keyword_style = Style::default().fg(Color::Rgb(168, 85, 247)).add_modifier(Modifier::BOLD); // Violet
     let type_style = Style::default().fg(Color::Rgb(91, 200, 245)); // Ice Blue
     let string_style = Style::default().fg(Color::Rgb(100, 220, 120)); // Soft Green
@@ -887,6 +885,7 @@ fn highlight_code_line(text: &str) -> Line<'static> {
     let comment_style = Style::default().fg(Color::Rgb(100, 100, 100)).add_modifier(Modifier::ITALIC);
     let default_style = Style::default().fg(Color::Rgb(220, 220, 220));
 
+    // Handle comments first
     let comment_pos = text.find("//").or_else(|| text.find('#'));
     if let Some(pos) = comment_pos {
         let code_part = &text[..pos];
@@ -897,15 +896,42 @@ fn highlight_code_line(text: &str) -> Line<'static> {
         return code_line;
     }
 
-    for word in words {
-        let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-        
-        let style = if trimmed.starts_with('"') || word.contains('"') {
-            string_style
-        } else if trimmed.chars().all(|c| c.is_ascii_digit()) && !trimmed.is_empty() {
-            number_style
-        } else {
-            match trimmed {
+    let mut chars = text.chars().peekable();
+
+    while let Some(&c) = chars.peek() {
+        if c == '"' {
+            // String literal
+            let mut string_lit = String::new();
+            string_lit.push(chars.next().unwrap()); // consume opening quote
+            while let Some(&sc) = chars.peek() {
+                string_lit.push(chars.next().unwrap());
+                if sc == '"' {
+                    break;
+                }
+            }
+            spans.push(Span::styled(string_lit, string_style));
+        } else if c.is_ascii_digit() {
+            // Number literal (supports hex 0x..., binary 0b..., floats, integers)
+            let mut num_lit = String::new();
+            while let Some(&nc) = chars.peek() {
+                if nc.is_ascii_alphanumeric() || nc == '.' || nc == '_' {
+                    num_lit.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            spans.push(Span::styled(num_lit, number_style));
+        } else if c.is_alphanumeric() || c == '_' {
+            // Keyword, Type, or Identifier
+            let mut ident = String::new();
+            while let Some(&ic) = chars.peek() {
+                if ic.is_alphanumeric() || ic == '_' {
+                    ident.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            let style = match ident.as_str() {
                 // Keywords
                 "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" | 
                 "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" | "true" | "false" |
@@ -916,9 +942,14 @@ fn highlight_code_line(text: &str) -> Line<'static> {
                 "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" => type_style,
 
                 _ => default_style,
-            }
-        };
-        spans.push(Span::styled(word.to_string(), style));
+            };
+            spans.push(Span::styled(ident, style));
+        } else {
+            // Punctuation, operators, spaces
+            let mut other = String::new();
+            other.push(chars.next().unwrap());
+            spans.push(Span::styled(other, default_style));
+        }
     }
 
     Line::from(spans)
