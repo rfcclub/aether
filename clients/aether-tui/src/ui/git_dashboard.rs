@@ -1,12 +1,12 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
     Frame,
 };
 use crate::app::AppState;
-use crate::ui::{BG, BORDER_FOCUS, DIM, VIOLET, CONNECTED, ERROR_COL};
+use crate::ui::{BG, BORDER_FOCUS, DIM, VIOLET, CONNECTED, ERROR_COL, USER_NAME};
 
 pub fn draw_git_dashboard(f: &mut Frame, state: &AppState, area: Rect) {
     let popup_area = Rect {
@@ -67,7 +67,7 @@ pub fn draw_git_dashboard(f: &mut Frame, state: &AppState, area: Rect) {
         } else if line.starts_with('-') && !line.starts_with("---") {
             Style::default().fg(ERROR_COL)
         } else if line.starts_with("@@") {
-            Style::default().fg(Color::Rgb(91, 200, 245)) // Ice blue
+            Style::default().fg(USER_NAME) // Ice blue
         } else {
             Style::default().fg(DIM)
         };
