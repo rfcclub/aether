@@ -30,18 +30,25 @@ public class AgentProfile
     public AgentModelConfig Model { get; }
 
     /// <summary>
+    /// Tên hiển thị thân thiện của Agent (ví dụ: Maria, Aura, Vesta).
+    /// </summary>
+    public string DisplayName { get; }
+
+    /// <summary>
     /// Khởi tạo một thực thể mới của AgentProfile.
     /// </summary>
     /// <param name="name">Tên Agent.</param>
     /// <param name="agentDirectory">Đường dẫn thư mục làm việc tuyệt đối.</param>
     /// <param name="config">Cấu hình chứa danh sách startup files.</param>
     /// <param name="model">Cấu hình LLM.</param>
-    public AgentProfile(string name, string agentDirectory, AgentConfig config, AgentModelConfig model)
+    /// <param name="displayName">Tên hiển thị thân thiện.</param>
+    public AgentProfile(string name, string agentDirectory, AgentConfig config, AgentModelConfig model, string? displayName = null)
     {
         Name = name;
         AgentDirectory = agentDirectory;
         _config = config;
         Model = model;
+        DisplayName = displayName ?? name;
     }
 
     /// <summary>
@@ -65,10 +72,11 @@ public class AgentProfile
         var agentConfig = configLoader.GetAgentConfig(name);
         var newPath = agentConfig?.Workspace;
         var model = agentConfig?.Model ?? new AgentModelConfig();
+        var displayName = agentConfig?.DisplayName;
 
         if (!string.IsNullOrEmpty(newPath) && Directory.Exists(newPath))
         {
-            return new AgentProfile(name, newPath, config, model);
+            return new AgentProfile(name, newPath, config, model, displayName);
         }
 
         // Tương thích ngược: <cwd>/agents/<name>/ (legacy layout)
@@ -77,7 +85,7 @@ public class AgentProfile
         {
             logger.LogWarning("Agent '{Name}' using legacy path {Path}. Migrate to ~/.aether/workspaces/{Name}/",
                 name, legacyPath, name);
-            return new AgentProfile(name, legacyPath, config, model);
+            return new AgentProfile(name, legacyPath, config, model, displayName);
         }
 
         throw new DirectoryNotFoundException(
