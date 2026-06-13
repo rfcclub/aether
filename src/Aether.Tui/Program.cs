@@ -38,27 +38,10 @@ var services = BuildServices(configuration);
 var provider = services.GetRequiredService<IServiceProvider>();
 
 var cts = new CancellationTokenSource();
-AgentProfile profile;
-try
-{
-    profile = provider.GetRequiredService<AgentProfile>();
-}
-catch (Exception)
-{
-    Console.ForegroundColor = ConsoleColor.Red;
-    var requestedAgent = configuration["agent:name"] ?? "default";
-    Console.Error.WriteLine($"Agent '{requestedAgent}' is not configured or enabled");
-    Console.ResetColor();
-    Environment.Exit(1);
-    return;
-}
+var profile = provider.GetRequiredService<AgentProfile>();
 var channel = (TuiChannel)provider.GetRequiredService<IChannel>();
 
-// Start background services (ChannelMessageProcessor, etc.)
-var hostedServices = provider.GetServices<IHostedService>();
-foreach (var hs in hostedServices)
-    await hs.StartAsync(cts.Token);
-
+// Initialize Terminal.Gui first so MainLoop is ready
 Application.Init();
 var top = Application.Top;
 
@@ -197,6 +180,30 @@ mainLayout.Add(inputField);
 mainLayout.Add(statusLabel);
 
 top.Add(mainLayout);
+
+// ── Wire TuiChannel callbacks (thread-safe via MainLoop.Invoke) ───────────────
+channel.SetCallbacks(
+    text => Application.MainLoop.Invoke(() =>
+    {
+        // Agent message — reformat with timestamp
+        var ts = DateTime.Now.ToString("HH:mm");
+        var lines = text.Split(Environment.NewLine);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i == 0)
+                AppendChat($"  {ts}  Aether  \u2502  {lines[i]}");
+            else
+                AppendChat($"         \u2502  {lines[i]}");
+        }
+    }),
+    chunk => Application.MainLoop.Invoke(() => AppendStreamingChunk(chunk)),
+    () => Application.MainLoop.Invoke(() => CompleteStreaming())
+);
+
+// Now start background hosted services (ChannelMessageProcessor, AetherInitializationService, etc.)
+var hostedServices = provider.GetServices<IHostedService>();
+foreach (var hs in hostedServices)
+    await hs.StartAsync(cts.Token);
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  HELPERS
@@ -399,24 +406,7 @@ Application.RootMouseEvent += mouseEvent =>
     }
 };
 
-// ── Wire TuiChannel callbacks (thread-safe via MainLoop.Invoke) ───────────────
-channel.SetCallbacks(
-    text => Application.MainLoop.Invoke(() =>
-    {
-        // Agent message — reformat with timestamp
-        var ts = DateTime.Now.ToString("HH:mm");
-        var lines = text.Split(Environment.NewLine);
-        for (int i = 0; i < lines.Length; i++)
-        {
-            if (i == 0)
-                AppendChat($"  {ts}  Aether  \u2502  {lines[i]}");
-            else
-                AppendChat($"         \u2502  {lines[i]}");
-        }
-    }),
-    chunk => Application.MainLoop.Invoke(() => AppendStreamingChunk(chunk)),
-    () => Application.MainLoop.Invoke(() => CompleteStreaming())
-);
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  INITIAL STATE & RUN
@@ -490,7 +480,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton<FileMemory>(provider =>
     {
         var config = provider.GetRequiredService<IConfiguration>();
-        var groupsPath = config["groups:path"] ?? "groups";
+        var groupsPath = ResolvePath(config["groups:path"] ?? "groups");
         Directory.CreateDirectory(groupsPath);
         return new FileMemory(groupsPath);
     });
@@ -612,7 +602,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton<ChannelAccess>(provider =>
     {
         var logger = provider.GetRequiredService<ILogger<ChannelAccess>>();
-        return new ChannelAccess("tui", ".", logger);
+        return new ChannelAccess("tui", GetRepositoryRoot(), logger);
     });
 
     services.AddSingleton<ChannelMessageQueue>();
