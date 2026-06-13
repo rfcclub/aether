@@ -6,7 +6,7 @@ public static class TuiArgs
     {
         for (int i = 0; i < args.Length - 1; i++)
         {
-            if (args[i] == "--agent" || args[i] == "-a")
+            if (string.Equals(args[i], "--agent", StringComparison.OrdinalIgnoreCase) || string.Equals(args[i], "-a", StringComparison.OrdinalIgnoreCase))
             {
                 var val = args[i + 1];
                 if (!string.IsNullOrEmpty(val) && !val.StartsWith("-"))
