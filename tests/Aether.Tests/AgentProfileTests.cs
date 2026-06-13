@@ -1,5 +1,4 @@
 using Aether.Agents;
-using Aether.Agents;
 using Aether.Config;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -86,6 +85,29 @@ public sealed class AgentProfileTests : IDisposable
         var profile = new AgentProfile("maria", _agentDir, new AgentConfig(), new AgentModelConfig());
 
         Assert.Equal("maria", profile.Name);
+    }
+
+    [Fact]
+    public void DisplayName_WhenNullOrWhiteSpace_ShouldFallbackToName()
+    {
+        var config = new AgentConfig();
+        var model = new AgentModelConfig();
+        
+        var profile1 = new AgentProfile("test-agent", "/tmp", config, model, null);
+        Assert.Equal("test-agent", profile1.DisplayName);
+
+        var profile2 = new AgentProfile("test-agent", "/tmp", config, model, "  ");
+        Assert.Equal("test-agent", profile2.DisplayName);
+    }
+
+    [Fact]
+    public void DisplayName_WhenValid_ShouldUseDisplayName()
+    {
+        var config = new AgentConfig();
+        var model = new AgentModelConfig();
+        
+        var profile = new AgentProfile("test-agent", "/tmp", config, model, "My Friendly Agent");
+        Assert.Equal("My Friendly Agent", profile.DisplayName);
     }
 
     // ── FromConfigLoader tests ──

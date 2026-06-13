@@ -48,7 +48,7 @@ public class AgentProfile
         AgentDirectory = agentDirectory;
         _config = config;
         Model = model;
-        DisplayName = displayName ?? name;
+        DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName;
     }
 
     /// <summary>
