@@ -19,126 +19,190 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Terminal.Gui;
 
-var configuration = LoadConfiguration();
+// ═══════════════════════════════════════════════════════════════════════════════
+//  AETHER TUI — Ethereal Theme
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Theme Colors ──────────────────────────────────────────────────────────────
+var BG          = Color.Black;
+var USER_TEXT   = Color.Gray;
+var AGENT_TEXT  = Color.White;
+var ACCENT      = Color.Cyan;
+var DIM         = Color.DarkGray;
+var INPUT_BG    = Color.Black;
+var HEADER_FG   = Color.BrightCyan;
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+var configuration = LoadConfiguration(args);
 var services = BuildServices(configuration);
 var provider = services.GetRequiredService<IServiceProvider>();
 
 var cts = new CancellationTokenSource();
-var profile = provider.GetRequiredService<AgentProfile>();
+AgentProfile profile;
+try
+{
+    profile = provider.GetRequiredService<AgentProfile>();
+}
+catch (Exception)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    var requestedAgent = configuration["agent:name"] ?? "default";
+    Console.Error.WriteLine($"Agent '{requestedAgent}' is not configured or enabled");
+    Console.ResetColor();
+    Environment.Exit(1);
+    return;
+}
 var channel = (TuiChannel)provider.GetRequiredService<IChannel>();
 
 // Start background services (ChannelMessageProcessor, etc.)
 var hostedServices = provider.GetServices<IHostedService>();
 foreach (var hs in hostedServices)
-{
     await hs.StartAsync(cts.Token);
-}
 
 Application.Init();
-
 var top = Application.Top;
 
-// Athanor Fiery Theme
-var athanorScheme = new ColorScheme
+// ── Color Schemes ─────────────────────────────────────────────────────────────
+var schemeDefault = new ColorScheme
 {
-    Normal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
-    HotNormal = new Terminal.Gui.Attribute(Color.BrightRed, Color.Black),
-    Focus = new Terminal.Gui.Attribute(Color.White, Color.DarkGray),
-    HotFocus = new Terminal.Gui.Attribute(Color.BrightRed, Color.DarkGray)
+    Normal    = new Terminal.Gui.Attribute(USER_TEXT, BG),
+    HotNormal = new Terminal.Gui.Attribute(DIM, BG),
+    Focus     = new Terminal.Gui.Attribute(AGENT_TEXT, BG),
+    HotFocus  = new Terminal.Gui.Attribute(ACCENT, BG),
 };
-top.ColorScheme = athanorScheme;
 
-// ---- Scrollback state ----
+var schemeChat = new ColorScheme
+{
+    Normal    = new Terminal.Gui.Attribute(USER_TEXT, BG),
+    HotNormal = new Terminal.Gui.Attribute(AGENT_TEXT, BG),
+    Focus     = new Terminal.Gui.Attribute(USER_TEXT, BG),
+    HotFocus  = new Terminal.Gui.Attribute(AGENT_TEXT, BG),
+};
+
+var schemeHeader = new ColorScheme
+{
+    Normal    = new Terminal.Gui.Attribute(HEADER_FG, BG),
+    HotNormal = new Terminal.Gui.Attribute(ACCENT, BG),
+    Focus     = new Terminal.Gui.Attribute(HEADER_FG, BG),
+    HotFocus  = new Terminal.Gui.Attribute(ACCENT, BG),
+};
+
+var schemeInput = new ColorScheme
+{
+    Normal    = new Terminal.Gui.Attribute(AGENT_TEXT, INPUT_BG),
+    HotNormal = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
+    Focus     = new Terminal.Gui.Attribute(AGENT_TEXT, INPUT_BG),
+    HotFocus  = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
+};
+
+var schemeStatus = new ColorScheme
+{
+    Normal    = new Terminal.Gui.Attribute(DIM, BG),
+    HotNormal = new Terminal.Gui.Attribute(ACCENT, BG),
+    Focus     = new Terminal.Gui.Attribute(DIM, BG),
+    HotFocus  = new Terminal.Gui.Attribute(ACCENT, BG),
+};
+
+top.ColorScheme = schemeDefault;
+
+// ── Scroll state ──────────────────────────────────────────────────────────────
 var userScrolledUp = false;
 var newMessagesAvailable = false;
+var waitingDots = 0;
+Timer? waitingTimer = null;
 
-// ---- Build UI ----
-var win = new Window($"Aether [{profile.Name}]")
+// ══════════════════════════════════════════════════════════════════════════════
+//  LAYOUT:  header (1) | chat (fill) | separator (1) | input (3) | status (1)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var mainLayout = new View
 {
     X = 0, Y = 0,
     Width = Dim.Fill(),
     Height = Dim.Fill(),
-    ColorScheme = athanorScheme
+    ColorScheme = schemeDefault,
 };
 
-var chatPane = new FrameView($"Athanor Forge (Workspace: {profile.AgentDirectory})")
+// ── Header:  ─ Aether · Maria ─────────────────────── model ──────
+var headerLabel = new Label($" Aether \u00b7 {profile.DisplayName}")
 {
-    X = 0,
-    Y = 0,
+    X = 0, Y = 0,
     Width = Dim.Fill(),
-    Height = Dim.Fill(3)
+    Height = 1,
+    ColorScheme = schemeHeader,
 };
 
+// ── Chat area ────────────────────────────────────────────────────────────────
 var chatView = new TextView
 {
-    X = 0,
-    Y = 0,
+    X = 0, Y = 1,
     Width = Dim.Fill(),
-    Height = Dim.Fill(),
-    ReadOnly = true,
+    Height = Dim.Fill(5),  // leave room for separator + input + status
     WordWrap = true,
-    CanFocus = true,
-    ColorScheme = athanorScheme
+    CanFocus = false,
+    ColorScheme = schemeChat,
+    BottomOffset = 0,
+    RightOffset = 0,
 };
-chatPane.Add(chatView);
 
-var inputFrame = new FrameView(null)
+// ── Separator ─────────────────────────────────────────────────────────────────
+var separator = new Label(new string('\u2500', 200))
 {
-    X = 0,
-    Y = Pos.Bottom(chatPane),
+    X = 0, Y = Pos.Bottom(chatView),
     Width = Dim.Fill(),
-    Height = 3,
-    ColorScheme = athanorScheme
+    Height = 1,
+    ColorScheme = schemeStatus,
 };
 
+// ── Input area:  │ > _                                                      │
 var inputField = new TextField("")
 {
-    X = 1,
-    Y = 0,
-    Width = Dim.Fill(10),
-    Height = 1
+    X = 2, Y = Pos.Bottom(separator) + 1,
+    Width = Dim.Fill(2),
+    Height = 1,
+    ColorScheme = schemeInput,
 };
 
-var sendButton = new Button("Forge")
+var schemeInputPrompt = new ColorScheme
 {
-    X = Pos.Right(inputField) + 1,
-    Y = 0
+    Normal    = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
+    HotNormal = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
+    Focus     = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
+    HotFocus  = new Terminal.Gui.Attribute(ACCENT, INPUT_BG),
 };
 
-var statusLabel = new Label("Ready")
+var inputPrompt = new Label(" \u276f ")
 {
-    X = 1,
-    Y = 1,
-    Width = Dim.Fill()
+    X = 0, Y = Pos.Bottom(separator) + 1,
+    Width = 2,
+    Height = 1,
+    ColorScheme = schemeInputPrompt,
 };
 
-inputFrame.Add(inputField);
-inputFrame.Add(sendButton);
-inputFrame.Add(statusLabel);
-
-win.Add(chatPane);
-win.Add(inputFrame);
-
-// ---- StatusBar ----
-var sbAgentItem = new StatusItem(Key.Null, $"Agent: {profile.Name}", null);
-var sbWrapItem = new StatusItem(Key.Null, "Wrap: ON", null);
-var sbScrollItem = new StatusItem(Key.Null, "", null);
-var sbQuitItem = new StatusItem(Key.Q | Key.CtrlMask, "~Ctrl+Q~ Quit", () => Application.RequestStop());
-var sbWrapToggleItem = new StatusItem(Key.Null, "~Ctrl+W~ Wrap", null);
-
-var statusBar = new StatusBar(
-    new[] { sbAgentItem, sbWrapItem, sbScrollItem, sbQuitItem, sbWrapToggleItem })
+// ── Status bar:  ● Connected \u00b7 Agent: Maria \u00b7 Ctrl+Q Quit ──────────────────
+var statusLabel = new Label(" \u25cf Aether \u00b7 Ready")
 {
-    ColorScheme = athanorScheme
+    X = 0, Y = Pos.Bottom(separator) + 3,
+    Width = Dim.Fill(),
+    Height = 1,
+    ColorScheme = schemeStatus,
 };
 
-top.Add(win);
-top.Add(statusBar);
+// ── Assemble ──────────────────────────────────────────────────────────────────
+mainLayout.Add(headerLabel);
+mainLayout.Add(chatView);
+mainLayout.Add(separator);
+mainLayout.Add(inputPrompt);
+mainLayout.Add(inputField);
+mainLayout.Add(statusLabel);
 
-// ---- Helpers ----
+top.Add(mainLayout);
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
 
 static int GetTotalLines(TextView view) => view.Lines;
-
 static int GetVisibleLines(TextView view) => Math.Max(1, view.Frame.Height - 2);
 
 void UpdateScrollIndicator()
@@ -146,23 +210,12 @@ void UpdateScrollIndicator()
     var total = GetTotalLines(chatView);
     var topRow = chatView.TopRow;
     var visible = GetVisibleLines(chatView);
-    var bottomRow = Math.Min(topRow + visible, total);
+    var bottom = Math.Min(topRow + visible, total);
 
-    if (newMessagesAvailable)
-    {
-        sbScrollItem.Title = $"L{topRow + 1}-{bottomRow}/{total}  ↓ New";
-    }
-    else
-    {
-        sbScrollItem.Title = total > 0 ? $"L{topRow + 1}-{bottomRow}/{total}" : "";
-    }
-    Application.Refresh();
-}
+    var indicator = newMessagesAvailable ? " \u25bc new" : "";
+    var scrollInfo = total > 0 ? $"  [{topRow + 1}-{bottom}/{total}{indicator}]" : "";
 
-void UpdateStatusBar()
-{
-    sbWrapItem.Title = chatView.WordWrap ? "Wrap: ON" : "Wrap: OFF";
-    UpdateScrollIndicator();
+    statusLabel.Text = $" \u25cf Aether \u00b7 {profile.DisplayName}{scrollInfo}";
     Application.Refresh();
 }
 
@@ -172,16 +225,13 @@ void AppendChat(string text)
 
     if (!userScrolledUp)
     {
-        var total = GetTotalLines(chatView);
-        chatView.ScrollTo(total - 1, true);
-        newMessagesAvailable = false;
+        ScrollToBottom();
     }
     else
     {
         newMessagesAvailable = true;
+        UpdateScrollIndicator();
     }
-
-    UpdateStatusBar();
 }
 
 void AppendStreamingChunk(string chunk)
@@ -191,7 +241,8 @@ void AppendStreamingChunk(string chunk)
     if (!userScrolledUp)
     {
         var total = GetTotalLines(chatView);
-        chatView.ScrollTo(total - 1, true);
+        var visible = GetVisibleLines(chatView);
+        chatView.ScrollTo(Math.Max(0, total - visible), true);
     }
     else
     {
@@ -202,13 +253,39 @@ void AppendStreamingChunk(string chunk)
 void CompleteStreaming()
 {
     chatView.Text += Environment.NewLine;
-    statusLabel.Text = "Ready";
+    StopWaiting();
+
     if (!userScrolledUp)
     {
-        var total = GetTotalLines(chatView);
-        chatView.ScrollTo(total - 1, true);
+        ScrollToBottom();
     }
-    UpdateStatusBar();
+    else
+    {
+        UpdateScrollIndicator();
+    }
+}
+
+void StartWaiting()
+{
+    waitingDots = 0;
+    waitingTimer?.Dispose();
+    waitingTimer = new Timer(_ =>
+    {
+        waitingDots = (waitingDots + 1) % 4;
+        var dots = new string('.', waitingDots);
+        Application.MainLoop.Invoke(() =>
+        {
+            statusLabel.Text = $" \u25cf Aether \u00b7 Thinking{dots}   [Esc] Cancel";
+            Application.Refresh();
+        });
+    }, null, 0, 400);
+}
+
+void StopWaiting()
+{
+    waitingTimer?.Dispose();
+    waitingTimer = null;
+    UpdateScrollIndicator();
 }
 
 void ScrollUp(int lines)
@@ -216,7 +293,7 @@ void ScrollUp(int lines)
     var target = Math.Max(0, chatView.TopRow - lines);
     chatView.ScrollTo(target, true);
     userScrolledUp = chatView.TopRow < GetTotalLines(chatView) - 1;
-    UpdateStatusBar();
+    UpdateScrollIndicator();
 }
 
 void ScrollDown(int lines)
@@ -232,16 +309,17 @@ void ScrollDown(int lines)
         userScrolledUp = false;
         newMessagesAvailable = false;
     }
-    UpdateStatusBar();
+    UpdateScrollIndicator();
 }
 
 void ScrollToBottom()
 {
     var total = GetTotalLines(chatView);
-    chatView.ScrollTo(total - 1, true);
+    var visible = GetVisibleLines(chatView);
+    chatView.ScrollTo(Math.Max(0, total - visible), true);
     userScrolledUp = false;
     newMessagesAvailable = false;
-    UpdateStatusBar();
+    UpdateScrollIndicator();
 }
 
 void SendMessage()
@@ -250,28 +328,31 @@ void SendMessage()
     if (string.IsNullOrWhiteSpace(message)) return;
 
     inputField.Text = "";
-    AppendChat($"Thoor> {message}");
-    statusLabel.Text = "Forging...";
-    
-    // Output prefix for the agent before streaming begins
-    chatView.Text += $"{profile.Name}> ";
-    UpdateStatusBar();
-    Application.Refresh();
 
-    // Delegate routing and processing entirely to the ChannelMessageProcessor!
+    // Timestamp
+    var ts = DateTime.Now.ToString("HH:mm");
+
+    // User message
+    var userName = configuration["user:name"];
+    if (string.IsNullOrEmpty(userName) || userName.Equals("default", StringComparison.OrdinalIgnoreCase))
+    {
+        userName = "Thoor";
+    }
+    AppendChat($"  {ts}  {userName}  \u2502  {message}");
+
+    // Start thinking indicator
+    StartWaiting();
+
+    // Agent response prefix (will be filled by streaming)
+    AppendChat("");
+
+    // Route to ChannelMessageProcessor
     channel.ReceiveUserInput(message);
 }
 
-void ToggleWordWrap()
-{
-    chatView.WordWrap = !chatView.WordWrap;
-    UpdateStatusBar();
-    Application.Refresh();
-}
-
-// ---- Event handlers ----
-
-sendButton.Clicked += () => SendMessage();
+// ══════════════════════════════════════════════════════════════════════════════
+//  EVENT HANDLERS
+// ══════════════════════════════════════════════════════════════════════════════
 
 inputField.KeyPress += e =>
 {
@@ -284,18 +365,20 @@ inputField.KeyPress += e =>
 
 Application.RootKeyEvent += keyEvent =>
 {
+    // Only handle scroll keys — let normal input pass through
     switch (keyEvent.Key)
     {
-        case Key.W when keyEvent.IsCtrl:
-            ToggleWordWrap();
-            return true;
         case Key.PageUp:
             ScrollUp(GetVisibleLines(chatView));
             return true;
         case Key.PageDown:
             ScrollDown(GetVisibleLines(chatView));
             return true;
-        case Key.End:
+        case Key.End when !inputField.HasFocus:
+            ScrollToBottom();
+            return true;
+        case Key.Esc:
+            if (waitingTimer != null) { StopWaiting(); return true; }
             ScrollToBottom();
             return true;
     }
@@ -316,32 +399,77 @@ Application.RootMouseEvent += mouseEvent =>
     }
 };
 
-// ---- Connect Channel Callbacks to UI ----
+// ── Wire TuiChannel callbacks (thread-safe via MainLoop.Invoke) ───────────────
+channel.SetCallbacks(
+    text => Application.MainLoop.Invoke(() =>
+    {
+        // Agent message — reformat with timestamp
+        var ts = DateTime.Now.ToString("HH:mm");
+        var lines = text.Split(Environment.NewLine);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i == 0)
+                AppendChat($"  {ts}  Aether  \u2502  {lines[i]}");
+            else
+                AppendChat($"         \u2502  {lines[i]}");
+        }
+    }),
+    chunk => Application.MainLoop.Invoke(() => AppendStreamingChunk(chunk)),
+    () => Application.MainLoop.Invoke(() => CompleteStreaming())
+);
 
-channel = (Aether.Tui.TuiChannel)provider.GetRequiredService<IChannel>();
-channel.GetType().GetProperty("OnMessageReceived")?.SetValue(channel, (Action<string>)(text => Application.MainLoop.Invoke(() => AppendChat(text))));
-channel.GetType().GetProperty("OnStreamingChunk")?.SetValue(channel, (Action<string>)(chunk => Application.MainLoop.Invoke(() => { AppendStreamingChunk(chunk); })));
-channel.GetType().GetProperty("OnStreamingComplete")?.SetValue(channel, (Action)(() => Application.MainLoop.Invoke(() => { CompleteStreaming(); })));
+// ══════════════════════════════════════════════════════════════════════════════
+//  INITIAL STATE & RUN
+// ══════════════════════════════════════════════════════════════════════════════
 
-// ---- Initial state ----
-chatView.Text = $"Athanor TUI ready. Connected to Agent: {profile.Name}{Environment.NewLine}";
-UpdateStatusBar();
+chatView.Text = "";
 
+// Welcome message
+AppendChat("");
+AppendChat("  \u2728  Aether TUI \u2014 Ethereal Interface");
+AppendChat($"  \u2502  Connected to agent: {profile.DisplayName}");
+AppendChat($"  \u2502  Workspace: {profile.AgentDirectory}");
+AppendChat("  \u2502");
+AppendChat("  \u2502  Type a message to begin. PgUp/PgDn to scroll.");
+AppendChat("");
+
+inputField.SetFocus();
+UpdateScrollIndicator();
 Application.Run();
 
-// ---- Cleanup ----
+// ── Cleanup ───────────────────────────────────────────────────────────────────
+waitingTimer?.Dispose();
 cts.Cancel();
 cts.Dispose();
 Application.Shutdown();
 
-// ---- Setup helpers ----
+// ══════════════════════════════════════════════════════════════════════════════
+//  CONFIGURATION & DI
+// ══════════════════════════════════════════════════════════════════════════════
 
-static IConfiguration LoadConfiguration()
+static IConfiguration LoadConfiguration(string[] args)
 {
-    return new ConfigurationBuilder()
-        .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
-        .AddEnvironmentVariables("AETHER_")
-        .Build();
+    var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+    var globalConfigPath = Path.Combine(aetherHome, "config.json");
+
+    var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+
+    var builder = new ConfigurationBuilder()
+        .AddJsonFile(appSettingsPath, optional: true, reloadOnChange: false)
+        .AddJsonFile(globalConfigPath, optional: true, reloadOnChange: false)
+        .AddEnvironmentVariables("AETHER_");
+
+    var agentName = TuiArgs.ParseAgentName(args);
+    if (!string.IsNullOrEmpty(agentName))
+    {
+        builder.AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string?>("agent:name", agentName)
+        });
+    }
+
+    return builder.Build();
 }
 
 static IServiceProvider BuildServices(IConfiguration configuration)
@@ -353,7 +481,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     services.AddSingleton(provider =>
     {
         var config = provider.GetRequiredService<IConfiguration>();
-        var databasePath = config["database:path"] ?? "store/aether.db";
+        var databasePath = ResolvePath(config["database:path"] ?? "store/aether.db");
         var schemaPath = ResolvePath(config["database:schema"] ?? Path.Combine("Data", "Schema.sql"));
         return new AetherDb(databasePath, schemaPath);
     });
@@ -366,7 +494,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         Directory.CreateDirectory(groupsPath);
         return new FileMemory(groupsPath);
     });
-    
+
     // Core Agent Services
     services.AddSingleton<ToolRegistry, ToolRegistry>();
     services.AddSingleton<Aether.Tooling.ToolExecutor, Aether.Tooling.ToolExecutor>();
@@ -381,7 +509,7 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
     var bootstrapLoader = new ConfigLoader(
         configuration, aetherCfgDir,
-        Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
+        NullLogger<ConfigLoader>.Instance);
     var bootstrapConfig = bootstrapLoader.LoadAsync().Result;
 
     foreach (var (name, entry) in bootstrapConfig.Providers)
@@ -404,7 +532,6 @@ static IServiceProvider BuildServices(IConfiguration configuration)
                           ?? "https://openrouter.ai/api/v1";
             var apiKey = config["providers:openrouter:api_key"] ?? config["llm:api_key"] ?? "";
             var model = config["providers:openrouter:model"] ?? config["llm:model"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
-
             var client = new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
             return new OpenRouterProvider(client, new OpenRouterOptions(apiKey, model, baseUrl));
         });
@@ -430,9 +557,27 @@ static IServiceProvider BuildServices(IConfiguration configuration)
     {
         var config = provider.GetRequiredService<AgentConfig>();
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var agentName = configuration["agent:name"] ?? "maria";
-        var agentsRoot = configuration["agent:root"] ?? ".";
-        return new AgentProfile(agentName, agentsRoot, config, new AgentModelConfig());
+        var configLoader = provider.GetRequiredService<ConfigLoader>();
+        var logger = provider.GetRequiredService<ILogger<AgentProfile>>();
+
+        // Ensure config is loaded
+        var appConfig = configLoader.LoadAsync().Result;
+
+        var agentName = configuration["agent:name"];
+        if (string.IsNullOrEmpty(agentName))
+        {
+            foreach (var (name, entry) in appConfig.Agents)
+            {
+                if (entry.Enabled)
+                {
+                    agentName = name;
+                    break;
+                }
+            }
+            agentName ??= "default";
+        }
+
+        return AgentProfile.FromConfigLoader(agentName, configLoader, config, logger);
     });
 
     services.AddSingleton<AetherSoul>(provider =>
@@ -446,70 +591,93 @@ static IServiceProvider BuildServices(IConfiguration configuration)
         var sessionManager = provider.GetRequiredService<SessionManager>();
         return new AetherSoul(llm, tools, registry, profile, logger, null, sqliteMemory, sessionManager);
     });
-    
-    // Database Memory System
+
     services.AddSingleton<SqliteMemorySystem>(provider =>
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var profile = provider.GetRequiredService<AgentProfile>();
-        var databasePath = configuration["database:path"] ?? "store/aether.db";
+        var databasePath = ResolvePath(configuration["database:path"] ?? "store/aether.db");
         var memoryFilePath = Path.Combine(profile.AgentDirectory, "MEMORY.md");
         var logger = provider.GetRequiredService<ILogger<SqliteMemorySystem>>();
         return new SqliteMemorySystem(databasePath, memoryFilePath, logger, null);
     });
 
-    // ---- CHANNEL INTEGRATION SERVICES ----
+    // Channel Integration Services
     services.AddSingleton<ConfigLoader>(provider =>
     {
         var logger = provider.GetRequiredService<ILogger<ConfigLoader>>();
-        return new ConfigLoader(configuration, ".", logger, null);
+        return new ConfigLoader(configuration, aetherCfgDir, logger, null);
     });
-    
+
     services.AddSingleton<ChannelAccess>(provider =>
     {
         var logger = provider.GetRequiredService<ILogger<ChannelAccess>>();
         return new ChannelAccess("tui", ".", logger);
     });
-    
+
     services.AddSingleton<ChannelMessageQueue>();
     services.AddSingleton<MessageRouter>(provider =>
     {
         var configLoader = provider.GetRequiredService<ConfigLoader>();
         var logger = provider.GetRequiredService<ILogger<MessageRouter>>();
-        var db = provider.GetRequiredService<AetherDb>();
-        return new MessageRouter(db, provider.GetRequiredService<ChannelMessageQueue>());
+        return new MessageRouter(configLoader, logger);
     });
     services.AddSingleton<SlashCommandHandler>();
-    
-    services.AddSingleton<ProviderRoutingOptions>(new ProviderRoutingOptions { });
-    
-    services.AddSingleton<IReadOnlyList<ILLMProvider>>(provider => 
+
+    // Read provider_priorities from config (same as server)
+    var priorities = new Dictionary<string, int>();
+    var prioritiesList = configuration.GetSection("provider_priorities").Get<string[]>();
+    if (prioritiesList is { Length: > 0 })
+    {
+        for (var i = 0; i < prioritiesList.Length; i++)
+            priorities[prioritiesList[i]] = i + 1;
+    }
+    services.AddSingleton<ProviderRoutingOptions>(new ProviderRoutingOptions { ProviderPriorities = priorities });
+
+    services.AddSingleton<IReadOnlyList<ILLMProvider>>(provider =>
         provider.GetServices<ILLMProvider>().ToList());
 
     services.AddSingleton<ProviderRouter>();
 
-    // The TUI Channel itself
+    // The TUI Channel
     services.AddSingleton<IChannel>(provider =>
     {
-        return new Aether.Tui.TuiChannel(
-            text => {}, 
-            chunk => {}, 
-            () => {}
-        );
+        return new TuiChannel(text => {}, chunk => {}, () => {});
     });
 
-    // The core processor that connects IChannel to AetherSoul
+    // Core processor & Initializer
     services.AddHostedService<ChannelMessageProcessor>();
+    services.AddHostedService<AetherInitializationService>();
 
     services.AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Warning));
 
     return services.BuildServiceProvider();
 }
 
+static string GetRepositoryRoot()
+{
+    var dir = AppContext.BaseDirectory;
+    while (!string.IsNullOrEmpty(dir))
+    {
+        if (File.Exists(Path.Combine(dir, "Aether.sln")))
+        {
+            return dir;
+        }
+        dir = Path.GetDirectoryName(dir);
+    }
+    return AppContext.BaseDirectory;
+}
+
 static string ResolvePath(string path)
 {
     if (Path.IsPathRooted(path)) return path;
+
+    var repoRoot = GetRepositoryRoot();
+    var repoPath = Path.GetFullPath(Path.Combine(repoRoot, path));
+    if (File.Exists(repoPath) || Directory.Exists(repoPath)) return repoPath;
+
     var cwdPath = Path.GetFullPath(path);
     if (File.Exists(cwdPath)) return cwdPath;
+
     return Path.Combine(AppContext.BaseDirectory, path);
 }
