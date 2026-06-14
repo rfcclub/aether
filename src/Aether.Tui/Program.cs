@@ -38,7 +38,20 @@ var services = BuildServices(configuration);
 var provider = services.GetRequiredService<IServiceProvider>();
 
 var cts = new CancellationTokenSource();
-var profile = provider.GetRequiredService<AgentProfile>();
+AgentProfile profile;
+try
+{
+    profile = provider.GetRequiredService<AgentProfile>();
+}
+catch (Exception)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    var requestedAgent = configuration["agent:name"] ?? "default";
+    Console.Error.WriteLine($"Agent '{requestedAgent}' is not configured or enabled");
+    Console.ResetColor();
+    Environment.Exit(1);
+    return;
+}
 var channel = (TuiChannel)provider.GetRequiredService<IChannel>();
 
 // Initialize Terminal.Gui first so MainLoop is ready

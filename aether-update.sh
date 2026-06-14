@@ -5,11 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="com.thoor.aether"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-INSTALL_TUI=false
+INSTALL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install)
-      INSTALL_TUI=true
+      INSTALL=true
       shift
       ;;
     *)
@@ -41,14 +41,15 @@ else
     exit 1
 fi
 
-if [ "$INSTALL_TUI" = true ]; then
+if [ "$INSTALL" = true ]; then
     echo "📦 Packaging and installing TUI globally..."
     
     echo "🔨 Compiling C# TUI in release mode..."
-    dotnet publish "$SCRIPT_DIR/src/Aether.Tui/Aether.Tui.csproj" -c Release -o "$SCRIPT_DIR/src/Aether.Tui/bin/Release/net8.0/publish/" --verbosity quiet
+    dotnet publish "$SCRIPT_DIR/src/Aether.Tui/Aether.Tui.csproj" -c Release -o "$SCRIPT_DIR/src/Aether.Tui/bin/Release/net8.0/publish/" --no-self-contained --verbosity quiet
 
     echo "🔨 Compiling Rust TUI in release mode..."
-    (cd "$SCRIPT_DIR/clients/aether-tui" && cargo build --release)
+    cd "$SCRIPT_DIR/clients/aether-tui"
+    ~/.cargo/bin/cargo build --release --quiet
 
     echo "📁 Creating ~/.local/bin if not exists..."
     mkdir -p "$HOME/.local/bin"
