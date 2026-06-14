@@ -106,6 +106,7 @@ var userScrolledUp = false;
 var newMessagesAvailable = false;
 var waitingDots = 0;
 Timer? waitingTimer = null;
+bool isStreamingStarted = false;
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  LAYOUT:  header (1) | chat (fill) | separator (1) | input (3) | status (1)
@@ -256,7 +257,29 @@ void AppendChat(string text)
 
 void AppendStreamingChunk(string chunk)
 {
-    chatView.Text += chunk;
+    if (string.IsNullOrEmpty(chunk)) return;
+
+    var ts = DateTime.Now.ToString("HH:mm");
+    var textToAppend = "";
+
+    if (!isStreamingStarted)
+    {
+        isStreamingStarted = true;
+        textToAppend += $"  {ts}  Aether  \u2502  ";
+    }
+
+    // Handle newlines within the chunk for alignment
+    var lines = chunk.Split('\n');
+    for (int i = 0; i < lines.Length; i++)
+    {
+        if (i > 0)
+        {
+            textToAppend += Environment.NewLine + "         \u2502  ";
+        }
+        textToAppend += lines[i];
+    }
+
+    chatView.Text += textToAppend;
 
     if (!userScrolledUp)
     {
@@ -273,6 +296,7 @@ void AppendStreamingChunk(string chunk)
 void CompleteStreaming()
 {
     chatView.Text += Environment.NewLine;
+    isStreamingStarted = false;
     StopWaiting();
 
     if (!userScrolledUp)

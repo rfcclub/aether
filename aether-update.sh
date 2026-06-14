@@ -22,23 +22,27 @@ done
 echo "🔨 Building Aether..."
 dotnet build "$SCRIPT_DIR/src/Aether/Aether.csproj" -c Release --verbosity quiet
 
-echo "♻️  Restarting service..."
-launchctl unload "$PLIST" 2>/dev/null || true
-sleep 1
-launchctl load "$PLIST"
+if [ -f "$PLIST" ]; then
+    echo "♻️  Restarting service..."
+    launchctl unload "$PLIST" 2>/dev/null || true
+    sleep 1
+    launchctl load "$PLIST"
 
-sleep 3
+    sleep 3
 
-# Check status
-PID=$(launchctl list | grep "$LABEL" | awk '{print $1}')
-STATUS=$(launchctl list | grep "$LABEL" | awk '{print $2}')
+    # Check status
+    PID=$(launchctl list | grep "$LABEL" | awk '{print $1}')
+    STATUS=$(launchctl list | grep "$LABEL" | awk '{print $2}')
 
-if [ "$STATUS" = "0" ] && [ "$PID" != "-" ]; then
-    echo "✅ Aether running (PID: $PID)"
+    if [ "$STATUS" = "0" ] && [ "$PID" != "-" ]; then
+        echo "✅ Aether running (PID: $PID)"
+    else
+        echo "❌ Aether failed to start. Check logs:"
+        echo "   tail -20 ~/.aether/logs/aether.stderr.log"
+        exit 1
+    fi
 else
-    echo "❌ Aether failed to start. Check logs:"
-    echo "   tail -20 ~/.aether/logs/aether.stderr.log"
-    exit 1
+    echo "⚠️ Warning: LaunchAgent service plist not found at $PLIST. Skipping service restart."
 fi
 
 if [ "$INSTALL" = true ]; then
@@ -55,14 +59,17 @@ if [ "$INSTALL" = true ]; then
     mkdir -p "$HOME/.local/bin"
 
     echo "🚀 Writing launcher wrapper to ~/.local/bin/aether-tui..."
-    cat << 'EOF' > "$HOME/.local/bin/aether-tui"
+    cat << EOF > "$HOME/.local/bin/aether-tui"
 #!/usr/bin/env bash
 set -euo pipefail
 # Get repository root
-REPO_DIR="/Users/thoor/repo/aether"
-exec "$REPO_DIR/src/Aether.Tui/bin/Release/net8.0/publish/Aether.Tui" "$@"
+REPO_DIR="$SCRIPT_DIR"
+exec "\$REPO_DIR/src/Aether.Tui/bin/Release/net8.0/publish/Aether.Tui" "\$@"
 EOF
 
     chmod +x "$HOME/.local/bin/aether-tui"
+
+    ln -sf "$SCRIPT_DIR/clients/aether-tui/target/release/aether-tui" "$HOME/.local/bin/aether-tui-rs"
+    echo "✅ Installed Rust TUI symlink to ~/.local/bin/aether-tui-rs"
     echo "✅ Global TUI installation complete! Run with: aether-tui"
 fi
