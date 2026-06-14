@@ -49,7 +49,7 @@ if [ "$INSTALL" = true ]; then
     echo "📦 Packaging and installing TUI globally..."
     
     echo "🔨 Compiling C# TUI in release mode..."
-    dotnet publish "$SCRIPT_DIR/src/Aether.Tui/Aether.Tui.csproj" -c Release -o "$SCRIPT_DIR/src/Aether.Tui/bin/Release/net8.0/publish/" --no-self-contained --verbosity quiet
+    dotnet publish "$SCRIPT_DIR/src/Aether.Tui/Aether.Tui.csproj" -c Release -o "$SCRIPT_DIR/src/Aether.Tui/bin/Release/publish/" --no-self-contained --verbosity quiet
 
     echo "🔨 Compiling Rust TUI in release mode..."
     cd "$SCRIPT_DIR/clients/aether-tui"
@@ -64,7 +64,7 @@ if [ "$INSTALL" = true ]; then
 set -euo pipefail
 # Get repository root
 REPO_DIR="$SCRIPT_DIR"
-exec "\$REPO_DIR/src/Aether.Tui/bin/Release/net8.0/publish/Aether.Tui" "\$@"
+exec "\$REPO_DIR/src/Aether.Tui/bin/Release/publish/Aether.Tui" "\$@"
 EOF
 
     chmod +x "$HOME/.local/bin/aether-tui"

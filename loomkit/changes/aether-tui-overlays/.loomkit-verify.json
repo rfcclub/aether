@@ -1,0 +1,10 @@
+{
+  "change": "aether-tui-overlays",
+  "timestamp": "2026-05-23T21:12:01.543Z",
+  "total_scenarios": 10,
+  "passing": 10,
+  "coverage": 1,
+  "threshold": 100,
+  "passed": true,
+  "uncovered": []
+}

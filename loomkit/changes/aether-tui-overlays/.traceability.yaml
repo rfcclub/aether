@@ -1,0 +1,31 @@
+scenarios:
+  - scenario: f4-context-files-manager-overlay-must-open-context-manager-overlay
+    status: passing
+    file: clients/aether-tui/src/ui/context_manager_tests.rs
+  - scenario: f4-context-files-manager-overlay-must-add-file-to-context-list
+    status: passing
+    file: clients/aether-tui/src/ui/context_manager_tests.rs
+  - scenario: f4-context-files-manager-overlay-must-remove-file-from-context-list
+    status: passing
+    file: clients/aether-tui/src/ui/context_manager_tests.rs
+  - scenario: f4-context-files-manager-overlay-must-clear-all-files-from-context
+    status: passing
+    file: clients/aether-tui/src/ui/context_manager_tests.rs
+  - scenario: f5-socratic-brainstorming-wizard-should-open-brainstorming-wizard
+    status: passing
+    file: clients/aether-tui/src/ui/brainstorm_tests.rs
+  - scenario: f5-socratic-brainstorming-wizard-should-inject-brainstorm-proposal
+    status: passing
+    file: clients/aether-tui/src/ui/brainstorm_tests.rs
+  - scenario: f6-tdd-template-injector-must-inject-tdd-template-into-input
+    status: passing
+    file: clients/aether-tui/src/ui/tdd_tests.rs
+  - scenario: f7-interactive-git-dashboard-must-open-git-dashboard-pane
+    status: passing
+    file: clients/aether-tui/src/ui/git_tests.rs
+  - scenario: f7-interactive-git-dashboard-must-toggle-file-staging-status
+    status: passing
+    file: clients/aether-tui/src/ui/git_tests.rs
+  - scenario: active-llm-stream-interruption-must-trigger-stream-cancellation
+    status: passing
+    file: tests/Aether.Tests/CancellationTests.cs

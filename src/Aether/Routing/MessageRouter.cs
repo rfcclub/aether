@@ -130,6 +130,17 @@ public sealed class MessageRouter
             }
         }
 
+        // Automatically bind tui:local to the default or first enabled agent if not explicitly bound
+        if (!_bindingCache.ContainsKey("tui:local"))
+        {
+            var defaultAgent = agents.Keys.FirstOrDefault(k => string.Equals(k, "default", StringComparison.OrdinalIgnoreCase))
+                ?? agents.Keys.FirstOrDefault(k => agents[k].Enabled);
+            if (defaultAgent is not null)
+            {
+                _bindingCache["tui:local"] = defaultAgent;
+            }
+        }
+
         _lastConfigRead = DateTime.UtcNow;
         return _bindingCache;
     }

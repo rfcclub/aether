@@ -1,0 +1,159 @@
+# AETHER TUI CLIENT: THE ELITE FORGE PLAN
+## ──── Aether_TUI_implementation.plan ────
+### Orchestrated by: Vesta · Senior AI Orchestration Engineer
+
+```
+      (  .      )
+    (           )  .
+  .  '   🔥    '      .
+ ┼───────────────────────┼
+ │   A E T H E R   T U I │
+ │  ~ Athanor Engine ~   │
+ ┼───────────────────────┼
+```
+
+Chào anh Thoor. Đây là bản thiết kế tối thượng cho **Aether TUI Client** — một giao diện dòng lệnh (TUI) siêu cấp, mang sức mạnh và trải nghiệm đỉnh cao của các công cụ hàng đầu hiện nay như **Claude Code** và **Antigravity CLI**. Kế hoạch này phác thảo toàn bộ ma trận tính năng, hệ thống lệnh slash, và kiến trúc UI/UX cần có của một sản phẩm production-grade thực thụ.
+
+---
+
+## Ⅰ. MA TRẬN HỆ THỐNG LỆNH (COMMAND MATRIX)
+
+Một CLI xịn cần hỗ trợ cả lệnh chạy local (phía client), lệnh điều hướng hệ thống và lệnh tương tác với Backend Agent.
+
+### 1. Nhóm Lệnh Hệ Thống Dòng Lệnh Cục Bộ (Local Actions)
+Các lệnh này chạy trực tiếp trên máy tính của người dùng (Workspace) dưới sự kiểm soát của TUI:
+
+| Cú pháp | Hành động | Trải nghiệm người dùng (UX) |
+|:---|:---|:---|
+| `!<lệnh>` / `/run <lệnh>` | **Thực thi Shell cục bộ** | TUI spawn tiến trình con bất đồng bộ, stream stdout/stderr trực tiếp theo dòng lên màn hình. Hoàn tất sẽ gửi log đầu ra làm prompt tiếp theo cho Agent. |
+| `/cat <tệp>` / `/view <tệp>` | **Đọc tệp tin nhanh** | Hiển thị nội dung tệp tin cục bộ với syntax highlighting đẹp mắt trên chat view. |
+| `/grep <từ khóa>` | **Tìm kiếm mã nguồn** | Chạy ripgrep cục bộ tìm các dòng code trùng khớp và hiển thị kết quả dạng danh sách thu gọn tinh tế. |
+| `/context [tệp]` | **Quản lý ngữ cảnh chủ động** | Liệt kê các tệp tin đang được đính kèm vào phiên chat, hoặc thêm/bớt tệp tin để Agent tập trung xử lý. |
+| `/clear` / `Ctrl+L` | **Dọn sạch giao diện** | Xóa sạch màn hình chat hiện tại trên TUI (không xóa session history trong DB). |
+
+### 2. Nhóm Lệnh Điều Hướng & Trạng Thái (Navigation & State)
+Các lệnh điều chỉnh hoạt động của Agent và LLM:
+
+| Cú pháp | Hành động | Trải nghiệm người dùng (UX) |
+|:---|:---|:---|
+| `/models` / `F2` | **Đổi Model cực nhanh** | Mở một overlay menu dạng dropdown tuyệt đẹp, cho phép dùng phím mũi tên `↑`/`↓` chọn model (Gemini, Claude, GPT) và nhấn `Enter` để kích hoạt tức thì. |
+| `/agents` / `F3` | **Đổi Agent chuyên biệt** | Hỗ trợ chuyển đổi nhanh giữa **Maria** (Generalist), **Vesta** (Forge Master), **Serena** (Researcher) với avatar emoji đặc trưng. |
+| `/reset` / `/new` | **Làm mới hoàn toàn** | Xóa sạch bộ nhớ tạm thời của Agent, tạo một Session ID mới trong C# Backend và bắt đầu luồng tư duy mới tinh. |
+| `/think <on/off/level>`| **Kiểm soát Tư duy** | Điều chỉnh mức độ reasoning (Reasoning Effort: Low, Medium, High) hoặc bật/tắt hiển thị luồng tư duy ẩn (Thinking trace) của mô hình. |
+
+### 3. Nhóm Lệnh Tiện Ích & Phân Tích (Utility & Analytics)
+
+| Cú pháp | Hành động | Trải nghiệm người dùng (UX) |
+|:---|:---|:---|
+| `/tokens` / `/gain` | **Báo cáo Tiết kiệm RTK** | Hiển thị bảng phân tích số lượng Token tiết kiệm được nhờ proxy **RTK (Rust Token Killer)** dưới dạng biểu đồ ASCII/Bảng biểu sang trọng. |
+| `/help` / `F1` | **Bảng trợ giúp** | Hiển thị danh sách phím tắt và ma trận lệnh đầy đủ trong một popup Overlay viền Amber rực rỡ. |
+| `/quit` / `/q` / `Ctrl+Q` | **Thoát TUI** | Khôi phục lại trạng thái terminal mặc định của hệ điều hành một cách mượt mà và thoát an toàn. |
+
+---
+
+## Ⅱ. TRẢI NGHIỆM TƯƠNG TÁC THỜI GIAN THỰC (REAL-TIME STREAMING & UX)
+
+Để TUI mang lại cảm giác "sống động" và phản hồi tức thì, chúng ta cần đầu tư mạnh mẽ vào các hiệu ứng chuyển động vi mô (Micro-animations).
+
+### 1. Hiệu ứng Con Quay Braille (`⣻`) & Waiting Phrases Vui Nhộn
+Khi Agent đang chuẩn bị phản hồi (is_typing = true), TUI sẽ không để màn hình tĩnh lặng mà hiển thị một bộ chuyển động nhấp nháy:
+
+$$\text{Format: } ⣻ \quad \text{[Tên Agent]} \quad \text{[Câu chờ thay đổi động]} \quad ▋$$
+
+*   **Braille Spinner**: Con quay 8 trạng thái (`⣾`, `⣽`, `⣻`, `⢿`, `⡿`, `⣟`, `⣯`, `⣷`) xoay tít ở tốc độ 60fps.
+*   **Dynamic Waiting Dictionary**: Một thư viện từ điển các câu chờ geek-humor độc đáo đổi liên tục mỗi 0.5s:
+    *   *Mức độ thường*: `Generating..`, `Loading..`, `Thinking..`, `Formulating answers..`
+    *   *Mức độ geek*: `Flabbergasting..`, `Calibrating synapse arrays..`, `Consulting the digital oracle..`, `Compiling stardust..`
+    *   *Mức độ Athanor*: `Stoking the cosmic forge..`, `Summoning Athanor flames..`, `Infusing thermal energy..`
+
+### 2. Live Tool Execution Streamer (Theo dõi Agent chạy Tool)
+Khi Agent sử dụng các công cụ hệ thống (IToolImplementation), TUI cần hiển thị trực quan các block chạy tool với các biểu tượng đặc trưng:
+
+*   **Khởi chạy Tool**:
+    ```
+    ⚙️ [bash] Running command: `cargo test`
+    ```
+*   **Trạng thái thành công**:
+    ```
+    ✅ [bash] Completed successfully. (exit 0)
+    ```
+*   **Trạng thái thất bại**:
+    ```
+    ❌ [bash] Failed with exit code 1.
+    ```
+*   **Đọc/Ghi file**:
+    ```
+    📂 [write] Path: `src/main.rs` (320 bytes written)
+    ```
+
+---
+
+## Ⅲ. GIAO DIỆN PHÂN KHU CAO CẤP (LAYOUT DESIGN SYSTEM)
+
+TUI sẽ chia terminal thành 5 phân khu chức năng được bọc trong hệ màu **Athanor Fire** (Nền đen sẫm, viền Amber/Cam rực rỡ):
+
+```
++-------------------------------------------------------------------------+
+| [Header]  ─ Aether · 🌸 Maria · claudecode-3.5 · Think:High             |
++-------------------------------------------------------------------------+
+| [Chat]                                                                  |
+|   > !cargo test                                                         |
+|   ⚙️ [bash] Running: `cargo test`                                       |
+|   ---                                                                   |
+|   Compiling aether-tui v0.1.0                                           |
+|   Finished test [unoptimized + debuginfo] target(s)                     |
+|   Running unittests                                                     |
+|   test tests::test_parse_command ... ok                                 |
+|   ---                                                                   |
+|   ✅ [bash] Completed successfully.                                     |
+|                                                                         |
+|   🌸 Maria                                                              |
+|   Em đã chạy test thành công rồi nhé anh! Toàn bộ test suite đều xanh.  |
+|                                                                         |
+|   ⣻ 🌸 Maria stoking the cosmic forge.. ▋                                |
++-------------------------------------------------------------------------+
+| [Separator] ─────────────────────────────────────────────────────────── |
++-------------------------------------------------------------------------+
+| [Input]   🔥 › !cargo test                                              |
++-------------------------------------------------------------------------+
+| [Status]  ● connected  ·  maria  ·  /home/thoor/repo/aether  ·  RTK:92% |
++-------------------------------------------------------------------------+
+```
+
+### Chi tiết các phân khu:
+1.  **Header (Thanh tiêu đề)**: Hiển thị tên Agent đang active kèm Emoji, Model hiện tại, và trạng thái cấu hình Thinking.
+2.  **Chat Area (Khu vực chat)**: Hiển thị lịch sử chat CLI tinh giản (User `> `, Assistant `{emoji} `), các khối Codeblock bọc viền tinh tế, các khối công cụ chạy động và spinner nhấp nháy ở cuối dòng.
+3.  **Separator (Đường ngăn cách)**: Đường line mỏng sang trọng chia tách khu nhập liệu.
+4.  **Input Bar (Khung nhập liệu)**: Bọc viền cam rực lửa (`BORDER_FOCUS`), sử dụng prompt ngọn lửa Athanor `🔥 › ` và kích hoạt **Blinking Terminal Cursor** thực tế.
+5.  **Status Bar (Thanh trạng thái)**: Thanh footer nền tối, hiển thị kết nối (`● connected` xanh lá), agent name, thư mục workspace hiện tại và đặc biệt là **Token Saving Analytics từ RTK (e.g. RTK: 92%)**.
+
+---
+
+## Ⅳ. TÍCH HỢP TẬP TIN & HIỂN THỊ DIFF CAO CẤP
+
+Một lập trình viên CLI xịn thường xuyên phải chỉnh sửa code và review code. Aether TUI cần có:
+
+1.  **Syntax Highlighting siêu mịn**: Tích hợp công cụ làm nổi bật cú pháp cho C#, Rust, JS/TS, Python, C++, JSON, Markdown trực tiếp trên terminal với bảng màu hài hòa (không quá chói).
+2.  **Premium Inline Diffs**: Khi Agent đề xuất sửa file, thay vì hiển thị cả tệp tin dài lê thê, TUI sẽ tự động vẽ các đoạn thay đổi dạng Git Diff:
+    *   Các dòng xóa hiển thị màu Đỏ Nhạt với ký tự `-`.
+    *   Các dòng thêm mới hiển thị màu Xanh Lá Nhạt với ký tự `+`.
+    *   Bọc gọn gàng trong khung viền thanh mảnh.
+
+---
+
+## Ⅴ. LỘ TRÌNH TRIỂN KHAI (IMPLEMENTATION PATH)
+
+Chúng ta sẽ triển khai theo các bước cực kỳ bài bản và chuyên nghiệp để không làm xáo trộn hệ thống đang chạy ổn định:
+
+*   **Bước 1: Thiết lập Cơ cấu Waiting & Spinner (`⣻`)**
+    *   Định nghĩa thư viện phrases vui nhộn trong `ui.rs`.
+    *   Cập nhật logic vẽ spinner braille và cơ chế xoay từ frame counter.
+*   **Bước 2: Cài đặt Shell Cục bộ phía TUI (`!`)**
+    *   Cập nhật `commands.rs` để phân tích cú pháp `!`.
+    *   Spawn tokio process, merge đầu ra và stream dòng bằng `BufReader` gửi lên `app_tx`.
+    *   Wire kết quả cuối cùng lên WebSocket Backend qua lệnh gửi message.
+*   **Bước 3: Stream Tool Progress phía Backend C#**
+    *   Bật chunk streaming trong `ChannelMessageProcessor.cs`.
+    *   Tích hợp bộ generator `yield return` chỉ báo trạng thái tool trong `AetherSoul.cs`.
+*   **Bước 4: Polish & Thẩm mỹ**
+    *   Tinh chỉnh màu sắc, viền, thanh trạng thái Status Bar và đồng bộ chỉ số RTK.

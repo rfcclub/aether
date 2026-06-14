@@ -22,7 +22,7 @@
 - Create: `src/Aether/Config/TuiArgs.cs`
 - Create: `tests/Aether.Tests/TuiStartupTests.cs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
   Create `tests/Aether.Tests/TuiStartupTests.cs` with test cases verifying argument parsing:
   ```csharp
@@ -70,7 +70,7 @@
   Run: `dotnet test --filter TuiStartupTests`
   Expected: FAIL (compilation error, type `TuiArgs` not found)
 
-- [ ] **Step 2: Write minimal implementation**
+- [x] **Step 2: Write minimal implementation**
 
   Create `src/Aether/Config/TuiArgs.cs`:
   ```csharp
@@ -94,12 +94,12 @@
   }
   ```
 
-- [ ] **Step 3: Run test to verify it passes**
+- [x] **Step 3: Run test to verify it passes**
 
   Run: `dotnet test --filter TuiStartupTests`
   Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   Run:
   ```bash
@@ -114,7 +114,7 @@
 **Files:**
 - Modify: `src/Aether/Agents/AgentProfile.cs`
 
-- [ ] **Step 1: Modify AgentProfile properties and constructor**
+- [x] **Step 1: Modify AgentProfile properties and constructor**
 
   Open `src/Aether/Agents/AgentProfile.cs` and add `DisplayName` property, and update the constructor signature to accept it:
   ```csharp
@@ -135,7 +135,7 @@
       }
   ```
 
-- [ ] **Step 2: Update FromConfigLoader in AgentProfile**
+- [x] **Step 2: Update FromConfigLoader in AgentProfile**
 
   Update `FromConfigLoader` method in `src/Aether/Agents/AgentProfile.cs` (around line 57) to read `DisplayName` from config and pass it to the constructor:
   ```csharp
@@ -172,12 +172,12 @@
       }
   ```
 
-- [ ] **Step 3: Verify build and compatibility**
+- [x] **Step 3: Verify build and compatibility**
 
   Run: `dotnet build src/Aether/Aether.csproj`
   Expected: Build successful. Existing unit tests compile perfectly due to the optional `displayName` parameter.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   Run:
   ```bash
@@ -192,7 +192,7 @@
 **Files:**
 - Modify: `src/Aether.Tui/Program.cs`
 
-- [ ] **Step 1: Implement repository root tracing and update path resolver**
+- [x] **Step 1: Implement repository root tracing and update path resolver**
 
   Modify the `GetRepositoryRoot` and `ResolvePath` helpers at the bottom of `src/Aether.Tui/Program.cs` (around line 623):
   ```csharp
@@ -225,7 +225,7 @@
   }
   ```
 
-- [ ] **Step 2: Update database registrations to use ResolvePath**
+- [x] **Step 2: Update database registrations to use ResolvePath**
 
   Update database-related registrations in `BuildServices` in `src/Aether.Tui/Program.cs` to resolve `databasePath`:
   ```csharp
@@ -250,7 +250,7 @@
       });
   ```
 
-- [ ] **Step 3: Update LoadConfiguration to parse CLI arguments**
+- [x] **Step 3: Update LoadConfiguration to parse CLI arguments**
 
   Update `LoadConfiguration` to accept `string[] args`, load `appsettings.json` relative to `AppContext.BaseDirectory`, and override `agent:name` from arguments:
   ```csharp
@@ -284,7 +284,7 @@
   var configuration = LoadConfiguration(args);
   ```
 
-- [ ] **Step 4: Update display names and userName checks**
+- [x] **Step 4: Update display names and userName checks**
 
   Update the user name resolver in `SendMessage` (around line 318) to replace `"default"` with `"Thoor"`:
   ```csharp
@@ -310,7 +310,7 @@
     AppendChat($"  \u2502  Connected to agent: {profile.DisplayName}");
     ```
 
-- [ ] **Step 5: Fix input prompt background leakage**
+- [x] **Step 5: Fix input prompt background leakage**
 
   Specify all four color properties for `inputPrompt` (around line 153):
   ```csharp
@@ -331,7 +331,7 @@
   };
   ```
 
-- [ ] **Step 6: Handle invalid agent configuration gracefully**
+- [x] **Step 6: Handle invalid agent configuration gracefully**
 
   Add validation in C# TUI startup when resolving `profile` (around line 41):
   ```csharp
@@ -351,7 +351,7 @@
   }
   ```
 
-- [ ] **Step 7: Run app locally and verify**
+- [x] **Step 7: Run app locally and verify**
 
   Run: `./aether-tui.sh --agent aura`
   Expected: Starts up, displays `Aether · aura` in the header, loads the `aura` agent, displays `Thoor` when chatting, and uses a sleek dark mode.
@@ -359,7 +359,7 @@
   Run: `./aether-tui.sh --agent invalidagent`
   Expected: Prints "Agent 'invalidagent' is not configured or enabled" to standard error and exits with code 1.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
   Run:
   ```bash
@@ -374,7 +374,7 @@
 **Files:**
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 1: Add `--agent` / `-a` arguments to Args struct**
+- [x] **Step 1: Add `--agent` / `-a` arguments to Args struct**
 
   Open `clients/aether-tui/src/main.rs` and update the `Args` struct (around line 21) to define `agent` and make it map to `group`:
   ```rust
@@ -395,7 +395,7 @@
   }
   ```
 
-- [ ] **Step 2: Map parsed agent argument to group**
+- [x] **Step 2: Map parsed agent argument to group**
 
   In `main()` (around line 33), map `args.agent` to `args.group` if specified:
   ```rust
@@ -406,12 +406,12 @@
       let config = Config::resolve(args.url.clone(), args.group.clone());
   ```
 
-- [ ] **Step 3: Run Rust client locally and verify**
+- [x] **Step 3: Run Rust client locally and verify**
 
   Run: `./clients/aether-tui/tui.sh --build --agent aura`
   Expected: Compiles and starts the Rust TUI, connecting to Aura.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   Run:
   ```bash
@@ -426,7 +426,7 @@
 **Files:**
 - Modify: `aether-update.sh`
 
-- [ ] **Step 1: Support compilation and global installation**
+- [x] **Step 1: Support compilation and global installation**
 
   Open `aether-update.sh` and update it to accept `--install` argument, build release packages for both C# and Rust clients, and install a symlink to `~/.local/bin/aether-tui`:
   ```bash
@@ -448,10 +448,14 @@
   echo "🔨 Building Aether Server..."
   dotnet build "$SCRIPT_DIR/src/Aether/Aether.csproj" -c Release --verbosity quiet
 
-  echo "♻️  Restarting service..."
-  launchctl unload "$PLIST" 2>/dev/null || true
-  sleep 1
-  launchctl load "$PLIST"
+  if [ -f "$PLIST" ]; then
+      echo "♻️  Restarting service..."
+      launchctl unload "$PLIST" 2>/dev/null || true
+      sleep 1
+      launchctl load "$PLIST"
+  else
+      echo "⚠️  LaunchAgent plist not found at $PLIST. Skipping service restart."
+  fi
 
   sleep 3
 
@@ -479,19 +483,22 @@
       mkdir -p "$HOME/.local/bin"
 
       # Write wrapper script at ~/.local/bin/aether-tui
-      cat << 'EOF' > "$HOME/.local/bin/aether-tui"
+      cat << EOF > "$HOME/.local/bin/aether-tui"
   #!/usr/bin/env bash
   set -euo pipefail
   # Get repository root
-  REPO_DIR="/Users/thoor/repo/aether"
-  exec "$REPO_DIR/src/Aether.Tui/bin/Release/net8.0/publish/Aether.Tui" "$@"
+  REPO_DIR="$SCRIPT_DIR"
+  exec "\$REPO_DIR/src/Aether.Tui/bin/Release/net8.0/publish/Aether.Tui" "\$@"
   EOF
       chmod +x "$HOME/.local/bin/aether-tui"
       echo "✅ Installed aether-tui wrapper to ~/.local/bin/aether-tui"
+
+      ln -sf "$SCRIPT_DIR/clients/aether-tui/target/release/aether-tui" "$HOME/.local/bin/aether-tui-rs"
+      echo "✅ Installed Rust TUI symlink to ~/.local/bin/aether-tui-rs"
   fi
   ```
 
-- [ ] **Step 2: Verify installation**
+- [x] **Step 2: Verify installation**
 
   Run: `./aether-update.sh --install`
   Expected: Compiles both C# and Rust, creates wrapper executable at `~/.local/bin/aether-tui`.
@@ -499,7 +506,7 @@
   Run from home folder: `~/.local/bin/aether-tui --agent aura`
   Expected: Successfully connects to the Aura agent with local database resolution working perfectly.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   Run:
   ```bash

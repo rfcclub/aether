@@ -231,8 +231,10 @@ public sealed class BackwardCompatibilityTests : IDisposable
         try
         {
             Environment.CurrentDirectory = _tempDir;
+            var resolvedTempDir = Environment.CurrentDirectory;
+            var resolvedLegacyDir = Path.Combine(resolvedTempDir, "agents", "testagent");
 
-            var aetherDir = Path.Combine(_tempDir, ".aether");
+            var aetherDir = Path.Combine(resolvedTempDir, ".aether");
             Directory.CreateDirectory(aetherDir);
             File.WriteAllText(Path.Combine(aetherDir, "config.json"), "{}");
             var configuration = new ConfigurationBuilder().Build();
@@ -244,7 +246,7 @@ public sealed class BackwardCompatibilityTests : IDisposable
                 loader,
                 new AgentConfig { StartupFiles = new() { "SOUL.md" } });
 
-            Assert.Equal(legacyDir, profile.AgentDirectory);
+            Assert.Equal(resolvedLegacyDir, profile.AgentDirectory);
             var persona = await profile.LoadPersonaAsync();
             Assert.Contains("I am a legacy agent.", persona);
         }

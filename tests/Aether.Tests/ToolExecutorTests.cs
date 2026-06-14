@@ -155,9 +155,13 @@ public class ToolExecutorTests
             var tools = new ToolExecutor(sandbox, workspace);
 
             // Even /etc/passwd should be allowed with type "none"
+            var targetPath = OperatingSystem.IsWindows()
+                ? Environment.SystemDirectory + "\\drivers\\etc\\hosts"
+                : "/etc/passwd";
+
             var result = await tools.ExecuteAsync(new ToolCall("read", new Dictionary<string, string>
             {
-                ["path"] = "/etc/hostname"
+                ["path"] = targetPath
             }), CancellationToken.None);
 
             Assert.True(result.Succeeded);
