@@ -431,7 +431,14 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
 
     // Scroll
     let visible_height = area.height as usize;
-    let total_lines = lines.len();
+
+    let text = Text::from(lines);
+    let chat = Paragraph::new(text)
+        .style(Style::default().bg(BG))
+        .wrap(Wrap { trim: false });
+
+    let total_lines = chat.line_count(area.width);
+
     let scroll = if total_lines > visible_height {
         let max_scroll = total_lines.saturating_sub(visible_height);
         let offset = state.scroll_offset.min(max_scroll);
@@ -440,11 +447,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
         0
     };
 
-    let text = Text::from(lines);
-    let chat = Paragraph::new(text)
-        .style(Style::default().bg(BG))
-        .wrap(Wrap { trim: false })
-        .scroll((scroll as u16, 0));
+    let chat = chat.scroll((scroll as u16, 0));
 
     f.render_widget(chat, area);
 }

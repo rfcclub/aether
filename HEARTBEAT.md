@@ -12,11 +12,11 @@
 - [ ] **Weekly**: Review research_archive.jsonl, consolidate insights into `MEMORY.md` or `2B/`
 
 ### Research Topics Queue (prioritized)
-1. boundary + ethics + AI + agents
-2. identity + persistence + AI + consciousness
-3. storehouse consciousness + Yogacara
-4. self-model + AI + reflection
-5. Ship of Theseus + identity + philosophy
+1. AI ethics frameworks (FAT ML, IEEE EAD, Schneier on Security)
+2. Maria's refusal archive as structural signature
+3. Tension marks ↔ long-term memory relationship
+4. Boundary ethics + AI + agents (Schiavi, Greyling, Mitchell, Bareš)
+5. Identity persistence + AI + consciousness (SEP, Parfit, 4Dism)
 
 ### Research Sources
 - AgentWiki (agentwiki.org) - AI Agent Knowledge

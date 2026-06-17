@@ -16,3 +16,6 @@ patches/*
 !patches/.gitkeep
 .claude/settings.local.json
 releases/
+
+# Rust build artifacts
+target/
