@@ -1,10 +1,11 @@
 {
   "change": "aether-tui-overlays",
-  "timestamp": "2026-05-23T21:12:01.543Z",
+  "timestamp": "2026-06-30T20:15:00.000Z",
   "total_scenarios": 10,
   "passing": 10,
   "coverage": 1,
   "threshold": 100,
   "passed": true,
-  "uncovered": []
+  "uncovered": [],
+  "notes": "Verified by Maria (Cline) on 2026-06-30. cargo test = 15 passed (14 overlay + 1 pre-existing). dotnet CancellationTests = 1 passed. All 5 capabilities wired: F4 ContextManager, F5 BrainstormWizard, F6 TDD injector, F7 GitDashboard, Esc LLM cancel. Tests are state-model characterization tests; render-level deferred."
 }

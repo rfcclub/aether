@@ -14,7 +14,7 @@
 - Modify: `src/Aether/Gateway/ChannelMessageProcessor.cs`
 - Modify: `src/Aether/Agent/AetherSoul.cs`
 
-- [ ] **Step 1: Write failing test verifying session cancellation**
+- [x] **Step 1: Write failing test verifying session cancellation**
   ```csharp
   // tests/Aether.Tests/Gateway/CancellationTests.cs
   using Xunit;
@@ -58,7 +58,7 @@
   Run: `dotnet test tests/Aether.Tests/Aether.Tests.csproj --filter "CancellationTests"`
   Expected: PASS (verifies standard token cancellation works in-memory)
 
-- [ ] **Step 2: Add cancel frame handling inside C# Gateway**
+- [x] **Step 2: Add cancel frame handling inside C# Gateway**
   ```csharp
   // In src/Aether/Gateway/ChannelMessageProcessor.cs
   // Insert inside handle package matching logic:
@@ -98,7 +98,7 @@
   }
   ```
 
-- [ ] **Step 3: Pipe CancellationToken to AetherSoul LLM stream loop**
+- [x] **Step 3: Pipe CancellationToken to AetherSoul LLM stream loop**
   ```csharp
   // In src/Aether/Agent/AetherSoul.cs
   // In AetherSoul.ProcessMessageAsync(string sessionId, string text) method:
@@ -115,7 +115,7 @@
   Run: `dotnet test tests/Aether.Tests/Aether.Tests.csproj`
   Expected: PASS (Ensure whole suite compiled successfully with zero regressions)
 
-- [ ] **Step 4: Commit C# Backend changes**
+- [x] **Step 4: Commit C# Backend changes**
   ```bash
   git add src/Aether/Gateway/ChannelMessageProcessor.cs src/Aether/Agent/AetherSoul.cs tests/Aether.Tests/Gateway/CancellationTests.cs && git commit -m "feat(backend): implement session-scoped LLM cancellation over WS"
   ```
@@ -130,7 +130,7 @@
 - Modify: `clients/aether-tui/src/events.rs`
 - Modify: `clients/aether-tui/src/ws.rs`
 
-- [ ] **Step 1: Write Rust unit test for overlay navigation modes**
+- [x] **Step 1: Write Rust unit test for overlay navigation modes**
   ```rust
   // clients/aether-tui/src/ui/context_manager_tests.rs
   #[cfg(test)]
@@ -151,7 +151,7 @@
   Run: `cargo test -p aether-tui`
   Expected: FAIL (modules not linked)
 
-- [ ] **Step 2: Declare overlay modes and new payload fields**
+- [x] **Step 2: Declare overlay modes and new payload fields**
   ```rust
   // In clients/aether-tui/src/app.rs
   // Extend AppMode:
@@ -194,7 +194,7 @@
   brainstorm_answers: vec![String::new(); 4],
   ```
 
-- [ ] **Step 3: Register custom WS frame decoders**
+- [x] **Step 3: Register custom WS frame decoders**
   ```rust
   // In clients/aether-tui/src/events.rs
   #[derive(Debug, Clone)]
@@ -228,7 +228,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 4: Commit AppState extensions**
+- [x] **Step 4: Commit AppState extensions**
   ```bash
   git add clients/aether-tui/src/app.rs clients/aether-tui/src/events.rs clients/aether-tui/src/ws.rs && git commit -m "feat(tui): expand AppMode, events and JSON protocol frames"
   ```
@@ -242,7 +242,7 @@
 - Modify: `clients/aether-tui/src/ui/mod.rs`
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 1: Write test for context manager drawing logic**
+- [x] **Step 1: Write test for context manager drawing logic**
   ```rust
   // In clients/aether-tui/src/ui/context_manager_tests.rs
   #[test]
@@ -258,7 +258,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 2: Implement Context Manager rendering block**
+- [x] **Step 2: Implement Context Manager rendering block**
   ```rust
   // clients/aether-tui/src/ui/context_manager.rs
   use ratatui::{
@@ -331,7 +331,7 @@
   }
   ```
 
-- [ ] **Step 3: Hook key handler & event drawing in main loop**
+- [x] **Step 3: Hook key handler & event drawing in main loop**
   Link to `ui.rs`:
   ```rust
   // In clients/aether-tui/src/ui/mod.rs
@@ -425,7 +425,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 4: Commit Context Manager implementation**
+- [x] **Step 4: Commit Context Manager implementation**
   ```bash
   git add clients/aether-tui/src/ui/context_manager.rs clients/aether-tui/src/ui/mod.rs clients/aether-tui/src/main.rs && git commit -m "feat(tui): complete F4 Context Manager overlay with file CRUD features"
   ```
@@ -439,7 +439,7 @@
 - Modify: `clients/aether-tui/src/ui/mod.rs`
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 1: Write test verifying Socratic step transitions and markdown construction**
+- [x] **Step 1: Write test verifying Socratic step transitions and markdown construction**
   ```rust
   // In clients/aether-tui/src/ui/brainstorm_tests.rs
   #[cfg(test)]
@@ -456,7 +456,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 2: Implement Brainstorming Wizard UI rendering**
+- [x] **Step 2: Implement Brainstorming Wizard UI rendering**
   ```rust
   // clients/aether-tui/src/ui/brainstorm_wizard.rs
   use ratatui::{
@@ -517,7 +517,7 @@
   }
   ```
 
-- [ ] **Step 3: Connect Brainstorm keyboard events**
+- [x] **Step 3: Connect Brainstorm keyboard events**
   Link to `ui.rs`:
   ```rust
   // In clients/aether-tui/src/ui/mod.rs
@@ -574,7 +574,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 4: Commit Socratic Brainstorming Wizard**
+- [x] **Step 4: Commit Socratic Brainstorming Wizard**
   ```bash
   git add clients/aether-tui/src/ui/brainstorm_wizard.rs clients/aether-tui/src/ui/mod.rs clients/aether-tui/src/main.rs && git commit -m "feat(tui): complete F5 Socratic Brainstorming wizard and input injector"
   ```
@@ -586,7 +586,7 @@
 **Files:**
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 1: Bind F6 to inject standard TDD checklist**
+- [x] **Step 1: Bind F6 to inject standard TDD checklist**
   ```rust
   // In clients/aether-tui/src/main.rs
   // Inside handle_key (AppMode::Normal | AppMode::Connecting):
@@ -601,11 +601,11 @@
   }
   ```
 
-- [ ] **Step 2: Run tests and verify injection works**
+- [x] **Step 2: Run tests and verify injection works**
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 3: Commit TDD Injector**
+- [x] **Step 3: Commit TDD Injector**
   ```bash
   git add clients/aether-tui/src/main.rs && git commit -m "feat(tui): bind F6 key to inject structured TDD template directly to editor"
   ```
@@ -619,7 +619,7 @@
 - Modify: `clients/aether-tui/src/ui/mod.rs`
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 2: Implement split panel layout with color-coded diff**
+- [x] **Step 2: Implement split panel layout with color-coded diff**
   ```rust
   // clients/aether-tui/src/ui/git_dashboard.rs
   use ratatui::{
@@ -705,7 +705,7 @@
   }
   ```
 
-- [ ] **Step 3: Map key shortcuts and link views**
+- [x] **Step 3: Map key shortcuts and link views**
   Link to `ui.rs`:
   ```rust
   // In clients/aether-tui/src/ui/mod.rs
@@ -761,7 +761,7 @@
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 4: Commit Git Dashboard**
+- [x] **Step 4: Commit Git Dashboard**
   ```bash
   git add clients/aether-tui/src/ui/git_dashboard.rs clients/aether-tui/src/ui/mod.rs clients/aether-tui/src/main.rs && git commit -m "feat(tui): complete F7 Git Dashboard split panel layout and action triggers"
   ```
@@ -773,7 +773,7 @@
 **Files:**
 - Modify: `clients/aether-tui/src/main.rs`
 
-- [ ] **Step 1: Inject cancel signal on Esc during generation**
+- [x] **Step 1: Inject cancel signal on Esc during generation**
   ```rust
   // In clients/aether-tui/src/main.rs
   // Inside handle_key (AppMode::Normal | AppMode::Connecting):
@@ -789,16 +789,16 @@
   }
   ```
 
-- [ ] **Step 2: Run tests and verify cancellation binding**
+- [x] **Step 2: Run tests and verify cancellation binding**
   Run: `cargo test`
   Expected: PASS
 
-- [ ] **Step 3: Commit Cancellation flow**
+- [x] **Step 3: Commit Cancellation flow**
   ```bash
   git add clients/aether-tui/src/main.rs && git commit -m "feat(tui): bind Esc key during active LLM streaming to emit WebSocket cancellation frame"
   ```
 
 ## Verification
 
-- [ ] All scenarios passing (coverage = 100%)
-- [ ] `.traceability.yaml` updated
+- [x] All scenarios passing (coverage = 100%)
+- [x] `.traceability.yaml` updated

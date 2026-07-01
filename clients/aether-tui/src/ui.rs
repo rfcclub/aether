@@ -13,6 +13,15 @@ pub mod context_manager;
 pub mod brainstorm_wizard;
 pub mod git_dashboard;
 
+#[cfg(test)]
+mod context_manager_tests;
+#[cfg(test)]
+mod brainstorm_tests;
+#[cfg(test)]
+mod git_tests;
+#[cfg(test)]
+mod tdd_tests;
+
 // ── Athanor Fire Theme ────────────────────────────────────────────────────────
 pub const BG:           Color = Color::Rgb(8,   8,   8);    // Deep Black
 pub const USER_NAME:    Color = Color::Rgb(91,  200, 245);  // Ice Blue
@@ -30,28 +39,6 @@ pub const VIOLET:       Color = Color::Rgb(168, 85,  247);  // Aura Violet
 pub const PICKER_SEL:   Color = Color::Rgb(168, 85,  247);
 pub const PICKER_HDR:   Color = Color::Rgb(180, 180, 180);
 
-const WAITING_PHRASES: &[&str] = &[
-    "Generating..",
-    "Loading..",
-    "Thinking..",
-    "Formulating answers..",
-    "Flabbergasting..",
-    "Calibrating synapse arrays..",
-    "Consulting the digital oracle..",
-    "Compiling stardust..",
-    "Stoking the cosmic forge..",
-    "Summoning Athanor flames..",
-    "Infusing thermal energy..",
-    "Channelling the inner scholar..",
-    "Untangling quantum threads..",
-    "Brewing digital espresso..",
-    "Consulting local spirits..",
-    "Polishing CLI chrome..",
-    "Reticulating splines..",
-    "Injecting high-density thoughts..",
-    "Re-igniting the atomic core..",
-    "Whispering to the compiler..",
-];
 
 /// Main draw entry point — called every frame
 pub fn draw(f: &mut Frame, state: &AppState) {
@@ -373,8 +360,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
     } else if state.is_typing {
         let spinner_frames = &["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
         let spinner = spinner_frames[state.spinner_frame as usize % spinner_frames.len()];
-        let phrase_idx = (state.spinner_frame as usize / 30) % WAITING_PHRASES.len();
-        let phrase = WAITING_PHRASES[phrase_idx];
+        let phrase = &state.current_waiting_phrase;
 
         // Dòng 1: Hiển thị bộ đếm token ở phía TRÊN dòng chữ chờ
         lines.push(Line::from(vec![
