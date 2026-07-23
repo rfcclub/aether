@@ -26,7 +26,10 @@ public abstract class FileToolBase : IToolImplementation
             : Path.GetFullPath(Path.Combine(sandbox.WorkspacePath, path));
 
         if (!sandbox.IsPathAllowed(resolved))
-            throw new UnauthorizedAccessException($"Path not permitted: {path}");
+        {
+            var allowedList = string.Join(", ", sandbox.AllowedPaths);
+            throw new UnauthorizedAccessException($"Path not permitted: {path}. Resolved: {resolved}. Workspace: {sandbox.WorkspacePath}. Allowed: [{allowedList}].");
+        }
 
         return resolved;
     }

@@ -242,20 +242,42 @@ public sealed class MariaSqliteStore
 
     private static MemoryNode MapReaderToNode(SqliteDataReader reader)
     {
+        var tagsStr = reader.IsDBNull(4) ? "" : reader.GetString(4);
+        List<string> tagsList;
+        if (string.IsNullOrWhiteSpace(tagsStr))
+        {
+            tagsList = new List<string>();
+        }
+        else if (tagsStr.TrimStart().StartsWith("["))
+        {
+            try
+            {
+                tagsList = JsonSerializer.Deserialize<List<string>>(tagsStr) ?? new List<string>();
+            }
+            catch
+            {
+                tagsList = tagsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            }
+        }
+        else
+        {
+            tagsList = tagsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        }
+
         return new MemoryNode
         {
             Id = reader.GetString(0),
             Timestamp = DateTime.Parse(reader.GetString(1)),
-            Role = reader.GetString(2),
-            Content = reader.GetString(3),
-            Tags = JsonSerializer.Deserialize<List<string>>(reader.GetString(4)) ?? new(),
-            Source = reader.GetString(5),
-            DayKey = reader.GetString(6),
-            ThreadId = reader.GetString(7),
-            Weight = reader.GetFloat(8),
-            Score = reader.GetFloat(9),
-            RecallCount = reader.GetInt32(10),
-            IsPromoted = reader.GetInt32(11) == 1
+            Role = reader.IsDBNull(2) ? "" : reader.GetString(2),
+            Content = reader.IsDBNull(3) ? "" : reader.GetString(3),
+            Tags = tagsList,
+            Source = reader.IsDBNull(5) ? "" : reader.GetString(5),
+            DayKey = reader.IsDBNull(6) ? "" : reader.GetString(6),
+            ThreadId = reader.IsDBNull(7) ? "" : reader.GetString(7),
+            Weight = reader.IsDBNull(8) ? 0.0f : reader.GetFloat(8),
+            Score = reader.IsDBNull(9) ? 0.0f : reader.GetFloat(9),
+            RecallCount = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
+            IsPromoted = !reader.IsDBNull(11) && reader.GetInt32(11) == 1
         };
     }
 }

@@ -12,6 +12,9 @@ pub enum AppMode {
     ContextManager,
     BrainstormWizard,
     GitDashboard,
+    GoalsDashboard,
+    SkillsPanel,
+    MetricsDashboard,
 }
 
 pub struct AppState {
@@ -44,6 +47,16 @@ pub struct AppState {
     pub brainstorm_step: usize,
     pub brainstorm_answers: Vec<String>,
     pub cursor_position: usize,
+    pub current_waiting_phrase: String,
+    pub waiting_phrases: Vec<String>,
+    // Telemetry data caches (populated by WS responses)
+    pub goals: Option<serde_json::Value>,
+    pub skills: Option<serde_json::Value>,
+    pub metrics: Option<serde_json::Value>,
+    pub telemetry: Option<serde_json::Value>,
+    pub goals_selection: usize,
+    pub skills_selection: usize,
+    pub metrics_scroll: usize,
 }
 
 impl AppState {
@@ -75,6 +88,15 @@ impl AppState {
             brainstorm_step: 0,
             brainstorm_answers: vec![String::new(); 4],
             cursor_position: 0,
+            current_waiting_phrase: "Running ....".to_string(),
+            waiting_phrases: crate::config::default_waiting_phrases(),
+            goals: None,
+            skills: None,
+            metrics: None,
+            telemetry: None,
+            goals_selection: 0,
+            skills_selection: 0,
+            metrics_scroll: 0,
         }
     }
 
@@ -196,6 +218,28 @@ impl AppState {
                 self.reconnect_hint = Some(reason);
             }
             AppEvent::StreamChunk(text) => {
+                if text.contains('⚙') {
+                    if let (Some(start), Some(end)) = (text.find('['), text.find(']')) {
+                        if start < end {
+                            self.current_waiting_phrase = format!("Calling {}...", &text[start + 1..end]);
+                        }
+                    }
+                } else if text.contains('✅') {
+                    if let (Some(start), Some(end)) = (text.find('['), text.find(']')) {
+                        if start < end {
+                            self.current_waiting_phrase = format!("Completed {}", &text[start + 1..end]);
+                        }
+                    }
+                } else if text.contains('❌') {
+                    if let (Some(start), Some(end)) = (text.find('['), text.find(']')) {
+                        if start < end {
+                            self.current_waiting_phrase = format!("Failed {}", &text[start + 1..end]);
+                        }
+                    }
+                } else if !text.trim().is_empty() && !text.contains('[') {
+                    self.current_waiting_phrase = "Generating...".to_string();
+                }
+
                 self.streaming_buf.push_str(&text);
                 self.tokens_received += 1;
             }
@@ -218,6 +262,19 @@ impl AppState {
                 self.is_typing = false;
             }
             AppEvent::Typing(state) => {
+                if state && !self.is_typing {
+                    let phrases: Vec<String> = if self.waiting_phrases.is_empty() {
+                        crate::config::default_waiting_phrases()
+                    } else {
+                        self.waiting_phrases.clone()
+                    };
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    let idx = (nanos as usize) % phrases.len();
+                    self.current_waiting_phrase = phrases[idx].clone();
+                }
                 self.is_typing = state;
             }
             AppEvent::BackendError(err) => {
@@ -246,6 +303,19 @@ impl AppState {
             }
             AppEvent::GitDiffLoaded(diff) => {
                 self.selected_diff = diff;
+            }
+            AppEvent::GoalsLoaded(goals) => {
+                self.goals = Some(goals);
+            }
+            AppEvent::SkillsLoaded(skills) => {
+                self.skills = Some(skills);
+            }
+            AppEvent::MetricsLoaded(metrics) => {
+                self.metrics = Some(metrics);
+                self.metrics_scroll = 0;
+            }
+            AppEvent::TelemetryLoaded(telemetry) => {
+                self.telemetry = Some(telemetry);
             }
         }
         false

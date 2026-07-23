@@ -37,10 +37,12 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, GetEndpoint());
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
 
+        var messagesArray = BuildMessagesArray(request);
+
         var body = new Dictionary<string, object?>
         {
             ["model"] = Model,
-            ["messages"] = request.Messages.Select(MapMessage).ToArray()
+            ["messages"] = messagesArray
         };
 
         if (!string.IsNullOrEmpty(request.ReasoningEffort) && 
@@ -124,10 +126,12 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, GetEndpoint());
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GetApiKey());
 
+        var messagesArray = BuildMessagesArray(request);
+
         var body = new Dictionary<string, object?>
         {
             ["model"] = Model,
-            ["messages"] = request.Messages.Select(MapMessage).ToArray(),
+            ["messages"] = messagesArray,
             ["stream"] = true
         };
 
@@ -233,14 +237,27 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
                         toolCallAccumulators[index] = (id, name, new StringBuilder());
                         acc = toolCallAccumulators[index];
                     }
-                    else if (tc.TryGetProperty("function", out var fnEl) &&
-                             fnEl.TryGetProperty("name", out var nmEl))
+                    else
                     {
-                        // Some SSE implementations send name later; update if present
-                        var name = nmEl.GetString() ?? "";
-                        if (name.Length > 0 && acc.Name.Length == 0)
+                        // Check if id is sent in a later chunk or if we need to update it
+                        if (tc.TryGetProperty("id", out var idEl))
                         {
-                            acc = (acc.Id, name, acc.Arguments);
+                            var id = idEl.GetString() ?? "";
+                            if (id.Length > 0 && acc.Id.Length == 0)
+                            {
+                                acc = (id, acc.Name, acc.Arguments);
+                            }
+                        }
+
+                        if (tc.TryGetProperty("function", out var fnEl) &&
+                            fnEl.TryGetProperty("name", out var nmEl))
+                        {
+                            // Some SSE implementations send name later; update if present
+                            var name = nmEl.GetString() ?? "";
+                            if (name.Length > 0 && acc.Name.Length == 0)
+                            {
+                                acc = (acc.Id, name, acc.Arguments);
+                            }
                         }
                     }
 
@@ -272,7 +289,8 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
                 : JsonSerializer.Deserialize<Dictionary<string, string>>(argsJson, JsonOptions)
                   ?? new Dictionary<string, string>();
 
-            toolCalls.Add(new LlmToolCall(id, name, arguments));
+            var finalId = string.IsNullOrEmpty(id) ? $"call_{Guid.NewGuid():N}" : id;
+            toolCalls.Add(new LlmToolCall(finalId, name, arguments));
         }
 
         var finalResponse = new LlmResponse(
@@ -375,5 +393,25 @@ public abstract class OpenAiCompatibleProviderBase : ILLMProvider
         }
 
         return calls;
+    }
+
+    /// <summary>
+    /// Build the messages array for the request, inserting system prompt if provided.
+    /// </summary>
+    protected object[] BuildMessagesArray(LlmRequest request)
+    {
+        var messages = new List<object>();
+
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            messages.Add(new { role = "system", content = request.SystemPrompt });
+        }
+
+        foreach (var msg in request.Messages)
+        {
+            messages.Add(MapMessage(msg));
+        }
+
+        return messages.ToArray();
     }
 }

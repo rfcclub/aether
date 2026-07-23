@@ -1,4 +1,7 @@
+using System.Text.Json;
+using Aether.Channels;
 using Aether.Plugins;
+using Aether.Plugins.MariaMemory.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.Plugins.MariaMemory;
@@ -35,8 +38,28 @@ public sealed class MariaMemoryLifecycle : IPluginLifecycle
         Dreamer = new DreamingService(Store, promoter, _logger);
         Dreamer.StartBackground(TimeSpan.FromHours(1)); // Run every hour
 
-        Api = new MariaMemoryApi(Store, ContextEngine, Dreamer, _logger);
-        Api.Start();
+        // Api = new MariaMemoryApi(Store, ContextEngine, Dreamer, _logger);
+        // Api.Start();
+
+        // Wire MariaMemoryHost delegates so WebSocketChannel HTTP routes (/memory/maria/*)
+        // can serve recall/nodes without the core assembly referencing the plugin.
+        MariaMemoryHost.SearchHandler = async (query, limit, token) =>
+        {
+            var nodes = await Store!.SearchAsync(query, limit, token);
+            return JsonSerializer.SerializeToElement(new { success = true, nodes });
+        };
+                MariaMemoryHost.GetAllHandler = async (limit, token) =>
+        {
+            var nodes = await Store!.GetAllNodesAsync(limit, token);
+            return JsonSerializer.SerializeToElement(new { success = true, nodes });
+        };
+        MariaMemoryHost.AppendHandler = async (body, token) =>
+        {
+            var node = JsonSerializer.Deserialize<MemoryNode>(body);
+            if (node is null) return JsonSerializer.SerializeToElement(new { success = false, error = "Invalid MemoryNode JSON" });
+            await Store!.AppendAsync(node, token);
+            return JsonSerializer.SerializeToElement(new { success = true, id = node.Id });
+        };
 
         _logger.LogInformation("MariaMemoryPlugin v2.0 (The 7 Gems) loaded.");
         return Task.CompletedTask;

@@ -128,7 +128,7 @@ public class PluginAssetRegistrar
                 Name: name,
                 Description: desc,
                 ParametersSchema: schema.ValueKind == JsonValueKind.Object ? schema : JsonDocument.Parse("{}").RootElement,
-                Execute: (_, _) => Task.FromResult<object>("Tool not implemented"),
+                Execute: (_, _) => throw new NotSupportedException($"Tool '{name}' is declared in the plugin manifest but has no implementation."),
                 Risk: ToolRisk.Read,
                 Enabled: true);
 

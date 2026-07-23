@@ -1,0 +1,14 @@
+{
+  "name": "aether-maria-recall",
+  "version": "1.0.0",
+  "description": "Cline plugin — bridge maria_recall to Aether MariaMemory 2.0 via port 5099",
+  "main": "index.ts",
+  "cline": {
+    "plugin": true,
+    "name": "aether-maria-recall",
+    "displayName": "Aether Maria Recall"
+  },
+  "devDependencies": {
+    "@cline/sdk": "latest"
+  }
+}

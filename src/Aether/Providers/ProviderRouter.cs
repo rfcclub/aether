@@ -118,7 +118,6 @@ public class ProviderRouter : ILLMProvider
         }
 
         // Fallback: provider-priority routing (backward compat, no ModelChain set)
-        var needsBetterModel = ShouldEscalateToBetterModel(request.Messages, complexity);
         var primaryGroup = PrimaryGroup;
         try
         {
@@ -157,25 +156,140 @@ public class ProviderRouter : ILLMProvider
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var complexity = EstimateComplexity(request.Messages);
-        var endpoint = SelectEndpoint(PrimaryGroup) ?? SelectEndpoint(FallbackGroups.FirstOrDefault() ?? "openrouter");
 
-        if (endpoint is null)
+        // Model-first routing: iterate agent's model chain
+        if (ModelChain is { Count: > 0 })
         {
-            throw new InvalidOperationException("No available endpoints");
+            IReadOnlyList<string>? chainTokens = null;
+            foreach (var modelId in ModelChain)
+            {
+                var provider = ResolveModelToProvider(modelId);
+                if (provider is null)
+                {
+                    _logger.LogWarning("Model '{ModelId}' could not be resolved to any provider for streaming, skipping", modelId);
+                    continue;
+                }
+
+                if (IsCircuitOpen(provider.Name))
+                {
+                    _logger.LogDebug("Skipping {Provider} for streaming model '{ModelId}' - circuit open", provider.Name, modelId);
+                    continue;
+                }
+
+                chainTokens = await TryStreamProviderAsync(provider, request, modelId, complexity, ct);
+                if (chainTokens is not null)
+                    break;
+            }
+
+            if (chainTokens is not null)
+            {
+                foreach (var t in chainTokens) yield return t;
+                yield break;
+            }
+
+            throw new InvalidOperationException("All models in agent chain failed for streaming");
         }
 
-        if (!endpoint.SupportsStreaming)
+        // Fallback: provider-priority routing
+        var primaryGroup = PrimaryGroup;
+        var endpoint = SelectEndpoint(primaryGroup);
+        var result = endpoint is not null
+            ? await TryStreamEndpointAsync(endpoint, request, primaryGroup, ct)
+            : null;
+
+        if (result is not null)
         {
-            // Fall back to non-streaming
-            var response = await endpoint.CompleteAsync(request, ct);
-            yield return response.Content;
+            foreach (var t in result) yield return t;
             yield break;
         }
 
-        // For streaming, we'd need provider to expose streaming method
-        // This is a placeholder - actual streaming requires provider-specific implementation
-        var fullResponse = await endpoint.CompleteAsync(request, ct);
-        yield return fullResponse.Content;
+        foreach (var fallbackGroup in FallbackGroups)
+        {
+            endpoint = SelectEndpoint(fallbackGroup);
+            if (endpoint is null) continue;
+
+            result = await TryStreamEndpointAsync(endpoint, request, fallbackGroup, ct);
+            if (result is not null)
+            {
+                foreach (var t in result) yield return t;
+                yield break;
+            }
+        }
+
+        throw new InvalidOperationException("All provider groups failed for streaming");
+    }
+
+    /// <summary>
+    /// Try a single provider for streaming. Returns accumulated tokens on success, null on failure.
+    /// Separated from the enumerator to avoid C# 'yield in try-catch' restriction.
+    /// </summary>
+    private async Task<IReadOnlyList<string>?> TryStreamProviderAsync(
+        ILLMProvider provider, LlmRequest request, string modelId, float complexity, CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Trying streaming model '{ModelId}' via {Provider} (complexity {Complexity})",
+                modelId, provider.Name, complexity);
+            var tokens = new List<string>();
+            if (provider.SupportsStreaming)
+            {
+                await foreach (var evt in provider.CompleteStreamingEventsAsync(request, ct))
+                {
+                    if (evt is StreamEvent.TextToken tt)
+                        tokens.Add(tt.Token);
+                }
+            }
+            else
+            {
+                var response = await provider.CompleteAsync(request, ct);
+                tokens.Add(response.Content);
+            }
+            RecordSuccess(provider.Name);
+            return tokens;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Streaming model '{ModelId}' via {Provider} failed, trying next in chain",
+                modelId, provider.Name);
+            RecordFailure(provider.Name);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Try a single endpoint for streaming. Returns accumulated tokens on success, null on failure.
+    /// </summary>
+    private async Task<IReadOnlyList<string>?> TryStreamEndpointAsync(
+        ILLMProvider endpoint, LlmRequest request, string groupName, CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Trying endpoint {Endpoint} in group {Group} for streaming",
+                endpoint.Model, groupName);
+            var tokens = new List<string>();
+            if (endpoint.SupportsStreaming)
+            {
+                await foreach (var evt in endpoint.CompleteStreamingEventsAsync(request, ct))
+                {
+                    if (evt is StreamEvent.TextToken tt)
+                        tokens.Add(tt.Token);
+                }
+            }
+            else
+            {
+                var response = await endpoint.CompleteAsync(request, ct);
+                tokens.Add(response.Content);
+            }
+            RecordSuccess(endpoint.Name);
+            return tokens;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Endpoint {Endpoint} in group {Group} streaming failed",
+                endpoint.Model, groupName);
+            RecordFailure(endpoint.Name);
+            return null;
+        }
     }
 
     public async IAsyncEnumerable<StreamEvent> CompleteStreamingEventsAsync(
@@ -183,11 +297,62 @@ public class ProviderRouter : ILLMProvider
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var complexity = EstimateComplexity(request.Messages);
-        var needsBetterModel = ShouldEscalateToBetterModel(request.Messages, complexity);
-
-        // Try primary group first (buffer results outside try-catch because yields
-        // cannot live inside try blocks with catch clauses in C#)
         var events = new List<StreamEvent>();
+
+        // Model-first routing: iterate agent's model chain
+        if (ModelChain is { Count: > 0 })
+        {
+            foreach (var modelId in ModelChain)
+            {
+                var provider = ResolveModelToProvider(modelId);
+                if (provider is null)
+                {
+                    _logger.LogWarning("Model '{ModelId}' could not be resolved to any provider for streaming, skipping", modelId);
+                    continue;
+                }
+
+                if (IsCircuitOpen(provider.Name))
+                {
+                    _logger.LogDebug("Skipping {Provider} for streaming model '{ModelId}' - circuit open", provider.Name, modelId);
+                    continue;
+                }
+
+                events.Clear();
+                var succeeded = false;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                try
+                {
+                    _logger.LogInformation("Trying streaming model '{ModelId}' via {Provider} (complexity {Complexity})",
+                        modelId, provider.Name, complexity);
+                    await foreach (var evt in provider.CompleteStreamingEventsAsync(request, ct))
+                    {
+                        events.Add(evt);
+                    }
+                    succeeded = true;
+                    sw.Stop();
+                    RecordSuccess(provider.Name);
+                    await RecordUsageAsync(provider.Name, provider.Model, 0, 0, sw.ElapsedMilliseconds, ct);
+                }
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    _logger.LogWarning(ex, "Streaming model '{ModelId}' via {Provider} failed, trying next in chain",
+                        modelId, provider.Name);
+                    RecordFailure(provider.Name);
+                }
+
+                if (succeeded)
+                {
+                    foreach (var evt in events) yield return evt;
+                    yield break;
+                }
+            }
+
+            throw new InvalidOperationException("All models in agent chain failed for streaming");
+        }
+
+        // Fallback: provider-priority routing (backward compat, no ModelChain set)
         var primarySucceeded = false;
         var primaryGroup = PrimaryGroup;
 
@@ -258,7 +423,10 @@ public class ProviderRouter : ILLMProvider
                 if (await p.HealthCheckAsync(ct))
                     return true;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Health check failed for provider {Provider}", p.Name);
+            }
         }
         return false;
     }
@@ -343,19 +511,15 @@ public class ProviderRouter : ILLMProvider
         lock (_lock)
         {
             if (!_circuitBreakers.TryGetValue(providerName, out var state))
-            {
                 return false;
-            }
 
+            // Pure read: circuit is open only if still within the reset timeout.
+            // After timeout, circuit auto-closes (next attempt will probe).
+            // No mutation in this query — eliminates the half-open race condition.
             if (state.IsOpen && DateTime.UtcNow - state.OpenedAt > CircuitResetTimeout)
-            {
-                // Half-open - allow one attempt
-                state.IsHalfOpen = true;
-                _logger.LogInformation("Circuit for {Provider} entering half-open state", providerName);
                 return false;
-            }
 
-            return state.IsOpen && !state.IsHalfOpen;
+            return state.IsOpen;
         }
     }
 
@@ -517,13 +681,26 @@ public class ProviderRouter : ILLMProvider
 
     /// <summary>
     /// Returns all available (provider, model) pairs for display to users.
+    /// Includes the default model + any additional models from agent config.
     /// </summary>
     public IReadOnlyList<(string Provider, string Model)> GetAvailableModels()
     {
         var result = new List<(string, string)>();
         foreach (var p in _providers)
         {
+            // Add the provider's default model
             result.Add((p.Name, p.Model));
+
+            // Add any additional models from agent-level provider config
+            var cfg = GetAgentProviderConfig(p.Name);
+            if (cfg?.Models is { Count: > 0 })
+            {
+                foreach (var model in cfg.Models)
+                {
+                    if (model != p.Model)
+                        result.Add((p.Name, model));
+                }
+            }
         }
         return result;
     }

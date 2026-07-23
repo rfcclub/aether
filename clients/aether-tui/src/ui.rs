@@ -12,6 +12,10 @@ use crate::events::Role;
 pub mod context_manager;
 pub mod brainstorm_wizard;
 pub mod git_dashboard;
+pub mod goals_dashboard;
+pub mod skills_panel;
+pub mod metrics_dashboard;
+pub mod theme;
 
 #[cfg(test)]
 mod context_manager_tests;
@@ -22,22 +26,24 @@ mod git_tests;
 #[cfg(test)]
 mod tdd_tests;
 
-// ── Athanor Fire Theme ────────────────────────────────────────────────────────
-pub const BG:           Color = Color::Rgb(8,   8,   8);    // Deep Black
-pub const USER_NAME:    Color = Color::Rgb(91,  200, 245);  // Ice Blue
-pub const USER_TEXT:    Color = Color::Rgb(220, 220, 220);  // Soft White-Gray
-pub const AGENT_NAME:   Color = Color::Rgb(236, 72,  153);  // Aura Pink
-pub const AGENT_TEXT:   Color = Color::Rgb(243, 232, 255);  // Soft Violet-White
-pub const CURSOR_COL:   Color = Color::Rgb(236, 72,  153);  // Aura Pink
-pub const BORDER_FOCUS: Color = Color::Rgb(168, 85,  247);  // Aura Violet active border
-pub const CONNECTED:    Color = Color::Rgb(68,  255, 136);
-pub const DISCONNECTED: Color = Color::Rgb(80,  80,  80);   // Darker Gray
-pub const ERROR_COL:    Color = Color::Rgb(255, 80,  80);
-pub const DIM:          Color = Color::Rgb(120, 110, 130);  // Muted Violet-Gray
-pub const AMBER:        Color = Color::Rgb(255, 140, 0);    // Athanor Orange
-pub const VIOLET:       Color = Color::Rgb(168, 85,  247);  // Aura Violet
-pub const PICKER_SEL:   Color = Color::Rgb(168, 85,  247);
-pub const PICKER_HDR:   Color = Color::Rgb(180, 180, 180);
+// ── Theme color accessors ───────────────────────────────────────────────────
+// These read from the active theme (see theme.rs). Switch at runtime via
+// theme::set_theme("forge"|"matrix"|"amber"|"mono") or the /theme command.
+pub fn bg() -> Color { theme::current().bg }
+pub fn user_name() -> Color { theme::current().user_name }
+pub fn user_text() -> Color { theme::current().user_text }
+pub fn agent_name() -> Color { theme::current().agent_name }
+pub fn agent_text() -> Color { theme::current().agent_text }
+pub fn cursor_col() -> Color { theme::current().cursor_col }
+pub fn border_focus() -> Color { theme::current().border_focus }
+pub fn connected() -> Color { theme::current().connected }
+pub fn disconnected() -> Color { theme::current().disconnected }
+pub fn error_col() -> Color { theme::current().error_col }
+pub fn dim() -> Color { theme::current().dim }
+pub fn amber() -> Color { theme::current().amber }
+pub fn violet() -> Color { theme::current().violet }
+pub fn picker_sel() -> Color { theme::current().picker_sel }
+pub fn picker_hdr() -> Color { theme::current().picker_hdr }
 
 
 /// Main draw entry point — called every frame
@@ -46,7 +52,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
 
     // Fill background
     f.render_widget(
-        Block::default().style(Style::default().bg(BG)),
+        Block::default().style(Style::default().bg(bg())),
         area,
     );
 
@@ -100,6 +106,21 @@ pub fn draw(f: &mut Frame, state: &AppState) {
     if state.mode == AppMode::GitDashboard {
         git_dashboard::draw_git_dashboard(f, state, area);
     }
+
+    // Goals Dashboard overlay
+    if state.mode == AppMode::GoalsDashboard {
+        goals_dashboard::draw_goals_dashboard(f, state, area);
+    }
+
+    // Skills Panel overlay
+    if state.mode == AppMode::SkillsPanel {
+        skills_panel::draw_skills_panel(f, state, area);
+    }
+
+    // Metrics Dashboard overlay
+    if state.mode == AppMode::MetricsDashboard {
+        metrics_dashboard::draw_metrics_dashboard(f, state, area);
+    }
 }
 
 // ── Header ────────────────────────────────────────────────────────────────────
@@ -126,7 +147,7 @@ fn draw_header(f: &mut Frame, state: &AppState, area: Rect) {
     let title = format!(" ─ Aether · {}{} ─ ", agent_display, model_info);
 
     let header = Paragraph::new(title)
-        .style(Style::default().fg(BORDER_FOCUS).bg(BG).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(border_focus()).bg(bg()).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Left);
 
     f.render_widget(header, area);
@@ -165,20 +186,20 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                 for (i, content_line) in user_lines.iter().enumerate() {
                     let mut spans = Vec::new();
                     if i == 0 {
-                        spans.push(Span::styled("> ", Style::default().fg(USER_NAME).add_modifier(Modifier::BOLD)));
-                        spans.push(Span::styled(content_line.to_string(), Style::default().fg(USER_TEXT)));
+                        spans.push(Span::styled("> ", Style::default().fg(user_name()).add_modifier(Modifier::BOLD)));
+                        spans.push(Span::styled(content_line.to_string(), Style::default().fg(user_text())));
                         if !ts_suffix.is_empty() {
-                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(DIM).add_modifier(Modifier::DIM)));
+                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(dim()).add_modifier(Modifier::DIM)));
                         }
                     } else {
                         spans.push(Span::raw("  "));
-                        spans.push(Span::styled(content_line.to_string(), Style::default().fg(USER_TEXT)));
+                        spans.push(Span::styled(content_line.to_string(), Style::default().fg(user_text())));
                     }
 
                     // If historical, dim all spans in this line
                     if msg.is_historical {
                         for s in &mut spans {
-                            s.style = s.style.fg(DIM).add_modifier(Modifier::DIM);
+                            s.style = s.style.fg(dim()).add_modifier(Modifier::DIM);
                         }
                     }
 
@@ -188,16 +209,25 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
             }
             Role::Assistant => {
                 let is_error = msg.content.starts_with("⚠ Error:");
-                let text_color = if is_error { ERROR_COL } else { AGENT_TEXT };
+                let text_color = if is_error { error_col() } else { agent_text() };
 
                 let mut in_code_block = false;
+                let mut code_lang: Option<String> = None;
                 let assistant_lines: Vec<&str> = msg.content.lines().collect();
                 for (i, content_line) in assistant_lines.iter().enumerate() {
                     let mut spans = Vec::new();
 
                     if content_line.starts_with("```") {
+                        if !in_code_block {
+                            // Entering code block — parse the language tag
+                            let tag = content_line.trim_start_matches('`').trim();
+                            code_lang = if tag.is_empty() { None } else { Some(tag.to_string()) };
+                        } else {
+                            // Exiting code block — clear language
+                            code_lang = None;
+                        }
                         in_code_block = !in_code_block;
-                        let border_style = Style::default().fg(DIM).add_modifier(Modifier::DIM);
+                        let border_style = Style::default().fg(dim()).add_modifier(Modifier::DIM);
                         let prefix = if i == 0 {
                             format!("{} ", agent_emoji)
                         } else {
@@ -206,7 +236,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                         spans.push(Span::raw(prefix));
                         spans.push(Span::styled(content_line.to_string(), border_style));
                         if i == 0 && !ts_suffix.is_empty() {
-                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(DIM).add_modifier(Modifier::DIM)));
+                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(dim()).add_modifier(Modifier::DIM)));
                         }
                     } else if in_code_block {
                         let prefix = if i == 0 {
@@ -215,10 +245,10 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                             "   ".to_string()
                         };
                         spans.push(Span::raw(prefix));
-                        let code_line = highlight_code_line(content_line);
+                        let code_line = highlight_code_line(content_line, code_lang.as_deref());
                         spans.extend(code_line.spans);
                         if i == 0 && !ts_suffix.is_empty() {
-                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(DIM).add_modifier(Modifier::DIM)));
+                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(dim()).add_modifier(Modifier::DIM)));
                         }
                     } else {
                         // Parse list items & quotes
@@ -228,16 +258,16 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                         if i == 0 {
                             spans.push(Span::raw(format!("{} ", agent_emoji)));
                             if is_bullet {
-                                spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
+                                spans.push(Span::styled("• ", Style::default().fg(amber()).add_modifier(Modifier::BOLD)));
                             } else if is_quote {
-                                spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
+                                spans.push(Span::styled("│ ", Style::default().fg(violet())));
                             }
                         } else {
                             spans.push(Span::raw("   "));
                             if is_bullet {
-                                spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
+                                spans.push(Span::styled("• ", Style::default().fg(amber()).add_modifier(Modifier::BOLD)));
                             } else if is_quote {
-                                spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
+                                spans.push(Span::styled("│ ", Style::default().fg(violet())));
                             }
                         }
 
@@ -251,14 +281,14 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                         spans.extend(parsed.spans);
 
                         if i == 0 && !ts_suffix.is_empty() {
-                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(DIM).add_modifier(Modifier::DIM)));
+                            spans.push(Span::styled(ts_suffix.clone(), Style::default().fg(dim()).add_modifier(Modifier::DIM)));
                         }
                     }
 
                     // If historical, dim all spans in this line
                     if msg.is_historical {
                         for s in &mut spans {
-                            s.style = s.style.fg(DIM).add_modifier(Modifier::DIM);
+                            s.style = s.style.fg(dim()).add_modifier(Modifier::DIM);
                         }
                     }
 
@@ -273,7 +303,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
             lines.push(Line::from(vec![
                 Span::styled(
                     "── resumed ──",
-                    Style::default().fg(DIM).add_modifier(Modifier::DIM),
+                    Style::default().fg(dim()).add_modifier(Modifier::DIM),
                 ),
             ]));
             lines.push(Line::from(""));
@@ -284,7 +314,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
     if !state.streaming_buf.is_empty() {
         if state.is_typing || state.tokens_received > 0 {
             lines.push(Line::from(vec![
-                Span::styled(format!("  [{} tokens]", state.tokens_received), Style::default().fg(DIM)),
+                Span::styled(format!("  [{} tokens]", state.tokens_received), Style::default().fg(dim())),
             ]));
         }
 
@@ -293,19 +323,26 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
 
         let buf_lines: Vec<&str> = state.streaming_buf.lines().collect();
         let mut in_code_block = false;
+        let mut code_lang: Option<String> = None;
         for (i, content_line) in buf_lines.iter().enumerate() {
             let mut spans = Vec::new();
             let is_last = i == buf_lines.len() - 1;
 
             if content_line.starts_with("```") {
+                if !in_code_block {
+                    let tag = content_line.trim_start_matches('`').trim();
+                    code_lang = if tag.is_empty() { None } else { Some(tag.to_string()) };
+                } else {
+                    code_lang = None;
+                }
                 in_code_block = !in_code_block;
-                let border_style = Style::default().fg(DIM).add_modifier(Modifier::DIM);
+                let border_style = Style::default().fg(dim()).add_modifier(Modifier::DIM);
                 let prefix = if i == 0 {
                     format!("{} {} ", spinner, agent_emoji)
                 } else {
                     "     ".to_string()
                 };
-                let prefix_style = if i == 0 { Style::default().fg(AMBER).add_modifier(Modifier::BOLD) } else { Style::default() };
+                let prefix_style = if i == 0 { Style::default().fg(amber()).add_modifier(Modifier::BOLD) } else { Style::default() };
                 spans.push(Span::styled(prefix, prefix_style));
                 spans.push(Span::styled(content_line.to_string(), border_style));
             } else if in_code_block {
@@ -314,28 +351,28 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                 } else {
                     "     ".to_string()
                 };
-                let prefix_style = if i == 0 { Style::default().fg(AMBER).add_modifier(Modifier::BOLD) } else { Style::default() };
+                let prefix_style = if i == 0 { Style::default().fg(amber()).add_modifier(Modifier::BOLD) } else { Style::default() };
                 spans.push(Span::styled(prefix, prefix_style));
-                let code_line = highlight_code_line(content_line);
+                let code_line = highlight_code_line(content_line, code_lang.as_deref());
                 spans.extend(code_line.spans);
             } else {
                 let is_bullet = content_line.trim_start().starts_with("- ") || content_line.trim_start().starts_with("* ");
                 let is_quote = content_line.trim_start().starts_with("> ");
 
                 if i == 0 {
-                    spans.push(Span::styled(format!("{} ", spinner), Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(format!("{} ", spinner), Style::default().fg(amber()).add_modifier(Modifier::BOLD)));
                     spans.push(Span::raw(format!("{} ", agent_emoji)));
                     if is_bullet {
-                        spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
+                        spans.push(Span::styled("• ", Style::default().fg(amber()).add_modifier(Modifier::BOLD)));
                     } else if is_quote {
-                        spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
+                        spans.push(Span::styled("│ ", Style::default().fg(violet())));
                     }
                 } else {
                     spans.push(Span::raw("     "));
                     if is_bullet {
-                        spans.push(Span::styled("• ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)));
+                        spans.push(Span::styled("• ", Style::default().fg(amber()).add_modifier(Modifier::BOLD)));
                     } else if is_quote {
-                        spans.push(Span::styled("│ ", Style::default().fg(VIOLET)));
+                        spans.push(Span::styled("│ ", Style::default().fg(violet())));
                     }
                 }
 
@@ -345,13 +382,13 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
                     content_line
                 };
 
-                let line_style = Style::default().fg(AGENT_TEXT);
+                let line_style = Style::default().fg(agent_text());
                 let parsed = parse_markdown_line(content_part, line_style);
                 spans.extend(parsed.spans);
             }
 
             if is_last {
-                spans.push(Span::styled("▋", Style::default().fg(CURSOR_COL)));
+                spans.push(Span::styled("▋", Style::default().fg(cursor_col())));
             }
 
             lines.push(Line::from(spans));
@@ -364,7 +401,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
 
         // Dòng 1: Hiển thị bộ đếm token ở phía TRÊN dòng chữ chờ
         lines.push(Line::from(vec![
-            Span::styled(format!("  [{} tokens]", state.tokens_received), Style::default().fg(DIM)),
+            Span::styled(format!("  [{} tokens]", state.tokens_received), Style::default().fg(dim())),
         ]));
 
         // Dòng 2: Con quay Braille, Agent Emoji và cụm từ chờ chạy quét đơn ký tự (single character color sweep)
@@ -383,7 +420,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
         };
 
         let mut spans = vec![
-            Span::styled(format!("{} ", spinner), Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{} ", spinner), Style::default().fg(amber()).add_modifier(Modifier::BOLD)),
             Span::styled(format!("{} ", agent_emoji), Style::default()),
         ];
 
@@ -391,17 +428,17 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
             if i == highlight_idx {
                 spans.push(Span::styled(
                     ch.to_string(),
-                    Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+                    Style::default().fg(amber()).add_modifier(Modifier::BOLD),
                 ));
             } else {
                 spans.push(Span::styled(
                     ch.to_string(),
-                    Style::default().fg(BORDER_FOCUS),
+                    Style::default().fg(border_focus()),
                 ));
             }
         }
 
-        spans.push(Span::styled("▋", Style::default().fg(CURSOR_COL)));
+        spans.push(Span::styled("▋", Style::default().fg(cursor_col())));
 
         lines.push(Line::from(spans));
         lines.push(Line::from(""));
@@ -411,7 +448,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
     if state.mode == AppMode::Connecting {
         let hint = state.reconnect_hint.as_deref().unwrap_or("connecting…");
         lines.push(Line::from(vec![
-            Span::styled(format!("  ○ {}", hint), Style::default().fg(DISCONNECTED)),
+            Span::styled(format!("  ○ {}", hint), Style::default().fg(disconnected())),
         ]));
     }
 
@@ -420,7 +457,7 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
 
     let text = Text::from(lines);
     let chat = Paragraph::new(text)
-        .style(Style::default().bg(BG))
+        .style(Style::default().bg(bg()))
         .wrap(Wrap { trim: false });
 
     let total_lines = chat.line_count(area.width);
@@ -441,19 +478,19 @@ fn draw_chat(f: &mut Frame, state: &AppState, area: Rect) {
 // ── Separator ─────────────────────────────────────────────────────────────────
 fn draw_separator(f: &mut Frame, _state: &AppState, area: Rect) {
     let sep = Paragraph::new("─".repeat(area.width as usize))
-        .style(Style::default().fg(DIM).bg(BG));
+        .style(Style::default().fg(dim()).bg(bg()));
     f.render_widget(sep, area);
 }
 
 // ── Input bar ─────────────────────────────────────────────────────────────────
 fn draw_input(f: &mut Frame, state: &AppState, area: Rect) {
-    let border_color = if state.connected { BORDER_FOCUS } else { DISCONNECTED };
+    let border_color = if state.connected { border_focus() } else { disconnected() };
 
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(BG));
+        .style(Style::default().bg(bg()));
 
     let inner = input_block.inner(area);
     f.render_widget(input_block, area);
@@ -461,7 +498,7 @@ fn draw_input(f: &mut Frame, state: &AppState, area: Rect) {
     // Sử dụng ngọn lửa tĩnh '🔥 › ' cực kỳ cá tính cho prompt của Athanor
     let display_text = format!("🔥 › {}", state.input);
     let input_para = Paragraph::new(display_text)
-        .style(Style::default().fg(USER_TEXT).bg(BG));
+        .style(Style::default().fg(user_text()).bg(bg()));
 
     f.render_widget(input_para, inner);
 
@@ -498,9 +535,9 @@ fn draw_input(f: &mut Frame, state: &AppState, area: Rect) {
 // ── Status bar ────────────────────────────────────────────────────────────────
 fn draw_status(f: &mut Frame, state: &AppState, area: Rect) {
     let (conn_dot, conn_color) = if state.connected {
-        ("●", CONNECTED)
+        ("●", connected())
     } else {
-        ("○", DISCONNECTED)
+        ("○", disconnected())
     };
 
     let group_cap = {
@@ -521,50 +558,53 @@ fn draw_status(f: &mut Frame, state: &AppState, area: Rect) {
         AppMode::ContextManager => "Context",
         AppMode::BrainstormWizard => "Brainstorm",
         AppMode::GitDashboard => "Git",
+        AppMode::GoalsDashboard => "Goals",
+        AppMode::SkillsPanel => "Skills",
+        AppMode::MetricsDashboard => "Metrics",
     };
 
     let (mode_text, mode_style) = if state.is_typing {
-        (format!("[thinking · tokens: {}]", state.tokens_received), Style::default().fg(AMBER).add_modifier(Modifier::BOLD))
+        (format!("[thinking · tokens: {}]", state.tokens_received), Style::default().fg(amber()).add_modifier(Modifier::BOLD))
     } else if state.connected && state.tokens_received > 0 {
-        (format!("[Normal · {} tokens]", state.tokens_received), Style::default().fg(DIM))
+        (format!("[Normal · {} tokens]", state.tokens_received), Style::default().fg(dim()))
     } else {
-        (format!("[{}]", mode_str), Style::default().fg(DIM))
+        (format!("[{}]", mode_str), Style::default().fg(dim()))
     };
 
     let mut spans = vec![
         Span::styled(format!(" {} ", conn_dot), Style::default().fg(conn_color)),
-        Span::styled(format!("{} │ ", group_cap), Style::default().fg(DIM)),
+        Span::styled(format!("{} │ ", group_cap), Style::default().fg(dim())),
         Span::styled(mode_text, mode_style),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F1] Help", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[Ctrl+Q] Quit", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[Esc] Scroll", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F2] Models", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F3] Agents", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F4] Context", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F5] Brainstorm", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F6] TDD", Style::default().fg(DIM)),
-        Span::styled(" │ ", Style::default().fg(DIM)),
-        Span::styled("[F7] Git", Style::default().fg(DIM)),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F1] Help", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[Ctrl+Q] Quit", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[Esc] Scroll", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F2] Models", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F3] Agents", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F4] Context", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F5] Brainstorm", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F6] TDD", Style::default().fg(dim())),
+        Span::styled(" │ ", Style::default().fg(dim())),
+        Span::styled("[F7] Git", Style::default().fg(dim())),
     ];
 
     if state.mode == AppMode::Scroll {
         spans.push(Span::styled(
             format!("  [SCROLL · offset:{}]", state.scroll_offset),
-            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+            Style::default().fg(amber()).add_modifier(Modifier::BOLD),
         ));
     }
 
     let status_line = Line::from(spans);
     let status = Paragraph::new(status_line)
-        .style(Style::default().bg(BG))
+        .style(Style::default().bg(bg()))
         .alignment(Alignment::Left);
 
     f.render_widget(status, area);
@@ -581,7 +621,7 @@ fn draw_model_picker(f: &mut Frame, state: &AppState, area: Rect) {
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("  {} ", provider.name),
-                    Style::default().fg(PICKER_HDR).add_modifier(Modifier::BOLD),
+                    Style::default().fg(picker_hdr()).add_modifier(Modifier::BOLD),
                 ),
             ])));
 
@@ -593,11 +633,11 @@ fn draw_model_picker(f: &mut Frame, state: &AppState, area: Rect) {
                 let label = format!("    {}{}", model, indicator);
 
                 let style = if is_selected {
-                    Style::default().fg(PICKER_SEL).add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 20, 0))
+                    Style::default().fg(picker_sel()).add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 20, 0))
                 } else if is_current {
-                    Style::default().fg(CONNECTED)
+                    Style::default().fg(connected())
                 } else {
-                    Style::default().fg(USER_TEXT)
+                    Style::default().fg(user_text())
                 };
 
                 items.push(ListItem::new(Line::from(vec![
@@ -608,7 +648,7 @@ fn draw_model_picker(f: &mut Frame, state: &AppState, area: Rect) {
         }
     } else {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("  Loading…", Style::default().fg(DIM)),
+            Span::styled("  Loading…", Style::default().fg(dim())),
         ])));
     }
 
@@ -630,19 +670,19 @@ fn draw_model_picker(f: &mut Frame, state: &AppState, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_FOCUS))
-        .style(Style::default().bg(BG))
-        .title(Span::styled(" Models ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD)))
+        .border_style(Style::default().fg(border_focus()))
+        .style(Style::default().bg(bg()))
+        .title(Span::styled(" Models ", Style::default().fg(agent_name()).add_modifier(Modifier::BOLD)))
         .title_bottom(Span::styled(
             " j/k Navigate · Enter Select · Esc Close ",
-            Style::default().fg(DIM),
+            Style::default().fg(dim()),
         ));
 
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
     let list = List::new(items)
-        .style(Style::default().bg(BG));
+        .style(Style::default().bg(bg()));
 
     f.render_widget(list, inner);
 }
@@ -658,11 +698,11 @@ fn draw_agent_picker(f: &mut Frame, state: &AppState, area: Rect) {
         let label = format!("  {}  {} ({}){}", emoji, display, name, indicator);
 
         let style = if is_selected {
-            Style::default().fg(PICKER_SEL).add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 20, 0))
+            Style::default().fg(picker_sel()).add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 20, 0))
         } else if is_current {
-            Style::default().fg(CONNECTED)
+            Style::default().fg(connected())
         } else {
-            Style::default().fg(USER_TEXT)
+            Style::default().fg(user_text())
         };
 
         items.push(ListItem::new(Line::from(vec![
@@ -672,7 +712,7 @@ fn draw_agent_picker(f: &mut Frame, state: &AppState, area: Rect) {
 
     if items.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("  No agents found", Style::default().fg(DIM)),
+            Span::styled("  No agents found", Style::default().fg(dim())),
         ])));
     }
 
@@ -694,18 +734,18 @@ fn draw_agent_picker(f: &mut Frame, state: &AppState, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_FOCUS))
-        .style(Style::default().bg(BG))
-        .title(Span::styled(" Choose Agent ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD)))
+        .border_style(Style::default().fg(border_focus()))
+        .style(Style::default().bg(bg()))
+        .title(Span::styled(" Choose Agent ", Style::default().fg(agent_name()).add_modifier(Modifier::BOLD)))
         .title_bottom(Span::styled(
             " j/k Navigate · Enter Select · Esc Close ",
-            Style::default().fg(DIM),
+            Style::default().fg(dim()),
         ));
 
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    let list = List::new(items).style(Style::default().bg(BG));
+    let list = List::new(items).style(Style::default().bg(bg()));
     f.render_widget(list, inner);
 }
 
@@ -727,77 +767,77 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, popup_area);
 
     let help_text = vec![
-        Line::from(vec![Span::styled("  Aether TUI — Keybindings", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("  Aether TUI — Keybindings", Style::default().fg(agent_name()).add_modifier(Modifier::BOLD))]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Enter      ", Style::default().fg(USER_NAME)),
-            Span::styled("Send message", Style::default().fg(USER_TEXT)),
+            Span::styled("  Enter      ", Style::default().fg(user_name())),
+            Span::styled("Send message", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  Alt+Enter  ", Style::default().fg(USER_NAME)),
-            Span::styled("Insert newline (multiline chatbox)", Style::default().fg(USER_TEXT)),
+            Span::styled("  Alt+Enter  ", Style::default().fg(user_name())),
+            Span::styled("Insert newline (multiline chatbox)", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  Ctrl+Q     ", Style::default().fg(USER_NAME)),
-            Span::styled("Quit", Style::default().fg(USER_TEXT)),
+            Span::styled("  Ctrl+Q     ", Style::default().fg(user_name())),
+            Span::styled("Quit", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  Ctrl+L     ", Style::default().fg(USER_NAME)),
-            Span::styled("Clear messages", Style::default().fg(USER_TEXT)),
+            Span::styled("  Ctrl+L     ", Style::default().fg(user_name())),
+            Span::styled("Clear messages", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  Esc        ", Style::default().fg(USER_NAME)),
-            Span::styled("Scroll mode  (j/k/PgUp/PgDn/G/gg)", Style::default().fg(USER_TEXT)),
+            Span::styled("  Esc        ", Style::default().fg(user_name())),
+            Span::styled("Scroll mode  (j/k/PgUp/PgDn/G/gg)", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F2 / Ctrl+M", Style::default().fg(USER_NAME)),
-            Span::styled("Model picker", Style::default().fg(USER_TEXT)),
+            Span::styled("  F2 / Ctrl+M", Style::default().fg(user_name())),
+            Span::styled("Model picker", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F3 / Ctrl+A", Style::default().fg(USER_NAME)),
-            Span::styled("Agent picker", Style::default().fg(USER_TEXT)),
+            Span::styled("  F3 / Ctrl+A", Style::default().fg(user_name())),
+            Span::styled("Agent picker", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F4         ", Style::default().fg(USER_NAME)),
-            Span::styled("Context files manager", Style::default().fg(USER_TEXT)),
+            Span::styled("  F4         ", Style::default().fg(user_name())),
+            Span::styled("Context files manager", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F5         ", Style::default().fg(USER_NAME)),
-            Span::styled("Socratic brainstorming wizard", Style::default().fg(USER_TEXT)),
+            Span::styled("  F5         ", Style::default().fg(user_name())),
+            Span::styled("Socratic brainstorming wizard", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F6         ", Style::default().fg(USER_NAME)),
-            Span::styled("Inject TDD template into chatbox", Style::default().fg(USER_TEXT)),
+            Span::styled("  F6         ", Style::default().fg(user_name())),
+            Span::styled("Inject TDD template into chatbox", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F7         ", Style::default().fg(USER_NAME)),
-            Span::styled("Interactive git dashboard", Style::default().fg(USER_TEXT)),
+            Span::styled("  F7         ", Style::default().fg(user_name())),
+            Span::styled("Interactive git dashboard", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  F1 / ?     ", Style::default().fg(USER_NAME)),
-            Span::styled("This help", Style::default().fg(USER_TEXT)),
+            Span::styled("  F1 / ?     ", Style::default().fg(user_name())),
+            Span::styled("This help", Style::default().fg(user_text())),
         ]),
         Line::from(""),
-        Line::from(vec![Span::styled("  Slash Commands", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("  Slash Commands", Style::default().fg(agent_name()).add_modifier(Modifier::BOLD))]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  /clear     ", Style::default().fg(USER_NAME)),
-            Span::styled("Clear display (local)", Style::default().fg(USER_TEXT)),
+            Span::styled("  /clear     ", Style::default().fg(user_name())),
+            Span::styled("Clear display (local)", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  /help      ", Style::default().fg(USER_NAME)),
-            Span::styled("Show this panel", Style::default().fg(USER_TEXT)),
+            Span::styled("  /help      ", Style::default().fg(user_name())),
+            Span::styled("Show this panel", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  /quit /q   ", Style::default().fg(USER_NAME)),
-            Span::styled("Exit", Style::default().fg(USER_TEXT)),
+            Span::styled("  /quit /q   ", Style::default().fg(user_name())),
+            Span::styled("Exit", Style::default().fg(user_text())),
         ]),
         Line::from(vec![
-            Span::styled("  /model … ", Style::default().fg(USER_NAME)),
-            Span::styled("Forwarded to server", Style::default().fg(DIM)),
+            Span::styled("  /model … ", Style::default().fg(user_name())),
+            Span::styled("Forwarded to server", Style::default().fg(dim())),
         ]),
         Line::from(""),
-        Line::from(vec![Span::styled("  Press any key to close", Style::default().fg(DIM))]),
+        Line::from(vec![Span::styled("  Press any key to close", Style::default().fg(dim()))]),
     ];
 
     let help_para = Paragraph::new(Text::from(help_text))
@@ -805,11 +845,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(BORDER_FOCUS))
-                .style(Style::default().bg(BG))
-                .title(Span::styled(" Help ", Style::default().fg(AGENT_NAME).add_modifier(Modifier::BOLD))),
+                .border_style(Style::default().fg(border_focus()))
+                .style(Style::default().bg(bg()))
+                .title(Span::styled(" Help ", Style::default().fg(agent_name()).add_modifier(Modifier::BOLD))),
         )
-        .style(Style::default().bg(BG));
+        .style(Style::default().bg(bg()));
 
     f.render_widget(help_para, popup_area);
 }
@@ -865,7 +905,7 @@ fn parse_markdown_line(text: &str, default_style: Style) -> Line<'static> {
 }
 
 // ── Code Syntax Highlighting Helper ───────────────────────────────────────────
-fn highlight_code_line(text: &str) -> Line<'static> {
+fn highlight_code_line(text: &str, lang: Option<&str>) -> Line<'static> {
     let mut spans = vec![];
     let keyword_style = Style::default().fg(Color::Rgb(168, 85, 247)).add_modifier(Modifier::BOLD); // Violet
     let type_style = Style::default().fg(Color::Rgb(91, 200, 245)); // Ice Blue
@@ -894,13 +934,19 @@ fn highlight_code_line(text: &str) -> Line<'static> {
             spans.push(Span::styled(comment, comment_style));
             break;
         } else if c == '#' {
-            // Line comment # (for Python/Shell scripts)
-            let mut comment = String::new();
-            while let Some(cc) = chars.next() {
-                comment.push(cc);
+            // Line comment # (Python/Shell/Ruby/Toml)
+            if matches!(lang, Some("python" | "py" | "bash" | "sh" | "shell" | "ruby" | "rb" | "toml" | "yaml" | "yml" | "perl" | "pl" | "rust" | "rs")) {
+                let mut comment = String::new();
+                while let Some(cc) = chars.next() {
+                    comment.push(cc);
+                }
+                spans.push(Span::styled(comment, comment_style));
+                break;
             }
-            spans.push(Span::styled(comment, comment_style));
-            break;
+            // For C-like languages, # is a preprocessor directive — treat as keyword
+            let mut ident = String::new();
+            ident.push(chars.next().unwrap());
+            spans.push(Span::styled(ident, keyword_style));
         } else if c == '"' {
             // String literal
             let mut string_lit = String::new();
@@ -972,19 +1018,12 @@ fn highlight_code_line(text: &str) -> Line<'static> {
                     break;
                 }
             }
-            let style = match ident.as_str() {
-                // Keywords
-                "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" | 
-                "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" | "true" | "false" |
-                "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" | 
-                "static" | "void" | "string" | "int" | "var" | "new" | "get" | "set" => keyword_style,
-
-                // Types & Primitives
-                "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" |
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "f32" | "f64" | "bool" | "char" |
-                "double" | "float" | "long" | "object" => type_style,
-
-                _ => default_style,
+            let style = if is_keyword(lang, ident.as_str()) {
+                keyword_style
+            } else if is_type(lang, ident.as_str()) {
+                type_style
+            } else {
+                default_style
             };
             spans.push(Span::styled(ident, style));
         } else {
@@ -1010,48 +1049,199 @@ fn highlight_code_line(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 
+fn is_keyword(lang: Option<&str>, ident: &str) -> bool {
+    match normalize_lang(lang) {
+        "rust" => matches!(ident,
+            "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" |
+            "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" | "true" | "false" |
+            "move" | "ref" | "self" | "Self" | "crate" | "super" | "mod" | "where" | "as" | "dyn" |
+            "const" | "static" | "unsafe" | "extern" | "trait" | "type" | "continue" | "break" |
+            "box" | "default" | "union" | "macro_rules" | "yield"
+        ),
+        "python" => matches!(ident,
+            "def" | "class" | "return" | "if" | "else" | "elif" | "for" | "while" | "in" | "not" |
+            "and" | "or" | "True" | "False" | "None" | "import" | "from" | "as" | "with" | "try" |
+            "except" | "finally" | "raise" | "lambda" | "yield" | "async" | "await" | "pass" |
+            "break" | "continue" | "global" | "nonlocal" | "del" | "assert" | "is" | "print"
+        ),
+        "csharp" => matches!(ident,
+            "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" |
+            "static" | "void" | "var" | "new" | "get" | "set" | "return" | "if" | "else" |
+            "for" | "while" | "foreach" | "in" | "async" | "await" | "true" | "false" | "null" |
+            "this" | "base" | "override" | "virtual" | "abstract" | "sealed" | "const" | "readonly" |
+            "enum" | "struct" | "interface" | "try" | "catch" | "finally" | "throw" | "switch" |
+            "case" | "default" | "break" | "continue" | "lock" | "params" | "ref" |
+            "out" | "is" | "as" | "typeof" | "sizeof" | "delegate" | "event" |
+            "operator" | "implicit" | "explicit" | "partial" | "yield" | "checked" | "unchecked"
+        ),
+        "typescript" | "javascript" => matches!(ident,
+            "const" | "let" | "var" | "function" | "return" | "if" | "else" | "for" | "while" |
+            "in" | "of" | "new" | "class" | "extends" | "implements" | "import" | "export" |
+            "from" | "as" | "async" | "await" | "true" | "false" | "null" | "undefined" | "this" |
+            "super" | "typeof" | "instanceof" | "void" | "delete" | "try" | "catch" | "finally" |
+            "throw" | "switch" | "case" | "default" | "break" | "continue" | "interface" | "type" |
+            "enum" | "public" | "private" | "protected" | "readonly" | "static" | "get" | "set" |
+            "abstract" | "declare" | "namespace" | "module" | "require" | "yield" | "do"
+        ),
+        "bash" => matches!(ident,
+            "if" | "then" | "else" | "elif" | "fi" | "for" | "in" | "do" | "done" | "while" |
+            "case" | "esac" | "function" | "return" | "local" | "export" | "unset" | "readonly" |
+            "declare" | "echo" | "printf" | "read" | "source" | "exit" | "break" | "continue" |
+            "shift" | "test" | "trap" | "alias" | "unalias" | "cd" | "pwd" | "true" | "false"
+        ),
+        _ => matches!(ident,
+            // Default combined set (original behavior)
+            "fn" | "let" | "mut" | "struct" | "enum" | "impl" | "use" | "pub" | "return" | "match" |
+            "if" | "else" | "loop" | "while" | "for" | "in" | "async" | "await" | "true" | "false" |
+            "using" | "namespace" | "class" | "public" | "private" | "protected" | "internal" |
+            "static" | "void" | "string" | "int" | "var" | "new" | "get" | "set"
+        ),
+    }
+}
+
+fn is_type(lang: Option<&str>, ident: &str) -> bool {
+    match normalize_lang(lang) {
+        "rust" => matches!(ident,
+            "Option" | "Result" | "String" | "Vec" | "Ok" | "Err" | "Some" | "None" |
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" |
+            "i128" | "isize" | "f32" | "f64" | "bool" | "char" | "Box" | "Rc" | "Arc" |
+            "HashMap" | "HashSet" | "BTreeMap" | "BTreeSet" | "Cow" | "Cell" | "RefCell"
+        ),
+        "python" => matches!(ident,
+            "int" | "str" | "float" | "bool" | "list" | "dict" | "tuple" | "set" | "bytes" |
+            "object" | "type" | "complex" | "frozenset" | "bytearray" | "memoryview" | "range"
+        ),
+        "csharp" => matches!(ident,
+            "int" | "long" | "short" | "byte" | "sbyte" | "uint" | "ulong" | "ushort" | "float" |
+            "double" | "decimal" | "bool" | "char" | "string" | "object" | "void" | "var" |
+            "dynamic" | "Task" | "Console" | "DateTime" | "String" | "Int32" | "Int64" |
+            "Boolean" | "IEnumerable" | "List" | "Dictionary" | "Array" | "Exception"
+        ),
+        "typescript" | "javascript" => matches!(ident,
+            "string" | "number" | "boolean" | "any" | "void" | "never" | "unknown" | "object" |
+            "null" | "undefined" | "bigint" | "symbol" | "Array" | "Map" | "Set" | "WeakMap" |
+            "WeakSet" | "Promise" | "Date" | "RegExp" | "Error" | "TypeError" | "JSON" |
+            "Math" | "Object" | "String" | "Number" | "Boolean" | "Function"
+        ),
+        "bash" => false,
+        _ => matches!(ident,
+            "Option" | "Result" | "String" | "Vec" | "Task" | "Console" | "DateTime" | "Ok" | "Err" | "Some" | "None" |
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "f32" | "f64" | "bool" | "char" |
+            "double" | "float" | "long" | "object"
+        ),
+    }
+}
+
+fn normalize_lang(lang: Option<&str>) -> &str {
+    match lang.unwrap_or("") {
+        "rust" | "rs" => "rust",
+        "python" | "py" => "python",
+        "csharp" | "cs" | "c#" => "csharp",
+        "typescript" | "ts" => "typescript",
+        "javascript" | "js" => "javascript",
+        "bash" | "sh" | "shell" => "bash",
+        _ => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_highlight_code_line() {
-        // Test keyword
-        let line = highlight_code_line("fn main() {");
+        // Test keyword (no language → fallback combined set)
+        let line = highlight_code_line("fn main() {", None);
         assert_eq!(line.spans.len(), 4);
         assert_eq!(line.spans[0].content, "fn");
         assert_eq!(line.spans[2].content, "main");
 
         // Test multi-word string
-        let line = highlight_code_line("let x = \"hello world\";");
+        let line = highlight_code_line("let x = \"hello world\";", None);
         assert_eq!(line.spans.len(), 6);
         assert_eq!(line.spans[4].content, "\"hello world\"");
 
         // Test escaped quotes in string
-        let line = highlight_code_line("let s = \"hello \\\"world\\\"\";");
+        let line = highlight_code_line("let s = \"hello \\\"world\\\"\";", None);
         assert_eq!(line.spans.len(), 6);
         assert_eq!(line.spans[4].content, "\"hello \\\"world\\\"\"");
 
         // Test comment in string URL
-        let line = highlight_code_line("let url = \"https://google.com\";");
+        let line = highlight_code_line("let url = \"https://google.com\";", None);
         assert_eq!(line.spans.len(), 6);
         assert_eq!(line.spans[4].content, "\"https://google.com\"");
 
         // Test trailing comment
-        let line = highlight_code_line("let x = 1; // comment");
+        let line = highlight_code_line("let x = 1; // comment", None);
         assert_eq!(line.spans.len(), 7);
         assert_eq!(line.spans[6].content, "// comment");
 
         // Test number method call
-        let line = highlight_code_line("5.to_string()");
+        let line = highlight_code_line("5.to_string()", None);
         assert_eq!(line.spans[0].content, "5");
         assert_eq!(line.spans[1].content, ".");
         assert_eq!(line.spans[2].content, "to_string");
 
         // Test float number method call
-        let line = highlight_code_line("3.14.abs()");
+        let line = highlight_code_line("3.14.abs()", None);
         assert_eq!(line.spans[0].content, "3.14");
         assert_eq!(line.spans[1].content, ".");
         assert_eq!(line.spans[2].content, "abs");
+    }
+
+    #[test]
+    fn test_highlight_language_aware_rust() {
+        // Rust: "fn", "let", "Self" should be keywords
+        let line = highlight_code_line("fn main() -> Self {", Some("rust"));
+        let kw_spans: Vec<&str> = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(kw_spans.contains(&"fn"));
+        assert!(kw_spans.contains(&"Self"));
+        // "Self" is a keyword in rust, not a type
+        let self_span = line.spans.iter().find(|s| s.content == "Self").unwrap();
+        assert_eq!(self_span.style.fg, Some(Color::Rgb(168, 85, 247))); // violet keyword color
+    }
+
+    #[test]
+    fn test_highlight_language_aware_python() {
+        // Python: "def", "lambda", "True" should be keywords; "#" should start a comment
+        let line = highlight_code_line("def add(a, b):  # sum", Some("python"));
+        let contents: Vec<&str> = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(contents.contains(&"def"));
+        // The "# sum" should be a single comment span
+        let comment_span = line.spans.iter().find(|s| s.content.starts_with('#'));
+        assert!(comment_span.is_some(), "Python # should start a comment");
+    }
+
+    #[test]
+    fn test_highlight_language_aware_csharp_preprocessor() {
+        // C#: "#" should NOT start a comment (it's a preprocessor directive)
+        let line = highlight_code_line("#include <stdio.h>", Some("csharp"));
+        // First span should be "#" (preprocessor, not comment)
+        assert_eq!(line.spans[0].content, "#");
+        // Verify "#" was treated as keyword-styled (not comment-styled)
+        assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(168, 85, 247))); // keyword violet
+    }
+
+    #[test]
+    fn test_highlight_language_aware_bash() {
+        // Bash: "echo" is a keyword, no types
+        let line = highlight_code_line("echo \"hello\"", Some("bash"));
+        let contents: Vec<&str> = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(contents.contains(&"echo"));
+        // "echo" should be keyword-styled (violet)
+        let echo_span = line.spans.iter().find(|s| s.content == "echo").unwrap();
+        assert_eq!(echo_span.style.fg, Some(Color::Rgb(168, 85, 247)));
+    }
+
+    #[test]
+    fn test_normalize_lang_aliases() {
+        assert_eq!(normalize_lang(Some("rs")), "rust");
+        assert_eq!(normalize_lang(Some("py")), "python");
+        assert_eq!(normalize_lang(Some("c#")), "csharp");
+        assert_eq!(normalize_lang(Some("ts")), "typescript");
+        assert_eq!(normalize_lang(Some("js")), "javascript");
+        assert_eq!(normalize_lang(Some("sh")), "bash");
+        assert_eq!(normalize_lang(Some("unknown")), "");
+        assert_eq!(normalize_lang(None), "");
     }
 }

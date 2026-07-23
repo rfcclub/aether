@@ -39,8 +39,8 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "test");
 
-        Assert.Contains(llm.LastRequest!.Messages, m => m.Role == "system");
-        Assert.Contains("Aether", llm.LastRequest.Messages[0].Content);
+        Assert.NotNull(llm.LastRequest!.SystemPrompt);
+        Assert.Contains("Aether", llm.LastRequest.SystemPrompt);
     }
 
     [Fact]
@@ -143,8 +143,8 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "merge these PDF files please");
 
-        var system = provider.LastRequest!.Messages.First(m => m.Role == "system");
-        Assert.Contains("Aether", system.Content);
+        Assert.NotNull(provider.LastRequest!.SystemPrompt);
+        Assert.Contains("Aether", provider.LastRequest.SystemPrompt);
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public class AetherSoulTests
     {
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         Assert.Contains("You are Aether", system);
         Assert.Contains("## Safety", system);
         Assert.Contains("## Rules", system);
@@ -295,11 +295,11 @@ public class AetherSoulTests
     [Fact]
     public async Task BuildSystemPrompt_CacheBoundaryMarker()
     {
-        // CacheBoundaryMarker kept for backward compat — present in WorkingContext via BuildSystemPrompt
+        // Static sections appear before dynamic sections
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
-        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+        var system = llm.LastRequest!.SystemPrompt;
+        Assert.Contains("## Rules", system);
     }
 
     [Fact]
@@ -307,7 +307,7 @@ public class AetherSoulTests
     {
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         Assert.DoesNotContain("Constitution > Persona", system);
         Assert.DoesNotContain("You ARE this agent", system);
         Assert.DoesNotContain("CANNOT be violated", system);
@@ -320,7 +320,7 @@ public class AetherSoulTests
     {
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         Assert.Contains("self-harm", system);
         Assert.Contains("illegal activity", system);
         Assert.Contains("data exfiltration", system);
@@ -332,7 +332,7 @@ public class AetherSoulTests
     {
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         Assert.Contains("No Laziness", system);
         Assert.Contains("Reasoning", system);
         Assert.Contains("Deliver evidence, not promises", system);
@@ -343,7 +343,7 @@ public class AetherSoulTests
     {
         var (soul, llm, _) = CreateSoul("ok");
         await soul.ProcessAsync("main", "test");
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         // Simplified system prompt relies on general rules rather than tool-specific instructions
         Assert.Contains("Reasoning", system);
     }
@@ -355,9 +355,9 @@ public class AetherSoulTests
         var soul = new AetherSoul(provider, new FakeToolExecutor(), TestAgentProfile.NoOp());
         var response = await soul.ProcessTaskAsync("main", "do task");
         Assert.Equal("task done", response.Content);
-        var system = provider.LastRequest!.Messages[0].Content;
+        var system = provider.LastRequest!.SystemPrompt;
         Assert.Contains("## Rules", system);
-        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+        Assert.Contains("## Identity", system);
     }
 
     [Fact]
@@ -367,7 +367,7 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "test");
 
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         // IDENTITY.md from TestAgentProfile.NoOp() contains "You are Aether. Be helpful."
         Assert.Contains("You are Aether", system);
     }
@@ -379,7 +379,7 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "test");
 
-        var system = llm.LastRequest!.Messages[0].Content;
+        var system = llm.LastRequest!.SystemPrompt;
         var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
         Assert.Contains(today, system);
     }
@@ -394,8 +394,8 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "do something");
 
-        var system = provider.LastRequest!.Messages[0].Content;
-        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+        var system = provider.LastRequest!.SystemPrompt;
+        Assert.Contains("## Identity", system);
     }
 
     [Fact]
@@ -413,9 +413,9 @@ public class AetherSoulTests
 
         Assert.StartsWith("streaming output", string.Concat(tokens));
         Assert.NotNull(provider.LastRequest);
-        var system = provider.LastRequest!.Messages[0].Content;
+        var system = provider.LastRequest!.SystemPrompt;
         Assert.Contains("## Rules", system);
-        Assert.Contains(AetherSoul.CacheBoundaryMarker, system);
+        Assert.Contains("## Identity", system);
     }
 
     [Fact]
@@ -460,7 +460,7 @@ public class AetherSoulTests
 
         await soul.ProcessAsync("main", "test");
 
-        Assert.Equal("MODIFIED", provider.LastRequest!.Messages.First(m => m.Role == "system").Content);
+        Assert.Equal("MODIFIED", provider.LastRequest!.SystemPrompt);
     }
 
     [Fact]

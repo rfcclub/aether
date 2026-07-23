@@ -3,6 +3,7 @@ using System.Text.Json;
 using Aether.Config;
 using Aether.Plugins;
 using Microsoft.Extensions.Logging;
+using Spectre.Console;
 
 namespace Aether.Cli;
 
@@ -46,21 +47,19 @@ public sealed class PluginCli
         cmd.SetHandler(async (context) =>
         {
             var pluginsDir = Path.Combine(_aetherDir, "plugins");
-            if (!Directory.Exists(pluginsDir))
+            if (!Directory.Exists(pluginsDir) || Directory.GetDirectories(pluginsDir).Length == 0)
             {
-                context.Console.WriteLine("No plugins installed.");
+                AnsiConsole.MarkupLine("[dim]No plugins installed.[/]");
                 return;
             }
 
             var dirs = Directory.GetDirectories(pluginsDir);
-            if (dirs.Length == 0)
-            {
-                context.Console.WriteLine("No plugins installed.");
-                return;
-            }
-
-            context.Console.WriteLine($"{"Name",-30} {"Version",-12} Status");
-            context.Console.WriteLine(new string('-', 56));
+            var table = new Table()
+                .Border(TableBorder.Rounded)
+                .BorderColor(Color.Grey)
+                .AddColumn(new TableColumn("[bold]Name[/]"))
+                .AddColumn(new TableColumn("[bold]Version[/]"))
+                .AddColumn(new TableColumn("[bold]Status[/]"));
 
             foreach (var dir in dirs)
             {
@@ -76,13 +75,21 @@ public sealed class PluginCli
                     var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? Path.GetFileName(dir) : Path.GetFileName(dir);
                     var version = root.TryGetProperty("version", out var v) ? v.GetString() ?? "-" : "-";
 
-                    context.Console.WriteLine($"{name,-30} {version,-12} installed");
+                    table.AddRow(
+                        $"[violet]{Markup.Escape(name)}[/]",
+                        $"[dim]{Markup.Escape(version)}[/]",
+                        "[green]installed[/]");
                 }
                 catch
                 {
-                    context.Console.WriteLine($"{Path.GetFileName(dir),-30} {"?",-12} error");
+                    table.AddRow(
+                        $"[violet]{Markup.Escape(Path.GetFileName(dir))}[/]",
+                        "[dim]?[/]",
+                        "[red]error[/]");
                 }
             }
+
+            AnsiConsole.Write(table);
         });
 
         return cmd;
@@ -176,7 +183,7 @@ public sealed class PluginCli
 
             if (!File.Exists(manifestPath))
             {
-                context.Console.WriteLine($"Plugin '{name}' not found.");
+                AnsiConsole.MarkupLine($"[red]Plugin '{Markup.Escape(name)}' not found.[/]");
                 context.ExitCode = 1;
                 return;
             }
@@ -187,24 +194,36 @@ public sealed class PluginCli
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                PrintField(context.Console, "Name", root, "name");
-                PrintField(context.Console, "Version", root, "version");
-                PrintField(context.Console, "Display name", root, "displayName");
-                PrintField(context.Console, "Description", root, "description");
-                PrintField(context.Console, "Author", root, "author");
-                PrintField(context.Console, "License", root, "license");
-                PrintField(context.Console, "Homepage", root, "homepage");
-                PrintField(context.Console, "Assembly", root, "assembly");
+                AnsiConsole.Write(new Rule($"[bold violet]Plugin: {Markup.Escape(name)}[/]")
+                    .RuleStyle("grey"));
 
-                PrintList(context.Console, "  Hooks", root, "hooks", "class");
-                PrintList(context.Console, "  Tools", root, "tools", "name");
-                PrintList(context.Console, "  Skills", root, "skills", "name");
-                PrintList(context.Console, "  Channels", root, "channels", "class");
-                PrintList(context.Console, "  Cron tasks", root, "cron", "name");
+                var grid = new Grid().AddColumn().AddColumn();
+                grid.AddRow("[dim]Name[/]", GetField(root, "name"));
+                grid.AddRow("[dim]Version[/]", GetField(root, "version"));
+                grid.AddRow("[dim]Display name[/]", GetField(root, "displayName"));
+                grid.AddRow("[dim]Description[/]", GetField(root, "description"));
+                grid.AddRow("[dim]Author[/]", GetField(root, "author"));
+                grid.AddRow("[dim]License[/]", GetField(root, "license"));
+                grid.AddRow("[dim]Homepage[/]", GetField(root, "homepage"));
+                grid.AddRow("[dim]Assembly[/]", GetField(root, "assembly"));
+
+                var hooks = GetList(root, "hooks", "class");
+                var tools = GetList(root, "tools", "name");
+                var skills = GetList(root, "skills", "name");
+                var channels = GetList(root, "channels", "class");
+                var cron = GetList(root, "cron", "name");
+
+                if (hooks != null) grid.AddRow("[dim]Hooks[/]", hooks);
+                if (tools != null) grid.AddRow("[dim]Tools[/]", tools);
+                if (skills != null) grid.AddRow("[dim]Skills[/]", skills);
+                if (channels != null) grid.AddRow("[dim]Channels[/]", channels);
+                if (cron != null) grid.AddRow("[dim]Cron tasks[/]", cron);
+
+                AnsiConsole.Write(grid);
             }
             catch (Exception ex)
             {
-                context.Console.WriteLine($"Error reading plugin: {ex.Message}");
+                AnsiConsole.MarkupLine($"[red]Error reading plugin: {Markup.Escape(ex.Message)}[/]");
                 context.ExitCode = 1;
             }
         });
@@ -380,25 +399,29 @@ public sealed class PluginCli
         console.WriteLine($"Plugin '{pluginName}' {(enabled ? "enabled" : "disabled")} for agent '{agentName}'.");
     }
 
-    private static void PrintField(IConsole console, string label, JsonElement root, string key)
+    private static string GetField(JsonElement root, string key)
     {
         if (root.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String)
         {
-            console.WriteLine($"{label}: {prop.GetString()}");
+            return Markup.Escape(prop.GetString() ?? "");
         }
+        return "[dim]-[/]";
     }
 
-    private static void PrintList(IConsole console, string label, JsonElement root, string arrayKey, string itemKey)
+    private static string? GetList(JsonElement root, string arrayKey, string itemKey)
     {
         if (!root.TryGetProperty(arrayKey, out var arr) || arr.ValueKind != JsonValueKind.Array)
-            return;
+            return null;
 
-        console.WriteLine($"{label}:");
+        var items = new List<string>();
         foreach (var item in arr.EnumerateArray())
         {
             if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty(itemKey, out var val))
-                console.WriteLine($"    - {val.GetString()}");
+            {
+                items.Add(Markup.Escape(val.GetString() ?? ""));
+            }
         }
+        return items.Count == 0 ? null : string.Join(", ", items);
     }
 
     private static void CopyDirectory(string source, string dest)

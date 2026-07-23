@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Aether.Providers;
 using Microsoft.Extensions.Logging;
 using Spectre.Console;
 
@@ -71,34 +72,34 @@ public sealed class FirstRunWizard
         AnsiConsole.MarkupLine("[bold]Welcome to Aether — agent framework setup[/]");
         AnsiConsole.WriteLine();
 
-        // Step 1: Provider selection
-        var provider = AnsiConsole.Prompt(
+        // Step 1: Onboarding mode (import from providers.d / raw / oauth)
+        var modeChoice = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title("Select your [green]LLM provider[/]:")
+                .Title("How would you like to add a [green]provider[/]?")
                 .PageSize(10)
-                .AddChoices(["OpenRouter (recommended)", "Anthropic", "Fireworks", "OpenAI-compatible", "Skip for now"]));
+                .AddChoices([
+                    OnboardingFlow.ImportLabel,
+                    OnboardingFlow.RawLabel,
+                    OnboardingFlow.OAuthLabel
+                ]));
 
-        var providerKey = provider switch
-        {
-            "OpenRouter (recommended)" => "openrouter",
-            "Anthropic" => "anthropic",
-            "Fireworks" => "fireworks",
-            "OpenAI-compatible" => "openai",
-            _ => ""
-        };
+        var mode = OnboardingFlow.ResolveModeFromChoice(modeChoice);
 
+        string? providerKey = null;
         string? apiKey = null;
-        if (providerKey.Length > 0)
-        {
-            apiKey = AnsiConsole.Prompt(
-                new TextPrompt<string>($"Enter your [yellow]{providerKey}[/] API key:")
-                    .Secret()
-                    .AllowEmpty());
+        string model = "";
 
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                AnsiConsole.MarkupLine("[yellow]No API key provided. You can add it later in ~/.aether/config.json[/]");
-            }
+        if (mode == OnboardingMode.Import)
+        {
+            (providerKey, apiKey, model) = await RunImportModeAsync(ct);
+        }
+        else if (mode == OnboardingMode.Raw)
+        {
+            (providerKey, apiKey, model) = await RunRawModeAsync(ct);
+        }
+        else // OAuth
+        {
+            (providerKey, apiKey, model) = await RunOAuthModeAsync(ct);
         }
 
         // Step 2: Agent name
@@ -112,21 +113,15 @@ public sealed class FirstRunWizard
 
         var agentName = agentNameInput.Trim().ToLowerInvariant();
 
-        // Step 3: Model (if provider selected)
-        string model = "";
-        if (providerKey.Length > 0)
+        // Step 3: Model (if provider selected) — pre-filled by mode flow, allow override
+        if (providerKey is { Length: > 0 })
         {
             var modelInput = AnsiConsole.Prompt(
                 new TextPrompt<string>($"Model name [[{providerKey}]]:")
-                    .DefaultValue(providerKey switch
-                    {
-                        "openrouter" => "nvidia/nemotron-3-super-120b-a12b:free",
-                        "anthropic" => "claude-sonnet-4-6",
-                        "fireworks" => "accounts/fireworks/routers/kimi-k2p5-turbo",
-                        _ => ""
-                    })
+                    .DefaultValue(string.IsNullOrEmpty(model) ? "" : model)
                     .AllowEmpty());
-            model = modelInput;
+            if (!string.IsNullOrWhiteSpace(modelInput))
+                model = modelInput;
         }
 
         // Step 4: Telegram setup
@@ -149,45 +144,48 @@ public sealed class FirstRunWizard
                 false);
         }
 
-        // Build config
+        // Build config — MERGE into existing config.json if present (the import/raw
+        // modes may have already written a provider entry via ProviderRegistrar; we
+        // must NOT overwrite it). We only set agents/channels/meta/wizard here and
+        // preserve any existing providers map.
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]Creating configuration...[/]");
 
-        var config = new Dictionary<string, object?>
+        // configPath already declared at top of RunInteractiveAsync
+        Dictionary<string, object?> config;
+        if (File.Exists(configPath))
         {
-            ["meta"] = new Dictionary<string, object?>
+            var existing = await File.ReadAllTextAsync(configPath, ct);
+            config = JsonSerializer.Deserialize<Dictionary<string, object?>>(existing, JsonOptions) ?? new();
+        }
+        else
+        {
+            config = new Dictionary<string, object?>();
+        }
+        config["meta"] = new Dictionary<string, object?>
+        {
+            ["lastTouchedVersion"] = ThisAssembly.AssemblyVersion
+        };
+        config["wizard"] = new Dictionary<string, object?>
+        {
+            ["lastRunAt"] = DateTime.UtcNow.ToString("O"),
+            ["lastRunVersion"] = ThisAssembly.AssemblyVersion,
+            ["lastRunCommand"] = "interactive"
+        };
+        config["agents"] = new Dictionary<string, object?>
+        {
+            [agentName] = new Dictionary<string, object?>
             {
-                ["lastTouchedVersion"] = ThisAssembly.AssemblyVersion
-            },
-            ["wizard"] = new Dictionary<string, object?>
-            {
-                ["lastRunAt"] = DateTime.UtcNow.ToString("O"),
-                ["lastRunVersion"] = ThisAssembly.AssemblyVersion,
-                ["lastRunCommand"] = "interactive"
-            },
-            ["agents"] = new Dictionary<string, object?>
-            {
-                [agentName] = new Dictionary<string, object?>
-                {
-                    ["name"] = agentName,
-                    ["workspace"] = Path.Combine(_aetherDir, "workspaces", agentName),
-                    ["enabled"] = true
-                }
+                ["name"] = agentName,
+                ["workspace"] = Path.Combine(_aetherDir, "workspaces", agentName),
+                ["enabled"] = true
             }
         };
 
-        if (providerKey.Length > 0)
-        {
-            config["providers"] = new Dictionary<string, object?>
-            {
-                [providerKey] = new Dictionary<string, object?>
-                {
-                    ["type"] = providerKey == "anthropic" ? "anthropic" : "openai",
-                    ["model"] = model,
-                    ["api_key"] = apiKey ?? ""
-                }
-            };
-        }
+        // NOTE: providers are owned by ProviderRegistrar (import/raw modes already wrote
+        // the full entry with type/base_url/api_key/model/models). We do NOT set
+        // config["providers"] here — that would overwrite the registrar's complete entry
+        // with an incomplete one (missing base_url + models, wrong type).
 
         if (!string.IsNullOrWhiteSpace(botToken))
         {
@@ -230,7 +228,7 @@ public sealed class FirstRunWizard
             .AddColumn("Setting")
             .AddColumn("Value");
 
-        table.AddRow("Provider", providerKey.Length > 0 ? providerKey : "skipped");
+        table.AddRow("Provider", !string.IsNullOrEmpty(providerKey) ? providerKey : "skipped");
         table.AddRow("Model", model.Length > 0 ? model : "(not set)");
         table.AddRow("Agent", agentName);
         table.AddRow("Workspace", Path.Combine(_aetherDir, "workspaces", agentName));
@@ -241,6 +239,155 @@ public sealed class FirstRunWizard
         AnsiConsole.MarkupLine("[bold]Next steps:[/]");
         AnsiConsole.MarkupLine($"  Run [blue]./run.sh serve[/] to start the agent runtime");
         AnsiConsole.MarkupLine($"\nConfig saved to [grey]{configPath}[/]");
+    }
+
+    /// <summary>
+    /// Import mode: scan providers.d, show template list with key status, auto-fill,
+    /// resolve key (or prompt), then write via <see cref="ProviderRegistrar"/>.
+    /// Returns (providerKey, apiKey, model) for the rest of the wizard to use.
+    /// </summary>
+    private async Task<(string? ProviderKey, string? ApiKey, string Model)> RunImportModeAsync(CancellationToken ct)
+    {
+        var rows = OnboardingFlow.ListImportableTemplates(providersDir: null, animaEnvPath: null);
+
+        if (rows.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No provider templates found in ~/.anima/providers.d. Use Raw mode instead.[/]");
+            return (null, null, "");
+        }
+
+        // Build display labels with status indicators
+        var labels = rows
+            .Select(r =>
+            {
+                var mark = r.KeyStatus switch
+                {
+                    KeyStatus.Found => "[green]✅[/]",
+                    KeyStatus.Missing => "[yellow]⚠️[/]",
+                    KeyStatus.OAuth => "[blue]🔑[/]",
+                    _ => "[red]⛔[/]"
+                };
+                return $"{mark}  {Markup.Escape(r.Label)} [dim]({Markup.Escape(r.Id)}, {Markup.Escape(r.Api)})[/]";
+            })
+            .ToList();
+
+        var selectedLabel = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Select a [green]provider template[/]:")
+                .PageSize(15)
+                .AddChoices(labels));
+
+        var idx = labels.IndexOf(selectedLabel);
+        var row = rows[idx];
+
+        if (!row.Supported)
+        {
+            AnsiConsole.MarkupLine($"[red]This provider uses an unsupported API format ({row.Api}). Use Raw mode with an OpenAI-compatible proxy endpoint instead.[/]");
+            return (null, null, "");
+        }
+
+        // Resolve key
+        string? apiKey = null;
+        if (row.KeyStatus == KeyStatus.OAuth)
+        {
+            AnsiConsole.MarkupLine($"[blue]Provider '{row.Id}' requires OAuth login for {row.Template.ApiKeyRef}.[/]");
+            var oauthChoice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("OAuth login:")
+                    .AddChoices(["Open browser to sign in", "Enter API key manually instead"]));
+
+            if (oauthChoice == "Open browser to sign in")
+            {
+                AnsiConsole.MarkupLine("[yellow]OAuth login coming soon. Enter a key manually for now.[/]");
+                apiKey = AnsiConsole.Prompt(new TextPrompt<string>("API key:").Secret().AllowEmpty());
+            }
+            else
+            {
+                apiKey = AnsiConsole.Prompt(new TextPrompt<string>("API key:").Secret().AllowEmpty());
+            }
+        }
+        else if (row.KeyStatus == KeyStatus.Found)
+        {
+            var (resolved, foundKey) = OnboardingFlow.ResolveKeyForTemplate(row, animaEnvPath: null);
+            var useFound = AnsiConsole.Confirm($"Use the key found in env ({foundKey?[..Math.Min(8, foundKey.Length)]}…)?", true);
+            apiKey = useFound && !string.IsNullOrEmpty(foundKey) ? foundKey
+                : AnsiConsole.Prompt(new TextPrompt<string>("Enter API key:").Secret().AllowEmpty());
+        }
+        else // Missing
+        {
+            AnsiConsole.MarkupLine($"[yellow]No key found for {row.Template.ApiKeyRef}.[/]");
+            apiKey = AnsiConsole.Prompt(new TextPrompt<string>("Enter API key:").Secret().AllowEmpty());
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            AnsiConsole.MarkupLine("[yellow]No API key provided. You can add it later in ~/.aether/config.json[/]");
+            return (null, null, "");
+        }
+
+        // Write provider via shared registrar
+        await ProviderRegistrar.WriteProviderAsync(_aetherDir, row.Id, row.Template, apiKey!, ct);
+
+        var providerKey = row.Id;
+        var model = row.Template.Models.Count > 0 ? row.Template.Models[0] : "";
+        return (providerKey, apiKey, model);
+    }
+
+    /// <summary>
+    /// Raw mode: name → url → protocol → key → models → write via <see cref="ProviderRegistrar"/>.
+    /// </summary>
+    private async Task<(string? ProviderKey, string? ApiKey, string Model)> RunRawModeAsync(CancellationToken ct)
+    {
+        var name = AnsiConsole.Prompt(
+            new TextPrompt<string>("Provider name:").AllowEmpty());
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            AnsiConsole.MarkupLine("[yellow]No provider name given.[/]");
+            return (null, null, "");
+        }
+        name = name.Trim();
+
+        var url = AnsiConsole.Prompt(
+            new TextPrompt<string>("Base URL (https://…/v1):").AllowEmpty());
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            AnsiConsole.MarkupLine("[yellow]No URL given.[/]");
+            return (null, null, "");
+        }
+
+        var protocolLabel = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Protocol:")
+                .AddChoices([
+                    OnboardingFlow.ProtocolLabel(RawProtocol.OpenAiChat),
+                    OnboardingFlow.ProtocolLabel(RawProtocol.OpenAiResponses),
+                    OnboardingFlow.ProtocolLabel(RawProtocol.AnthropicMessages)
+                ]));
+        var protocol = OnboardingFlow.ParseProtocolLabel(protocolLabel);
+
+        var apiKey = AnsiConsole.Prompt(
+            new TextPrompt<string>("API key:").Secret().AllowEmpty());
+
+        var modelsInput = AnsiConsole.Prompt(
+            new TextPrompt<string>("Models (comma-separated):")
+                .DefaultValue("")
+                .AllowEmpty());
+
+        var template = OnboardingFlow.BuildRawTemplate(name, url.Trim(), protocol, apiKey ?? "", modelsInput);
+        await ProviderRegistrar.WriteProviderAsync(_aetherDir, name, template, apiKey ?? "", ct);
+
+        var model = template.Models.Count > 0 ? template.Models[0] : "";
+        return (name, apiKey, model);
+    }
+
+    /// <summary>
+    /// OAuth mode: placeholder. Shows "coming soon" and falls back to manual key entry.
+    /// </summary>
+    private async Task<(string? ProviderKey, string? ApiKey, string Model)> RunOAuthModeAsync(CancellationToken ct)
+    {
+        AnsiConsole.MarkupLine("[yellow]OAuth login is coming soon. For now, enter a provider + key manually.[/]");
+        // Reuse the raw flow as the manual fallback for OAuth providers.
+        return await RunRawModeAsync(ct);
     }
 
     private static async Task ScaffoldWorkspaceAsync(string name, string workspacePath, CancellationToken ct)

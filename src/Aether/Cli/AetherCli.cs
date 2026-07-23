@@ -1,11 +1,14 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using Aether.Agents;
 using Aether.Channels;
 using Aether.Config;
+using Aether.Providers;
 using Aether.Workspace;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Spectre.Console;
 
 namespace Aether.Cli;
 
@@ -44,9 +47,11 @@ public sealed class AetherCli
 
         root.AddCommand(BuildAgentCommand());
         root.AddCommand(BuildPluginCommand());
+        root.AddCommand(BuildProviderCommand());
         root.AddCommand(BuildAccessCommand());
         root.AddCommand(BuildIntegrityCommand());
         root.AddCommand(BuildGatewayCommand());
+        root.AddCommand(BuildRestartCommand());
 
         return root;
     }
@@ -67,23 +72,41 @@ public sealed class AetherCli
 
         cmd.SetHandler(async (context) =>
         {
+            // 1. Try systemd (Linux)
             var isUser = await IsSystemdServiceActiveAsync(user: true);
-            var isSystem = await IsSystemdServiceActiveAsync(user: false);
-
             if (isUser)
             {
-                context.Console.Out.Write("Aether service is running (user-level).\n");
+                context.Console.Out.Write("Aether service is running (user-level systemd).\n");
                 await RunSystemdCommandAsync("status", user: true, context);
+                return;
             }
-            else if (isSystem)
+
+            var isSystem = await IsSystemdServiceActiveAsync(user: false);
+            if (isSystem)
             {
-                context.Console.Out.Write("Aether service is running (system-level).\n");
+                context.Console.Out.Write("Aether service is running (system-level systemd).\n");
                 await RunSystemdCommandAsync("status", user: false, context);
+                return;
             }
-            else
+
+            // 2. Try macOS launchd
+            var launchdPid = await GetLaunchdPidAsync();
+            if (launchdPid.HasValue)
             {
-                context.Console.Out.Write("Aether service is not running.\n");
+                context.Console.Out.Write($"Aether service is running via launchd (PID: {launchdPid}).\n");
+                return;
             }
+
+            // 3. Try bare process
+            var barePid = await GetBareProcessPidAsync();
+            if (barePid.HasValue)
+            {
+                context.Console.Out.Write($"Aether is running as a bare process (PID: {barePid}).\n");
+                context.Console.Out.Write("Restart: aether gateway restart\n");
+                return;
+            }
+
+            context.Console.Out.Write("Aether service is not running.\n");
         });
 
         return cmd;
@@ -95,10 +118,11 @@ public sealed class AetherCli
 
         cmd.SetHandler(async (context) =>
         {
+            // 1. Try systemd (Linux)
             var isUser = await IsSystemdServiceActiveAsync(user: true);
             if (isUser)
             {
-                context.Console.Out.Write("Restarting Aether service (user-level)...\n");
+                context.Console.Out.Write("Restarting Aether service (user-level systemd)...\n");
                 await RunSystemdCommandAsync("restart", user: true, context);
                 return;
             }
@@ -106,15 +130,40 @@ public sealed class AetherCli
             var isSystem = await IsSystemdServiceActiveAsync(user: false);
             if (isSystem)
             {
-                context.Console.Out.Write("Restarting Aether service (system-level)...\n");
+                context.Console.Out.Write("Restarting Aether service (system-level systemd)...\n");
                 await RunSystemdCommandAsync("restart", user: false, context);
                 return;
             }
 
-            context.Console.Out.Write("Aether is not running as a systemd service.\n");
-            context.Console.Out.Write("Install: sudo bash scripts/install-service.sh install\n");
-            context.Console.Out.Write("Or start manually: dotnet run -- serve\n");
-            context.ExitCode = 1;
+            // 2. Try macOS launchd
+            var launchdPid = await GetLaunchdPidAsync();
+            if (launchdPid.HasValue)
+            {
+                context.Console.Out.Write("Restarting Aether service via launchd...\n");
+                await RunLaunchctlCommandAsync("restart", context);
+                return;
+            }
+
+            // 3. Try bare process: kill and respawn
+            var barePid = await GetBareProcessPidAsync();
+            if (barePid.HasValue)
+            {
+                context.Console.Out.Write($"Restarting Aether bare process (PID: {barePid})...\n");
+
+                // Kill the running process
+                try
+                {
+                    System.Diagnostics.Process.Start("kill", barePid.Value.ToString());
+                    await Task.Delay(1000, context.GetCancellationToken());
+                }
+                catch (Exception ex)
+                {
+                    context.Console.Error.Write($"Failed to stop Aether: {ex.Message}\n");
+                }
+            }
+
+            // 4. Spawn fresh (handles both restart after kill, and cold start)
+            await SpawnAetherAsync(context);
         });
 
         return cmd;
@@ -169,7 +218,384 @@ public sealed class AetherCli
         }
     }
 
+    private async Task<int?> GetLaunchdPidAsync()
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "launchctl",
+            Arguments = "list com.thoor.aether",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null) return null;
+            var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+            await process.WaitForExitAsync();
+
+            // launchctl list output: PID Status Label
+            var parts = output.Split('\t', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 1 && int.TryParse(parts[0], out var pid) && pid > 0)
+                return pid;
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private async Task<int?> GetBareProcessPidAsync()
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "pgrep",
+            Arguments = "-f \"Aether.dll serve\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null) return null;
+            var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+            await process.WaitForExitAsync();
+
+            if (int.TryParse(output.Split('\n')[0].Trim(), out var pid) && pid > 0)
+                return pid;
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private async Task RunLaunchctlCommandAsync(string command, System.CommandLine.Invocation.InvocationContext context)
+    {
+        // launchctl doesn't have a "restart" — need unload + load
+        var plist = $"{Environment.GetEnvironmentVariable("HOME")}/Library/LaunchAgents/com.thoor.aether.plist";
+
+        if (!File.Exists(plist))
+        {
+            context.Console.Error.Write($"LaunchAgent plist not found at {plist}\n");
+            context.ExitCode = 1;
+            return;
+        }
+
+        // Unload
+        var unloadPsi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "launchctl",
+            Arguments = $"unload \"{plist}\"",
+            UseShellExecute = false
+        };
+        using (var unload = System.Diagnostics.Process.Start(unloadPsi))
+        {
+            if (unload is not null)
+                await unload.WaitForExitAsync(context.GetCancellationToken());
+        }
+
+        await Task.Delay(500, context.GetCancellationToken());
+
+        // Load
+        var loadPsi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "launchctl",
+            Arguments = $"load \"{plist}\"",
+            UseShellExecute = false
+        };
+        using (var load = System.Diagnostics.Process.Start(loadPsi))
+        {
+            if (load is not null)
+                await load.WaitForExitAsync(context.GetCancellationToken());
+        }
+
+        context.Console.Out.Write("Aether service restarted via launchd.\n");
+    }
+
+    private async Task SpawnAetherAsync(System.CommandLine.Invocation.InvocationContext context)
+    {
+        var repoDir = Environment.GetEnvironmentVariable("AETHER_REPO") ?? "/Users/thoor/work/aether";
+        var bashArgs = $"-c \"cd '{repoDir}' && nohup dotnet run --project '{repoDir}/src/Aether/Aether.csproj' -- serve > /dev/null 2>&1 &\"";
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "/bin/bash",
+            Arguments = bashArgs,
+            UseShellExecute = false
+        };
+
+        try
+        {
+            System.Diagnostics.Process.Start(psi);
+            context.Console.Out.Write("Aether started.\n");
+        }
+        catch (Exception ex)
+        {
+            context.Console.Error.Write($"Failed to start Aether: {ex.Message}\n");
+            context.Console.Out.Write("Start manually: dotnet run -- serve\n");
+            context.ExitCode = 1;
+        }
+    }
+
     private Command BuildPluginCommand() => _pluginCli.BuildPluginCommand();
+
+    private Command BuildProviderCommand()
+    {
+        var provider = new Command("provider", "Manage LLM providers");
+        provider.AddCommand(BuildProviderAddCommand());
+        provider.AddCommand(BuildProviderListCommand());
+        return provider;
+    }
+
+    private Command BuildProviderAddCommand()
+    {
+        var modeOpt = new Option<string>("--mode", "Onboarding mode: import | raw | oauth");
+        modeOpt.SetDefaultValue("import");
+        var templateOpt = new Option<string?>("--template", "Template id to import (import mode)");
+        var nameOpt = new Option<string?>("--name", "Provider name (raw mode, or override import name)");
+        var urlOpt = new Option<string?>("--url", "Base URL (raw mode)");
+        var typeOpt = new Option<string?>("--type", "Provider type: openai | anthropic (raw mode)");
+        var apiKeyOpt = new Option<string?>("--api-key", "API key (overrides env resolution)");
+        var modelsOpt = new Option<string?>("--models", "Comma-separated model list (raw mode)");
+        var providersDirOpt = new Option<string?>("--providers-dir", "Override ~/.anima/providers.d (for import)");
+        var animaEnvOpt = new Option<string?>("--anima-env", "Override ~/.anima/anima.env path");
+        var nonInteractiveOpt = new Option<bool>("--non-interactive", "Skip prompts; error if key missing");
+
+        var cmd = new Command("add", "Add an LLM provider (import from providers.d, raw, or oauth)")
+        {
+            modeOpt, templateOpt, nameOpt, urlOpt, typeOpt,
+            apiKeyOpt, modelsOpt, providersDirOpt, animaEnvOpt, nonInteractiveOpt
+        };
+
+        cmd.SetHandler(async (context) =>
+        {
+            var mode = context.ParseResult.GetValueForOption(modeOpt) ?? "import";
+            var ct = context.GetCancellationToken();
+
+            if (string.Equals(mode, "raw", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleProviderAddRawAsync(context, nameOpt, urlOpt, typeOpt, apiKeyOpt, modelsOpt, ct);
+                return;
+            }
+
+            // import (default) and oauth both resolve via providers.d templates
+            await HandleProviderAddImportAsync(context, templateOpt, nameOpt, apiKeyOpt, providersDirOpt, animaEnvOpt, nonInteractiveOpt, ct);
+        });
+
+        return cmd;
+    }
+
+    private async Task HandleProviderAddImportAsync(
+        InvocationContext context,
+        Option<string?> templateOpt,
+        Option<string?> nameOpt,
+        Option<string?> apiKeyOpt,
+        Option<string?> providersDirOpt,
+        Option<string?> animaEnvOpt,
+        Option<bool> nonInteractiveOpt,
+        CancellationToken ct)
+    {
+        var templateId = context.ParseResult.GetValueForOption(templateOpt);
+        var nameOverride = context.ParseResult.GetValueForOption(nameOpt);
+        var explicitKey = context.ParseResult.GetValueForOption(apiKeyOpt);
+        var providersDir = context.ParseResult.GetValueForOption(providersDirOpt);
+        var animaEnvPath = context.ParseResult.GetValueForOption(animaEnvOpt);
+        var nonInteractive = context.ParseResult.GetValueForOption(nonInteractiveOpt);
+
+        var templates = TemplateScanner.ScanTemplates(providersDir);
+        if (templates.Count == 0)
+        {
+            context.Console.Out.Write("No provider templates found in providers.d. Use --mode raw for manual setup.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        if (string.IsNullOrEmpty(templateId))
+        {
+            context.Console.Out.Write("Available templates:");
+            foreach (var t in templates)
+                context.Console.Out.Write($"  {t.Id}  ({t.Label})  [{(t.Supported ? t.Api : "unsupported")}]");
+            context.Console.Out.Write("Specify --template <id> to import.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        var template = templates.FirstOrDefault(t =>
+            string.Equals(t.Id, templateId, StringComparison.OrdinalIgnoreCase));
+        if (template is null)
+        {
+            context.Console.Out.Write($"Template '{templateId}' not found in providers.d.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        if (!template.Supported)
+        {
+            context.Console.Out.Write(
+                $"Provider '{template.Id}' uses unsupported API format '{template.Api}'. " +
+                "Use --mode raw with an OpenAI-compatible proxy endpoint instead.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        // resolve key
+        string apiKey;
+        if (!string.IsNullOrEmpty(explicitKey))
+        {
+            apiKey = explicitKey!;
+        }
+        else
+        {
+            var envOptions = new EnvResolveOptions { AnimaEnvPath = animaEnvPath };
+            var resolved = EnvResolver.ResolveApiKeyRef(template.ApiKeyRef, envOptions);
+            if (resolved.IsOAuth)
+            {
+                context.Console.Out.Write(
+                    $"Provider '{template.Id}' requires OAuth login for '{resolved.OAuthProvider}'. " +
+                    "OAuth flow is not yet implemented. Use --api-key to provide a manual key.");
+                context.ExitCode = 1;
+                return;
+            }
+            if (!resolved.Resolved || string.IsNullOrEmpty(resolved.Value))
+            {
+                if (nonInteractive)
+                {
+                    context.Console.Out.Write(
+                        $"No API key found for '{template.ApiKeyRef}'. " +
+                        "Set the env var or use --api-key to provide one.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                // interactive prompt (masked)
+                apiKey = AnsiConsole.Prompt(
+                    new TextPrompt<string>($"Enter API key for [yellow]{template.Id}[/]:")
+                        .Secret());
+            }
+            else
+            {
+                apiKey = resolved.Value!;
+            }
+        }
+
+        var providerName = string.IsNullOrEmpty(nameOverride) ? template.Id : nameOverride!;
+        await ProviderRegistrar.WriteProviderAsync(_aetherDir, providerName, template, apiKey, ct);
+        context.Console.Out.Write(
+            $"Provider '{providerName}' added (type={template.MappedType}, baseUrl={template.BaseUrl}, models={template.Models.Count}).");
+    }
+
+    private async Task HandleProviderAddRawAsync(
+        InvocationContext context,
+        Option<string?> nameOpt,
+        Option<string?> urlOpt,
+        Option<string?> typeOpt,
+        Option<string?> apiKeyOpt,
+        Option<string?> modelsOpt,
+        CancellationToken ct)
+    {
+        var name = context.ParseResult.GetValueForOption(nameOpt);
+        var url = context.ParseResult.GetValueForOption(urlOpt);
+        var type = context.ParseResult.GetValueForOption(typeOpt);
+        var apiKey = context.ParseResult.GetValueForOption(apiKeyOpt);
+        var modelsRaw = context.ParseResult.GetValueForOption(modelsOpt);
+
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(type))
+        {
+            context.Console.Out.Write("Raw mode requires --name, --url, and --type.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        var normalizedType = type!.ToLowerInvariant();
+        if (normalizedType is not ("openai" or "anthropic"))
+        {
+            context.Console.Out.Write($"Unsupported type '{type}'. Use 'openai' or 'anthropic'.");
+            context.ExitCode = 1;
+            return;
+        }
+
+        var models = (modelsRaw ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        var template = new ProviderTemplate
+        {
+            Id = name!,
+            Label = name!,
+            Api = normalizedType == "anthropic" ? "anthropic-messages" : "openai-completions",
+            MappedType = normalizedType,
+            BaseUrl = url!,
+            ApiKeyRef = apiKey ?? "",
+            Models = models
+        };
+
+        await ProviderRegistrar.WriteProviderAsync(_aetherDir, name!, template, apiKey ?? "", ct);
+        context.Console.Out.Write($"Provider '{name}' added (type={normalizedType}, baseUrl={url}, models={models.Count}).");
+    }
+
+    private Command BuildProviderListCommand()
+    {
+        var jsonOpt = new Option<bool>("--json", "Output as JSON");
+        var providersDirOpt = new Option<string?>("--providers-dir", "Override ~/.anima/providers.d");
+        var animaEnvOpt = new Option<string?>("--anima-env", "Override ~/.anima/anima.env path");
+
+        var cmd = new Command("list", "List provider templates from providers.d")
+        {
+            jsonOpt, providersDirOpt, animaEnvOpt
+        };
+
+        cmd.SetHandler((context) =>
+        {
+            var asJson = context.ParseResult.GetValueForOption(jsonOpt);
+            var providersDir = context.ParseResult.GetValueForOption(providersDirOpt);
+            var animaEnvPath = context.ParseResult.GetValueForOption(animaEnvOpt);
+
+            var templates = TemplateScanner.ScanTemplates(providersDir);
+            var envOptions = new EnvResolveOptions { AnimaEnvPath = animaEnvPath };
+
+            var rows = templates
+                .Select(t =>
+                {
+                    var resolved = EnvResolver.ResolveApiKeyRef(t.ApiKeyRef, envOptions);
+                    var status = !t.Supported ? "unsupported"
+                        : resolved.IsOAuth ? "oauth"
+                        : resolved.Resolved ? "found"
+                        : "missing";
+                    return new { t.Id, t.Label, t.Api, t.BaseUrl, Status = status, Supported = t.Supported };
+                })
+                .OrderBy(r => r.Label)
+                .ToList();
+
+            if (asJson)
+            {
+                var json = JsonSerializer.Serialize(rows, JsonOptions);
+                context.Console.Out.Write(json);
+                return;
+            }
+
+            if (rows.Count == 0)
+            {
+                context.Console.Out.Write("No provider templates found in providers.d.");
+                return;
+            }
+
+            foreach (var r in rows)
+            {
+                var mark = r.Status switch
+                {
+                    "found" => "✅ found",
+                    "missing" => "⚠️ missing",
+                    "oauth" => "🔑 oauth",
+                    _ => "⛔ unsupported"
+                };
+                context.Console.Out.Write($"{r.Label} ({r.Id})  api={r.Api}  [{mark}]  baseUrl={r.BaseUrl}");
+            }
+        });
+
+        return cmd;
+    }
 
     private Command BuildAgentCommand()
     {
@@ -256,18 +682,29 @@ public sealed class AetherCli
 
             if (!doc.RootElement.TryGetProperty("agents", out var agents))
             {
-                context.Console.Out.Write("No agents configured.");
+                AnsiConsole.MarkupLine("[dim]No agents configured.[/]");
                 return;
             }
+
+            var table = new Table()
+                .Border(TableBorder.Rounded)
+                .BorderColor(Color.Grey)
+                .AddColumn(new TableColumn("[bold]Name[/]"))
+                .AddColumn(new TableColumn("[bold]Display Name[/]"))
+                .AddColumn(new TableColumn("[bold]Status[/]"));
 
             foreach (var prop in agents.EnumerateObject())
             {
                 var enabled = prop.Value.TryGetProperty("enabled", out var en) && en.GetBoolean();
-                var status = enabled ? "enabled" : "disabled";
+                var status = enabled ? "[green]enabled[/]" : "[dim]disabled[/]";
                 var displayName = prop.Value.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "";
-                var info = displayName.Length > 0 ? $"{prop.Name} ({displayName})" : prop.Name;
-                context.Console.Out.Write($"{info} [{status}]");
+                table.AddRow(
+                    $"[violet]{Markup.Escape(prop.Name)}[/]",
+                    Markup.Escape(displayName),
+                    status);
             }
+
+            AnsiConsole.Write(table);
         });
 
         return cmd;
@@ -607,55 +1044,55 @@ public sealed class AetherCli
 
         cmd.SetHandler(async (context) =>
         {
-            // Try systemd service first
-            var psi = new System.Diagnostics.ProcessStartInfo
+            // 1. Try systemd (Linux)
+            var isUser = await IsSystemdServiceActiveAsync(user: true);
+            if (isUser)
             {
-                FileName = "systemctl",
-                Arguments = "is-active aether.service",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
+                context.Console.Out.Write("Restarting Aether service (user-level systemd)...\n");
+                await RunSystemdCommandAsync("restart", user: true, context);
+                return;
+            }
 
-            try
+            var isSystem = await IsSystemdServiceActiveAsync(user: false);
+            if (isSystem)
             {
-                using var check = System.Diagnostics.Process.Start(psi);
-                if (check is not null)
+                context.Console.Out.Write("Restarting Aether service (system-level systemd)...\n");
+                await RunSystemdCommandAsync("restart", user: false, context);
+                return;
+            }
+
+            // 2. Try macOS launchd
+            var launchdPid = await GetLaunchdPidAsync();
+            if (launchdPid.HasValue)
+            {
+                context.Console.Out.Write("Restarting Aether service via launchd...\n");
+                await RunLaunchctlCommandAsync("restart", context);
+                return;
+            }
+
+            // 3. Try bare process: kill and respawn
+            var barePid = await GetBareProcessPidAsync();
+            if (barePid.HasValue)
+            {
+                context.Console.Out.Write($"Restarting Aether bare process (PID: {barePid})...\n");
+
+                try
                 {
-                    var output = (await check.StandardOutput.ReadToEndAsync()).Trim();
-                    await check.WaitForExitAsync(context.GetCancellationToken());
-
-                    if (output == "active")
-                    {
-                        context.Console.Out.Write("Restarting Aether service via systemd...");
-                        var restart = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "sudo",
-                            Arguments = "systemctl restart aether.service",
-                            UseShellExecute = false
-                        });
-                        await restart!.WaitForExitAsync(context.GetCancellationToken());
-                        context.Console.Out.Write(restart.ExitCode == 0
-                            ? "Aether service restarted."
-                            : $"systemctl restart failed with exit code {restart.ExitCode}");
-                        return;
-                    }
+                    System.Diagnostics.Process.Start("kill", $"{barePid}");
+                    await Task.Delay(1000, context.GetCancellationToken());
+                }
+                catch (Exception ex)
+                {
+                    context.Console.Error.Write($"Failed to stop Aether: {ex.Message}\n");
                 }
             }
-            catch
-            {
-                // systemctl not available, fall through
-            }
 
-            context.Console.Out.Write("Aether is not running as a systemd service.");
-            context.Console.Out.Write("Install: sudo bash scripts/install-service.sh install");
-            context.Console.Out.Write("Or start manually: dotnet run -- serve");
-            context.ExitCode = 1;
+            // 4. Spawn fresh (handles both restart after kill, and cold start)
+            await SpawnAetherAsync(context);
         });
 
         return cmd;
     }
-
     private string? ResolveAgentDir(string agentName)
     {
         // Check config.json workspace path first

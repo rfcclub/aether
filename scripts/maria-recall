@@ -1,0 +1,16 @@
+#!/bin/bash
+# maria-recall — Search Maria's long-term memory via Aether daemon (port 5099)
+# Usage: maria-recall <query> [limit]
+# Example: maria-recall "Thoor preferences" 5
+
+QUERY="${1:?Usage: maria-recall <query> [limit]}"
+LIMIT="${2:-10}"
+
+RESPONSE=$(curl -sf "http://localhost:5099/memory/maria/recall?query=$(printf '%s' "$QUERY" | jq -sRr @uri)&limit=$LIMIT" 2>/dev/null)
+
+if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
+    echo "{\"success\":false,\"error\":\"Aether daemon not running. Start with: aether\"}"
+    exit 1
+fi
+
+echo "$RESPONSE"

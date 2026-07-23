@@ -306,4 +306,42 @@ public sealed class ProviderRouterModelRoutingTests : IDisposable
         Assert.Equal("deepseek-r1", fallback.Model);
     }
 
+    [Fact]
+    public async Task ModelChain_Streaming_FallsBack_WhenPrimaryFails()
+    {
+        var primary = new FakeLlmProvider("openrouter", "deepseek/deepseek-r1", throwOnCall: true);
+        var fallback = new FakeStreamingProvider("fallback stream response", chunks: 2);
+
+        var router = CreateRouter(
+            new ILLMProvider[] { primary, fallback },
+            modelChain: new[] { "deepseek/deepseek-r1", "stream-model" },
+            agentSpec: new AgentSpecConfig
+            {
+                Providers = new Dictionary<string, SpecProviderEntry>
+                {
+                    ["openrouter"] = new() { Type = "openrouter", Model = "deepseek/deepseek-r1" },
+                    ["fake-streaming"] = new() { Type = "fake-streaming", Model = "stream-model" }
+                }
+            });
+
+        var eventList = new List<StreamEvent>();
+        await foreach (var evt in router.CompleteStreamingEventsAsync(SimpleRequest, CancellationToken.None))
+        {
+            eventList.Add(evt);
+        }
+
+        Assert.Equal(1, primary.CallCount);
+        Assert.Equal(1, fallback.CallCount);
+
+        // Verify tokens were received
+        var tokens = eventList.OfType<StreamEvent.TextToken>().Select(t => t.Token).ToList();
+        var fullText = string.Join("", tokens);
+        Assert.Contains("fallback stream response", fullText);
+
+        var responseEvt = eventList.OfType<StreamEvent.Response>().FirstOrDefault();
+        Assert.NotNull(responseEvt);
+        Assert.Equal("fallback stream response", responseEvt.LlmResponse.Content);
+    }
+
 }
+

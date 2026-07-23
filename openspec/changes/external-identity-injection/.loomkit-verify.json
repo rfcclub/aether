@@ -1,0 +1,17 @@
+{
+  "change": "external-identity-injection",
+  "timestamp": "2026-07-21T23:54:22.907Z",
+  "total_scenarios": 6,
+  "passing": 0,
+  "coverage": 0,
+  "threshold": 100,
+  "passed": false,
+  "uncovered": [
+    "rider-01-ws-handler-accepts-identity-system-prompt-message-rider-01-s01-valid-identity-system-prompt-is-accepted",
+    "rider-01-ws-handler-accepts-identity-system-prompt-message-rider-01-s02-missing-text-field-is-rejected",
+    "rider-02-external-identity-is-appended-to-system-prompt-rider-02-s01-external-identity-appears-in-assembled-system-prompt",
+    "rider-02-external-identity-is-appended-to-system-prompt-rider-02-s02-no-identity-leaves-default-prompt-unchanged",
+    "rider-03-aethersoul-no-longer-auto-loads-identity-from-files-rider-03-s01-aethersoul-constructor-does-not-load-identity",
+    "rider-03-aethersoul-no-longer-auto-loads-identity-from-files-rider-03-s02-aethersoul-starts-clean-without-identity-files"
+  ]
+}

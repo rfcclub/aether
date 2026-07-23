@@ -17,7 +17,9 @@ public sealed record LlmRequest(
     IReadOnlyList<LlmMessage> Messages,
     IReadOnlyList<LlmTool>? Tools = null,
     string? ReasoningEffort = null,
-    int? ThinkingBudgetTokens = null);
+    int? ThinkingBudgetTokens = null,
+    string? SystemPrompt = null,
+    bool UsePromptCaching = false);
 
 public sealed record LlmResponse(
     string Content,

@@ -17,6 +17,10 @@ public sealed class IsolatedPluginLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName name)
     {
+        // Force sharing of the core Aether assembly by forwarding to the default context
+        if (name.Name == "Aether")
+            return null;
+
         // Plugin's own dependencies resolved from its directory first
         var path = _resolver.ResolveAssemblyToPath(name);
         if (path is not null)

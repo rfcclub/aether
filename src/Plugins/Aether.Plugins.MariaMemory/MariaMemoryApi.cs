@@ -83,6 +83,20 @@ public sealed class MariaMemoryApi
                 var result = await _contextEngine.AssembleContextAsync(topic, limit, ct);
                 await WriteResponseAsync(response, new { success = true, context = result });
             }
+            else if (request.Url?.AbsolutePath == "/memory/recall" && request.HttpMethod == "GET")
+            {
+                var query = request.QueryString["query"];
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    await WriteErrorAsync(response, 400, "Missing 'query' parameter");
+                    return;
+                }
+                var limitStr = request.QueryString["limit"] ?? "10";
+                int.TryParse(limitStr, out var limit);
+                if (limit <= 0) limit = 10;
+                var nodes = await _store.SearchAsync(query, limit, ct);
+                await WriteResponseAsync(response, new { success = true, nodes });
+            }
             else if (request.Url?.AbsolutePath == "/memory/nodes" && request.HttpMethod == "GET")
             {
                 var limitStr = request.QueryString["limit"] ?? "100";

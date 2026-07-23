@@ -52,7 +52,7 @@ public sealed class GenericHttpProvider : ILLMProvider
         var body = new Dictionary<string, object?>
         {
             ["model"] = _options.Model,
-            ["messages"] = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
+            ["messages"] = BuildMessages(request)
         };
 
         // Include tools if supported and provided
@@ -151,9 +151,11 @@ public sealed class GenericHttpProvider : ILLMProvider
                     var fn = tc.GetProperty("function");
                     var name = fn.GetProperty("name").GetString() ?? "";
                     var argsJson = fn.GetProperty("arguments").GetString() ?? "{}";
-                    var id = "call_0";
+                    var id = "";
                     if (tc.TryGetProperty("id", out var idElement))
-                        id = idElement.GetString() ?? id;
+                        id = idElement.GetString() ?? "";
+                    if (string.IsNullOrEmpty(id) || id == "call_0")
+                        id = $"call_{Guid.NewGuid():N}";
 
                     // Parse args JSON into dictionary
                     var args = new Dictionary<string, string>();
@@ -188,6 +190,59 @@ public sealed class GenericHttpProvider : ILLMProvider
 
         // Return raw JSON as content
         return new LlmResponse(root.GetRawText(), null);
+    }
+
+    private object MapMessage(LlmMessage message)
+    {
+        if (message.Role == "tool")
+        {
+            return new
+            {
+                role = "tool",
+                tool_call_id = message.ToolCallId,
+                name = message.ToolName,
+                content = message.Content
+            };
+        }
+
+        if (message.Role == "assistant" && message.ToolCalls is { Count: > 0 })
+        {
+            return new
+            {
+                role = "assistant",
+                content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+                tool_calls = message.ToolCalls.Select(call => new
+                {
+                    id = call.Id,
+                    type = "function",
+                    function = new
+                    {
+                        name = call.Name,
+                        arguments = JsonSerializer.Serialize(call.Arguments, JsonOptions)
+                    }
+                }).ToArray()
+            };
+        }
+
+        return new
+        {
+            role = message.Role,
+            content = message.Content
+        };
+    }
+
+    private object[] BuildMessages(LlmRequest request)
+    {
+        var messages = new List<object>();
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            messages.Add(new { role = "system", content = request.SystemPrompt });
+        }
+        foreach (var msg in request.Messages)
+        {
+            messages.Add(MapMessage(msg));
+        }
+        return messages.ToArray();
     }
 }
 

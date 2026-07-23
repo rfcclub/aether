@@ -9,7 +9,7 @@ namespace Aether.SelfImprovement;
 
 public class SelfImprovementService 
 {
-    private readonly FileMemory _memory;
+    private readonly IMemorySystem _memory;
     private readonly SkillEvolution _skillEvolution;
     private readonly BenchmarkGate _benchmarkGate;
     private readonly PipelineTracker _pipelineTracker;
@@ -18,7 +18,7 @@ public class SelfImprovementService
     private readonly ILogger<SelfImprovementService> _logger;
 
     public SelfImprovementService(
-        FileMemory memory,
+        IMemorySystem memory,
         SkillEvolution skillEvolution,
         BenchmarkGate benchmarkGate,
         PipelineTracker pipelineTracker,

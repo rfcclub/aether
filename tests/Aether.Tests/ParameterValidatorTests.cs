@@ -44,7 +44,7 @@ public class ParameterValidatorTests
         var errors = ParameterValidator.Validate(call, ReadTool);
 
         Assert.NotEmpty(errors);
-        Assert.Contains(errors, e => e.Path.Contains("path"));
+        Assert.Contains(errors, e => e.Path?.Contains("path") ?? false);
     }
 
     [Fact]

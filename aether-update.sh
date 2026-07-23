@@ -22,6 +22,24 @@ done
 echo "🔨 Building Aether..."
 dotnet build "$SCRIPT_DIR/src/Aether/Aether.csproj" -c Release --verbosity quiet
 
+# ── Generate launchd plist from template (macOS only) ────────────────────────
+if [[ "$(uname)" == "Darwin" ]]; then
+    AETHER_HOME="${AETHER_HOME:-$HOME/.aether}"
+    PLIST_SRC="$SCRIPT_DIR/scripts/aether-daemon.plist"
+    DLL_PATH="$SCRIPT_DIR/src/Aether/bin/Release/net10.0/Aether.dll"
+
+        if [ -f "$PLIST_SRC" ] && [ -f "$DLL_PATH" ]; then
+        mkdir -p "$(dirname "$PLIST")" "$AETHER_HOME/logs"
+        BUILD_DIR="$(dirname "$DLL_PATH")"
+        sed -e "s|__AETHER_DLL_PATH__|$DLL_PATH|g" \
+            -e "s|__AETHER_HOME__|$AETHER_HOME|g" \
+            -e "s|__AETHER_BUILD_DIR__|$BUILD_DIR|g" "$PLIST_SRC" > "$PLIST"
+        echo "📝 Generated launchd plist: $PLIST"
+    else
+        echo "⚠️  Cannot generate plist (template or DLL missing). Skipping."
+    fi
+fi
+
 if [ -f "$PLIST" ]; then
     echo "♻️  Restarting service..."
     launchctl unload "$PLIST" 2>/dev/null || true

@@ -51,6 +51,36 @@ public abstract class AnthropicCompatibleProviderBase : ILLMProvider
             ["max_tokens"] = Math.Max(GetMaxTokens(), (request.ThinkingBudgetTokens ?? 0) + 1024)
         };
 
+        // Add system prompt as top-level parameter (Anthropic-native format)
+        // with cache_control when prompt caching is enabled
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            if (request.UsePromptCaching)
+            {
+                body["system"] = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = request.SystemPrompt,
+                        cache_control = new { type = "ephemeral" }
+                    }
+                };
+                // Anthropic cache_control requires at least version 2023-06-01
+            }
+            else
+            {
+                body["system"] = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = request.SystemPrompt
+                    }
+                };
+            }
+        }
+
         if (request.ThinkingBudgetTokens > 0)
         {
             body["thinking"] = new
@@ -146,6 +176,34 @@ public abstract class AnthropicCompatibleProviderBase : ILLMProvider
             ["max_tokens"] = Math.Max(GetMaxTokens(), (request.ThinkingBudgetTokens ?? 0) + 1024),
             ["stream"] = true
         };
+
+        // Add system prompt for streaming too
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            if (request.UsePromptCaching)
+            {
+                body["system"] = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = request.SystemPrompt,
+                        cache_control = new { type = "ephemeral" }
+                    }
+                };
+            }
+            else
+            {
+                body["system"] = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = request.SystemPrompt
+                    }
+                };
+            }
+        }
 
         if (request.ThinkingBudgetTokens > 0 && Model.Contains("claude-3-7", StringComparison.OrdinalIgnoreCase))
         {

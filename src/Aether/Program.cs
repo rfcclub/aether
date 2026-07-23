@@ -17,13 +17,16 @@ using Aether.Workspace;
 using Aether.Sessions;
 using Aether.Skills;
 using Aether.Tooling;
+using Aether.Tooling.DynamicTool;
 using Aether.Ui;
 using Aether.Ui.Handlers;
 using Aether.Ui.Renderers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Spectre.Console;
 using Microsoft.Extensions.Logging;
 using Aether.Scheduling;
+using Aether.Mcp;
 using ToolExecutor = Aether.Agent.ToolExecutor;
 
 if (args.Contains("--smoke", StringComparer.OrdinalIgnoreCase))
@@ -41,7 +44,7 @@ var traceStartup = args.Contains("--trace-startup", StringComparer.OrdinalIgnore
 var prompt = GetOption(args, "--prompt");
 
 // CLI dispatch: route management commands before harness/serve/tui
-if (args.FirstOrDefault() is "agent" or "integrity" or "access" or "gateway" or "plugin")
+if (args.FirstOrDefault() is "agent" or "integrity" or "access" or "gateway" or "plugin" or "restart")
 {
     await RunCliAsync(args);
     return;
@@ -61,12 +64,6 @@ if (prompt is null)
         var interactive = !args.Contains("--non-interactive", StringComparer.OrdinalIgnoreCase);
         await wizard.RunAsync(interactive);
     }
-}
-
-if (args.FirstOrDefault() == "tui")
-{
-    await LaunchTuiAsync(args.Skip(1).ToArray());
-    return;
 }
 
 if (args.FirstOrDefault() == "serve")
@@ -370,14 +367,14 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
     var startCtx = new OnSessionStartContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory, IsNewSession = true };
     await hooks.RunAsync(HookPoint.OnSessionStart, startCtx, CancellationToken.None);
 
-    Console.WriteLine("╔══════════════════════════════════════╗");
-    Console.WriteLine("║         Aether — Onboard REPL       ║");
-    Console.WriteLine("╠══════════════════════════════════════╣");
-    Console.WriteLine($"║ Model:    {model,-27}║");
-    Console.WriteLine($"║ Group:    {group,-27}║");
-    Console.WriteLine("║ Type /quit, /q, or Ctrl+C to exit   ║");
-    Console.WriteLine("╚══════════════════════════════════════╝");
-    Console.WriteLine();
+    AnsiConsole.Write(new Panel(
+        new Markup($"[bold]Model:[/] [violet]{Markup.Escape(model)}[/]\n" +
+                   $"[bold]Group:[/] [violet]{Markup.Escape(group)}[/]\n" +
+                   "[dim]Type /help for commands, /quit /q /exit or Ctrl+C to exit[/]"))
+        .Header("[bold amber]Aether — Onboard REPL[/]")
+        .Border(BoxBorder.Rounded)
+        .BorderColor(Color.Grey));
+    AnsiConsole.WriteLine();
 
     using var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) =>
@@ -388,7 +385,7 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
 
     while (!cts.Token.IsCancellationRequested)
     {
-        Console.Write("> ");
+        AnsiConsole.Markup("[violet]>[/] ");
         var input = Console.ReadLine();
         if (input is null || cts.Token.IsCancellationRequested) break;
 
@@ -396,13 +393,33 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
         if (trimmed is "/quit" or "/q" or "/exit") break;
         if (string.IsNullOrWhiteSpace(trimmed)) continue;
 
+        if (trimmed is "/help" or "/h")
+        {
+            var helpTable = new Table()
+                .Border(TableBorder.Rounded)
+                .BorderColor(Color.Grey)
+                .AddColumn(new TableColumn("[bold]Command[/]"))
+                .AddColumn(new TableColumn("[bold]Description[/]"));
+            helpTable.AddRow("[violet]/help[/]", "Show this help");
+            helpTable.AddRow("[violet]/quit[/]", "Exit the REPL");
+            helpTable.AddRow("[violet]/clear[/]", "Clear the screen");
+            AnsiConsole.Write(helpTable);
+            continue;
+        }
+
+        if (trimmed is "/clear")
+        {
+            AnsiConsole.Clear();
+            continue;
+        }
+
         // ── OnMessageReceived hook ──
         var msgCtx = new OnMessageReceivedContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory, Text = trimmed, ChannelName = "repl" };
         var msgResult = await hooks.RunAsync(HookPoint.OnMessageReceived, msgCtx, cts.Token);
         if (!msgResult.Success || msgCtx.Dropped) continue;
         var processedInput = msgCtx.OverrideText ?? trimmed;
 
-        Console.WriteLine();
+        AnsiConsole.WriteLine();
         try
         {
             var response = await soul.ProcessAsync(group, processedInput, cts.Token);
@@ -413,7 +430,9 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
             await hooks.RunAllAsync(HookPoint.OnMessageSent, sentCtx, cts.Token);
             responseText = sentCtx.OverrideText ?? responseText;
 
-            Console.WriteLine(responseText);
+            AnsiConsole.Write(new Rule());
+            AnsiConsole.MarkupLine(responseText);
+            AnsiConsole.Write(new Rule());
         }
         catch (OperationCanceledException)
         {
@@ -421,52 +440,16 @@ static async Task RunOnboardReplAsync(string[] args, bool traceStartup)
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[Error: {ex.Message}]");
+            AnsiConsole.MarkupLine($"[red]Error: {Markup.Escape(ex.Message)}[/]");
         }
-        Console.WriteLine();
+        AnsiConsole.WriteLine();
     }
 
     // ── OnSessionEnd hook ──
     var endCtx = new HookContext { AgentName = "aether", WorkspacePath = profile.AgentDirectory };
     await hooks.RunAsync(HookPoint.OnSessionEnd, endCtx, CancellationToken.None);
 
-    Console.WriteLine("Aether signing off.");
-}
-
-static async Task LaunchTuiAsync(string[] args)
-{
-    // Find TUI project path relative to the Aether project
-    var tuiProjectDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Aether.Tui");
-    tuiProjectDir = Path.GetFullPath(tuiProjectDir);
-
-    if (!File.Exists(Path.Combine(tuiProjectDir, "Aether.Tui.csproj")))
-    {
-        // Try relative to current directory
-        tuiProjectDir = Path.Combine(Environment.CurrentDirectory, "..", "Aether.Tui");
-        tuiProjectDir = Path.GetFullPath(tuiProjectDir);
-    }
-
-    if (!File.Exists(Path.Combine(tuiProjectDir, "Aether.Tui.csproj")))
-    {
-        Console.Error.WriteLine("Cannot find Aether.Tui project. Run: dotnet run --project src/Aether.Tui");
-        Environment.ExitCode = 1;
-        return;
-    }
-
-    var psi = new System.Diagnostics.ProcessStartInfo("dotnet", $"run --project \"{tuiProjectDir}\" -- {string.Join(" ", args)}")
-    {
-        UseShellExecute = false,
-        RedirectStandardInput = false,
-        RedirectStandardOutput = false,
-        RedirectStandardError = false
-    };
-
-    using var process = System.Diagnostics.Process.Start(psi);
-    if (process is not null)
-    {
-        await process.WaitForExitAsync();
-        Environment.ExitCode = process.ExitCode;
-    }
+    AnsiConsole.MarkupLine("[dim]Aether signing off.[/]");
 }
 
 static async Task RunServeAsync(bool traceStartup)
@@ -603,7 +586,6 @@ static async Task RunServeAsync(bool traceStartup)
     builder.Services.AddSingleton<CallbackRouter>();
     builder.Services.AddSingleton<TelegramUiRenderer>();
     builder.Services.AddSingleton<WebSocketUiRenderer>();
-    builder.Services.AddSingleton<TuiUiRenderer>();
     builder.Services.AddSingleton<SkillRegistry>();
     builder.Services.AddSingleton<SkillParser>();
     builder.Services.AddSingleton<SkillTrigger>();
@@ -612,7 +594,8 @@ static async Task RunServeAsync(bool traceStartup)
         var logger = provider.GetRequiredService<ILogger<SkillEvolution>>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var patchesPath = configuration["self_improvement:patches_path"] ?? "patches";
-        return new SkillEvolution(logger, patchesPath);
+        var db = provider.GetService<AetherDb>();
+        return new SkillEvolution(logger, patchesPath, db);
     });
     // Working directory: creates ~/.aether/ on first run before anything else
     builder.Services.AddSingleton(provider =>
@@ -686,7 +669,7 @@ static async Task RunServeAsync(bool traceStartup)
     });
     builder.Services.AddSingleton<SelfImprovementService>(provider =>
     {
-        var memory = provider.GetRequiredService<FileMemory>();
+        var memory = provider.GetRequiredService<IMemorySystem>();
         var skillEvolution = provider.GetRequiredService<SkillEvolution>();
         var benchmarkGate = provider.GetRequiredService<BenchmarkGate>();
         var pipelineTracker = provider.GetRequiredService<PipelineTracker>();
@@ -706,7 +689,7 @@ static async Task RunServeAsync(bool traceStartup)
     var bootstrapLoader = new ConfigLoader(
         builder.Configuration, aetherCfgDir,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
-    var bootstrapConfig = bootstrapLoader.LoadAsync().Result;
+    var bootstrapConfig = await bootstrapLoader.LoadAsync();
 
     if (bootstrapConfig.Providers.Count == 0)
     {
@@ -817,6 +800,34 @@ static async Task RunServeAsync(bool traceStartup)
         return new KairosWatchService(profile.AgentDirectory, kairosConfig, channel, logger);
     });
 
+    // Dynamic Tool Runtime — Roslyn hot-reload for tools/*.cs
+    builder.Services.AddSingleton<DynamicToolWatcherService>(provider =>
+    {
+        var aetherHome = Environment.GetEnvironmentVariable("AETHER_HOME")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aether");
+        var toolsDir = Path.Combine(aetherHome, "tools");
+        var logger = provider.GetRequiredService<ILogger<DynamicToolWatcherService>>();
+        return new DynamicToolWatcherService(toolsDir, logger);
+    });
+    builder.Services.AddSingleton<IHostedService>(provider =>
+        provider.GetRequiredService<DynamicToolWatcherService>());
+    builder.Services.AddSingleton<DynamicToolExecutor>(provider =>
+    {
+        var watcher = provider.GetRequiredService<DynamicToolWatcherService>();
+        var logger = provider.GetRequiredService<ILogger<DynamicToolExecutor>>();
+        return new DynamicToolExecutor(watcher, logger);
+    });
+
+    // MCP Server — Model Context Protocol stdio endpoint
+    builder.Services.AddSingleton<McpServerEndpoint>(provider =>
+    {
+        var registry = provider.GetRequiredService<ToolRegistry>();
+        var logger = provider.GetRequiredService<ILogger<McpServerEndpoint>>();
+        return new McpServerEndpoint(registry, logger);
+    });
+    builder.Services.AddSingleton<IHostedService>(provider =>
+        provider.GetRequiredService<McpServerEndpoint>());
+
     // Boot Cognitive Architecture
     builder.Services.AddSingleton<BootConfig>(provider =>
     {
@@ -901,7 +912,10 @@ static async Task RunServeAsync(bool traceStartup)
         var sessionManager = provider.GetRequiredService<SessionManager>();
         var logger = provider.GetRequiredService<ILogger<AetherSoul>>();
         var hooks = provider.GetService<Aether.Plugins.HookEngine>();
-        return new AetherSoul(llm, tools, registry, profile, logger, hooks, sqliteMemory, sessionManager);
+        var configLoader = provider.GetService<Aether.Config.ConfigLoader>();
+        var configuration = provider.GetService<IConfiguration>();
+        var dynamicTools = provider.GetService<DynamicToolExecutor>();
+        return new AetherSoul(llm, tools, registry, profile, logger, hooks, sqliteMemory, sessionManager, configLoader, configuration, dynamicTools);
     });
 
     builder.Services.AddSingleton<IChannel>(provider =>

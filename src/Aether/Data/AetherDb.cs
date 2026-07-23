@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Aether.Data;
 
-public sealed class AetherDb : IDisposable
+public sealed class AetherDb
 {
     public void Dispose() { }
     private readonly string _connectionString;

@@ -230,6 +230,10 @@ public sealed class ChannelMessageProcessor : BackgroundService
             using var scope = _services.CreateScope();
 
             // Apply per-agent provider config before LLM call
+            _logger.LogInformation("HandleMessageAsync: agentSpec is {AgentSpec}, agentConfig is {AgentConfig}", 
+                agentSpec != null ? "not null" : "null", 
+                agentConfig != null ? "not null" : "null");
+
             if (agentSpec is not null)
             {
                 var providerRouter = scope.ServiceProvider.GetService<ProviderRouter>();
@@ -244,6 +248,8 @@ public sealed class ChannelMessageProcessor : BackgroundService
                         if (!string.IsNullOrEmpty(modelCfg.Primary))
                             chain.Add(modelCfg.Primary);
                         chain.AddRange(modelCfg.Fallbacks);
+                        _logger.LogInformation("Setting ModelChain to: [{Chain}] for agent {Agent}", 
+                            string.Join(", ", chain), routed.Value.AgentName);
                         if (chain.Count > 0)
                             providerRouter.ModelChain = chain;
                     }
@@ -269,7 +275,9 @@ public sealed class ChannelMessageProcessor : BackgroundService
                     scope.ServiceProvider.GetRequiredService<ILogger<AetherSoul>>(),
                     requestHooks,
                     scope.ServiceProvider.GetRequiredService<SqliteMemorySystem>(),
-                    scope.ServiceProvider.GetRequiredService<SessionManager>());
+                    scope.ServiceProvider.GetRequiredService<SessionManager>(),
+                    scope.ServiceProvider.GetService<Aether.Config.ConfigLoader>(),
+                    scope.ServiceProvider.GetService<IConfiguration>());
 
             await _channel.SetTypingAsync(message.ChatId, true, linkedToken);
 

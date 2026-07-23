@@ -20,7 +20,10 @@ fi
 
 # Clean up stale port before serve
 if [ "${1:-}" = "serve" ]; then
-    fuser -k 5099/tcp 2>/dev/null || true
+    PID=$(lsof -t -i :5099 || true)
+    if [[ -n "$PID" ]]; then
+        kill -9 $PID 2>/dev/null || true
+    fi
 fi
 
 exec dotnet run --project "$SCRIPT_DIR/src/Aether/Aether.csproj" -- "$@"

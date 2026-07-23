@@ -36,6 +36,14 @@ pub enum AppEvent {
     GitStatusLoaded(Vec<(String, String)>),
     /// Git diff content loaded
     GitDiffLoaded(String),
+    /// Goals dashboard data loaded
+    GoalsLoaded(serde_json::Value),
+    /// Skills panel data loaded
+    SkillsLoaded(serde_json::Value),
+    /// Self-improvement metrics data loaded
+    MetricsLoaded(serde_json::Value),
+    /// Telemetry snapshot loaded
+    TelemetryLoaded(serde_json::Value),
     /// Quit signal
     Quit,
 }

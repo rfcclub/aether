@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 use crate::app::AppState;
-use crate::ui::{BG, BORDER_FOCUS, AMBER, DIM};
+use crate::ui::{bg, border_focus, amber, dim};
 
 pub fn draw_brainstorm_wizard(f: &mut Frame, state: &AppState, area: Rect) {
     let popup_area = Rect {
@@ -20,8 +20,8 @@ pub fn draw_brainstorm_wizard(f: &mut Frame, state: &AppState, area: Rect) {
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_FOCUS))
-        .style(Style::default().bg(BG))
+        .border_style(Style::default().fg(border_focus()))
+        .style(Style::default().bg(bg()))
         .title(" 🌌 Socratic Brainstorming Wizard (F5) ");
 
     let inner_area = outer_block.inner(popup_area);
@@ -44,14 +44,14 @@ pub fn draw_brainstorm_wizard(f: &mut Frame, state: &AppState, area: Rect) {
     ];
 
     let question = Paragraph::new(questions[state.brainstorm_step])
-        .style(Style::default().fg(AMBER).add_modifier(Modifier::BOLD).bg(BG));
+        .style(Style::default().fg(amber()).add_modifier(Modifier::BOLD).bg(bg()));
     f.render_widget(question, chunks[0]);
 
     let answer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(DIM))
-        .style(Style::default().bg(BG));
+        .border_style(Style::default().fg(dim()))
+        .style(Style::default().bg(bg()));
     let answer_inner = answer_block.inner(chunks[1]);
 
     let answer_text = &state.brainstorm_answers[state.brainstorm_step];
@@ -80,6 +80,6 @@ pub fn draw_brainstorm_wizard(f: &mut Frame, state: &AppState, area: Rect) {
     let progress = format!(" Step {} / 4 | [Enter] Next Step | [Esc] Cancel Wizard ", state.brainstorm_step + 1);
     let help = Paragraph::new(progress)
         .alignment(ratatui::layout::Alignment::Center)
-        .style(Style::default().fg(DIM).bg(BG));
+        .style(Style::default().fg(dim()).bg(bg()));
     f.render_widget(help, chunks[2]);
 }

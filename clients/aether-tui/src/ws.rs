@@ -132,6 +132,18 @@ async fn handle_inbound(json: &str, tx: &mpsc::Sender<AppEvent>) {
             }).collect();
             let _ = tx.send(AppEvent::HistoryLoaded(messages)).await;
         }
+        "goals" => {
+            let _ = tx.send(AppEvent::GoalsLoaded(val.clone())).await;
+        }
+        "skills" => {
+            let _ = tx.send(AppEvent::SkillsLoaded(val.clone())).await;
+        }
+        "metrics" => {
+            let _ = tx.send(AppEvent::MetricsLoaded(val.clone())).await;
+        }
+        "telemetry" => {
+            let _ = tx.send(AppEvent::TelemetryLoaded(val.clone())).await;
+        }
         _ => {} // unknown types silently ignored
     }
 }

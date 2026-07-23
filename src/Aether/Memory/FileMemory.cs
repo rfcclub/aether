@@ -2,7 +2,7 @@ using Aether.Plugins;
 
 namespace Aether.Memory;
 
-public class FileMemory
+public class FileMemory : IMemorySystem
 {
     private readonly string _groupsRoot;
     private readonly HookEngine? _hooks;

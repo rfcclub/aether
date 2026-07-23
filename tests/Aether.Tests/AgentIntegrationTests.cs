@@ -40,7 +40,7 @@ public sealed class AgentIntegrationTests : IDisposable
         var soul = new AetherSoul(llm, tools, profile);
         var response = await soul.ProcessAsync("maria", "Hello!");
 
-        Assert.Contains("Maria", llm.LastRequest!.Messages[0].Content);
-        Assert.Contains("Thoor", llm.LastRequest.Messages[0].Content);
+        Assert.Contains("Maria", llm.LastRequest!.SystemPrompt);
+        Assert.Contains("Thoor", llm.LastRequest.SystemPrompt);
     }
 }

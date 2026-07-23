@@ -115,7 +115,7 @@ public sealed class ProviderConfigIntegrationTests : IDisposable
     }
 
     [Fact]
-    public void ConfigLoader_LoadsProviders_AndFactoryCreatesThem()
+    public async Task ConfigLoader_LoadsProviders_AndFactoryCreatesThem()
     {
         // Write config.json with providers
         var configPath = Path.Combine(_aetherDir, "config.json");
@@ -147,7 +147,7 @@ public sealed class ProviderConfigIntegrationTests : IDisposable
         var configuration = new DictionaryConfiguration(new Dictionary<string, string?>());
         var loader = new ConfigLoader(configuration, _aetherDir,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
-        var config = loader.LoadAsync().Result;
+        var config = await loader.LoadAsync();
 
         Assert.Equal(3, config.Providers.Count);
 
@@ -162,18 +162,18 @@ public sealed class ProviderConfigIntegrationTests : IDisposable
     }
 
     [Fact]
-    public void ConfigLoader_NoProviders_ReturnsEmpty_WhenNoConfigFile()
+    public async Task ConfigLoader_NoProviders_ReturnsEmpty_WhenNoConfigFile()
     {
         var configuration = new DictionaryConfiguration(new Dictionary<string, string?>());
         var loader = new ConfigLoader(configuration, _aetherDir,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
-        var config = loader.LoadAsync().Result;
+        var config = await loader.LoadAsync();
 
         Assert.Empty(config.Providers);
     }
 
     [Fact]
-    public void ConfigLoader_AppSettingsProviders_AreLoaded()
+    public async Task ConfigLoader_AppSettingsProviders_AreLoaded()
     {
         var appSettings = new Dictionary<string, string?>
         {
@@ -187,7 +187,7 @@ public sealed class ProviderConfigIntegrationTests : IDisposable
             .Build();
         var loader = new ConfigLoader(configuration, _aetherDir,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigLoader>.Instance);
-        var config = loader.LoadAsync().Result;
+        var config = await loader.LoadAsync();
 
         Assert.NotEmpty(config.Providers);
         Assert.True(config.Providers.ContainsKey("fireworks"));

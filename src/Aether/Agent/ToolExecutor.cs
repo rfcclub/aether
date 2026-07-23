@@ -346,6 +346,25 @@ public class ToolExecutor
             .WithArgument(command);
         }
 
+        // On macOS, avoid `-l` (login) flag to prevent accessibility permission dialogs.
+        // Login shells trigger TCC/accessibility prompts on macOS 13+ when spawned
+        // by non-interactive processes. Using `-c` directly still provides shell features
+        // without loading user profile files that cause permission prompts.
+        if (OperatingSystem.IsMacOS())
+        {
+            return new ProcessStartInfo
+            {
+                FileName = "/bin/zsh",
+                WorkingDirectory = cwd,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+            .WithArgument("-c")
+            .WithArgument(command);
+        }
+
         return new ProcessStartInfo
         {
             FileName = "/bin/bash",

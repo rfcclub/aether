@@ -11,7 +11,7 @@ namespace Aether.Memory;
 ///
 /// IMPLEMENTATION STATUS: Complete
 /// </summary>
-public class SqliteMemorySystem : IDisposable
+public class SqliteMemorySystem : IMemorySystem, IDisposable
 {
     private readonly string _dbPath;
     private readonly string _memoryFilePath;
@@ -45,6 +45,11 @@ public class SqliteMemorySystem : IDisposable
         _connection = new SqliteConnection($"Data Source={_dbPath}");
         await _connection.OpenAsync(ct);
         _logger.LogInformation("Memory system initialized: {DbPath}", _dbPath);
+    }
+
+    public string LoadContext(string groupFolder)
+    {
+        return LoadContextAsync(groupFolder).GetAwaiter().GetResult();
     }
 
     public Task<string> LoadContextAsync(string groupFolder, CancellationToken ct = default)

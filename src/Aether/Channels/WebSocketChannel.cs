@@ -1,23 +1,23 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Sockets;
 using System.Net.WebSockets;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Aether.Data;
 using Aether.Providers;
+using Aether.SelfImprovement;
 using Aether.Sessions;
+using Aether.Skills;
 using Aether.Ui;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Aether.Channels;
 
 /// <summary>
 /// WebSocket channel implementing IChannel for non-Telegram clients (web UI, CLI tools, etc).
-/// Hosts a WebSocket server on a configurable port; each connection gets a unique chat_id.
-///
-/// Uses TcpListener + manual WebSocket upgrade handshake for cross-platform compatibility.
-/// (HttpListener requires admin/ACL configuration on some platforms.)
+/// Hosts an HttpListener on a configurable port serving both WebSocket upgrade (/ws) and
+/// HTTP routes (/memory/maria/*) on the same port. Each WS connection gets a unique chat_id.
 /// </summary>
 public sealed class WebSocketChannel : IChannel, IDisposable
 {
@@ -27,7 +27,7 @@ public sealed class WebSocketChannel : IChannel, IDisposable
     private readonly SlashCommandHandler? _slashCommandHandler;
     private readonly SessionManager? _sessionManager;
     private readonly IServiceProvider? _services;
-    private TcpListener? _listener;
+    private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
     private bool _disposed;
@@ -78,15 +78,19 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         _services = services;
     }
 
-    public Task ConnectAsync(CancellationToken ct)
+        public Task ConnectAsync(CancellationToken ct)
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-        _listener = new TcpListener(IPAddress.Loopback, _port);
+        _listener = new HttpListener();
+        // When port is 0 (test mode), HttpListener doesn't support dynamic port assignment,
+        // so the caller must provide a concrete port. Prefix uses + for all interfaces but
+        // we scope to localhost for security.
+        _listener.Prefixes.Add($"http://localhost:{_port}/");
         _listener.Start();
-        BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        BoundPort = _port;
 
-        _logger.LogInformation("WebSocket channel listening on ws://localhost:{Port}/ws", BoundPort);
+        _logger.LogInformation("Aether channel listening on http://localhost:{Port}/ (WS /ws + HTTP /memory/maria/* + Web UI)", BoundPort);
 
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token), _cts.Token);
 
@@ -217,65 +221,171 @@ public sealed class WebSocketChannel : IChannel, IDisposable
     }
 
     /// <summary>
-    /// Accept loop: accepts TCP connections, performs WebSocket HTTP upgrade handshake,
-    /// then spins off a handler for each connection.
+        /// <summary>
+    /// Accept loop: gets HttpListener contexts, dispatches by path.
+    /// /ws → WebSocket upgrade; /memory/maria/* → HTTP route handler; else 404.
     /// </summary>
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
+            HttpListenerContext ctx;
             try
             {
-                var tcpClient = await _listener!.AcceptTcpClientAsync(ct);
-
-                _ = Task.Run(() => HandleConnectionAsync(tcpClient, ct), ct);
+                ctx = await _listener!.GetContextAsync();
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (ObjectDisposedException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (ObjectDisposedException) when (ct.IsCancellationRequested) { break; }
+            catch (HttpListenerException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "WebSocket accept loop error");
+                _logger.LogError(ex, "Aether channel accept loop error");
+                continue;
+            }
+
+            var path = ctx.Request.Url?.AbsolutePath ?? "/";
+            if (path == "/ws")
+            {
+                _ = Task.Run(() => HandleWsUpgradeAsync(ctx, ct), ct);
+            }
+            else if (path.StartsWith("/memory/maria/", StringComparison.Ordinal))
+            {
+                _ = Task.Run(() => HandleHttpRouteAsync(ctx, ct), ct);
+            }
+            else
+            {
+                _ = Task.Run(() => ServeStaticFileAsync(ctx, ct), ct);
             }
         }
     }
 
-    /// <summary>
-    /// Performs the WebSocket HTTP upgrade handshake, then enters the receive loop.
-    /// </summary>
-    private async Task HandleConnectionAsync(TcpClient tcpClient, CancellationToken ct)
+    private static string? _webRoot;
+
+    private static string? ResolveWebRoot()
     {
-        var remoteEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
-        NetworkStream? stream = null;
+        if (_webRoot is not null) return _webRoot;
+
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "web"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "web"),
+            Path.Combine(Environment.CurrentDirectory, "web"),
+            Path.Combine(Environment.CurrentDirectory, "src", "Aether", "web"),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            var full = Path.GetFullPath(candidate);
+            if (Directory.Exists(full))
+            {
+                _webRoot = full;
+                break;
+            }
+        }
+
+        return _webRoot;
+    }
+
+    private static string GetMimeType(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".html" or ".htm" => "text/html; charset=utf-8",
+            ".css" => "text/css; charset=utf-8",
+            ".js" or ".mjs" => "application/javascript; charset=utf-8",
+            ".json" => "application/json; charset=utf-8",
+            ".svg" => "image/svg+xml",
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".ico" => "image/x-icon",
+            ".woff" => "font/woff",
+            ".woff2" => "font/woff2",
+            ".ttf" => "font/ttf",
+            ".txt" => "text/plain; charset=utf-8",
+            ".map" => "application/json; charset=utf-8",
+            _ => "application/octet-stream",
+        };
+    }
+
+    private async Task ServeStaticFileAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var response = ctx.Response;
+        var webRoot = ResolveWebRoot();
+
+        if (webRoot is null)
+        {
+            try
+            {
+                response.StatusCode = 404;
+                response.ContentType = "text/plain";
+                var body = Encoding.UTF8.GetBytes("Web UI not found. Run from the project root or build with web assets.");
+                response.ContentLength64 = body.Length;
+                await response.OutputStream.WriteAsync(body, ct);
+                response.Close();
+            }
+            catch { }
+            return;
+        }
+
+        var requestPath = ctx.Request.Url?.AbsolutePath ?? "/";
+        if (requestPath == "/") requestPath = "/index.html";
+
+        // Prevent path traversal: resolve and check containment
+        var filePath = Path.GetFullPath(Path.Combine(webRoot, requestPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar)));
+        var webRootFull = Path.GetFullPath(webRoot);
+        if (!filePath.StartsWith(webRootFull, StringComparison.Ordinal))
+        {
+            try { response.StatusCode = 403; response.Close(); } catch { }
+            return;
+        }
+
+        // SPA fallback: if the path has no extension and the file doesn't exist, serve index.html
+        if (!File.Exists(filePath) && !Path.HasExtension(requestPath))
+        {
+            filePath = Path.Combine(webRootFull, "index.html");
+        }
+
+        if (!File.Exists(filePath))
+        {
+            try { response.StatusCode = 404; response.Close(); } catch { }
+            return;
+        }
 
         try
         {
-            stream = tcpClient.GetStream();
+            var bytes = await File.ReadAllBytesAsync(filePath, ct);
+            response.StatusCode = 200;
+            response.ContentType = GetMimeType(filePath);
+            response.ContentLength64 = bytes.Length;
+            await response.OutputStream.WriteAsync(bytes, ct);
+            response.Close();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to serve static file: {Path}", requestPath);
+            try { response.StatusCode = 500; response.Close(); } catch { }
+        }
+    }
 
-            // Perform the HTTP WebSocket upgrade handshake
-            var webSocket = await UpgradeToWebSocketAsync(stream, ct);
-            if (webSocket is null)
-            {
-                // Not a WebSocket request -- send 426 and close
-                await SendHttpResponseAsync(stream, 426, "Upgrade Required",
-                    "This endpoint accepts WebSocket connections at ws:// url scheme.");
-                return;
-            }
-
+    /// <summary>
+    /// Performs the WebSocket upgrade via HttpListener, then enters the receive loop.
+    /// </summary>
+        private async Task HandleWsUpgradeAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        HttpListenerWebSocketContext? wsContext = null;
+        var chatId = "";
+        try
+        {
+            wsContext = await ctx.AcceptWebSocketAsync(subProtocol: null);
             var connectionId = Interlocked.Increment(ref _nextConnectionId);
-            var chatId = $"websocket:{connectionId}";
+            chatId = $"websocket:{connectionId}";
 
-            var conn = new WebSocketConnection(chatId, webSocket, stream, tcpClient, remoteEndPoint);
+            var conn = new WebSocketConnection(chatId, wsContext.WebSocket, ctx.Request.RemoteEndPoint);
             _connections[chatId] = conn;
 
-            _logger.LogInformation(
-                "WebSocket client connected: {RemoteEndPoint} -> {ChatId}",
-                remoteEndPoint, chatId);
+            _logger.LogInformation("WebSocket client connected: {RemoteEndPoint} -> {ChatId}", ctx.Request.RemoteEndPoint, chatId);
 
             // Send a welcome message with the assigned chat_id
             var welcome = JsonSerializer.Serialize(new
@@ -290,144 +400,100 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         }
         catch (WebSocketException ex)
         {
-            _logger.LogWarning(ex, "WebSocket connection error from {RemoteEndPoint}", remoteEndPoint);
+            // AcceptWebSocketAsync throws if the request is not a valid WS upgrade.
+            // Return 426 Upgrade Required so plain HTTP clients get a clear status.
+            _logger.LogWarning(ex, "WebSocket upgrade failed — returning 426");
+            try
+            {
+                ctx.Response.StatusCode = 426;
+                ctx.Response.StatusDescription = "Upgrade Required";
+                ctx.Response.ContentType = "text/plain";
+                var body = Encoding.UTF8.GetBytes("This endpoint accepts WebSocket connections at ws:// url scheme.");
+                ctx.Response.ContentLength64 = body.Length;
+                await ctx.Response.OutputStream.WriteAsync(body, ct);
+                ctx.Response.Close();
+            }
+            catch { /* response already sent or client gone */ }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling WebSocket connection from {RemoteEndPoint}", remoteEndPoint);
+            _logger.LogError(ex, "Error handling WebSocket connection");
         }
         finally
         {
-            // Clean up the connection
-            var entry = _connections.FirstOrDefault(kvp => kvp.Value.TcpClient == tcpClient);
-            if (entry.Key is not null)
+            if (!string.IsNullOrEmpty(chatId))
             {
-                _connections.TryRemove(entry.Key, out _);
-                _logger.LogInformation("WebSocket client disconnected: {ChatId}", entry.Key);
+                _connections.TryRemove(chatId, out _);
+                _logger.LogInformation("WebSocket client disconnected: {ChatId}", chatId);
             }
-
-            stream?.Dispose();
-            tcpClient.Dispose();
+            wsContext?.WebSocket?.Dispose();
         }
     }
 
     /// <summary>
-    /// Perform the WebSocket HTTP upgrade handshake on the TCP stream.
-    /// Returns a WebSocket instance on success, null if the request is not a WebSocket upgrade.
-    /// Throws on protocol errors.
+    /// Handle HTTP GET routes under /memory/maria/* — dispatches to MariaMemoryHost.
     /// </summary>
-    private static async Task<WebSocket?> UpgradeToWebSocketAsync(NetworkStream stream, CancellationToken ct)
+    private async Task HandleHttpRouteAsync(HttpListenerContext ctx, CancellationToken ct)
     {
-        // Read the HTTP request headers
-        var headerBuilder = new StringBuilder();
-        var buffer = new byte[4096];
-        var totalRead = 0;
-
-        while (true)
+        var path = ctx.Request.Url?.AbsolutePath ?? "";
+        try
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead), ct);
-            if (read == 0)
-                return null; // Connection closed
-
-            totalRead += read;
-            var data = Encoding.ASCII.GetString(buffer, 0, totalRead);
-
-            headerBuilder.Append(data);
-
-            // Headers end with \r\n\r\n
-            if (data.Contains("\r\n\r\n", StringComparison.Ordinal))
-                break;
-
-            if (totalRead >= buffer.Length)
-                return null; // Headers too large
-        }
-
-        var headerText = headerBuilder.ToString();
-        var headers = headerText.Split("\r\n");
-
-        // First line must be "GET /ws HTTP/1.1" (or similar)
-        var requestLine = headers[0];
-        if (!requestLine.StartsWith("GET ", StringComparison.Ordinal))
-            return null;
-
-        // Parse headers into dictionary
-        var headerDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 1; i < headers.Length; i++)
-        {
-            var line = headers[i];
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            var colonPos = line.IndexOf(':');
-            if (colonPos > 0)
+                        if (path == "/memory/maria/recall" && ctx.Request.HttpMethod == "GET")
             {
-                var headerName = line[..colonPos].Trim();
-                var headerValue = line[(colonPos + 1)..].Trim();
-                headerDict[headerName] = headerValue;
+                var query = ctx.Request.QueryString["query"];
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    await WriteJsonAsync(ctx.Response, 400, new { success = false, error = "Missing 'query' parameter" });
+                    return;
+                }
+                var limitStr = ctx.Request.QueryString["limit"] ?? "10";
+                int.TryParse(limitStr, out var limit);
+                if (limit <= 0) limit = 10;
+                var result = await MariaMemoryHost.SearchAsync(query, limit, ct);
+                await WriteJsonAsync(ctx.Response, 200, result);
+            }
+            else if (path == "/memory/maria/nodes" && ctx.Request.HttpMethod == "GET")
+            {
+                var result = await MariaMemoryHost.GetAllNodesAsync(100, ct);
+                await WriteJsonAsync(ctx.Response, 200, result);
+            }
+            else if (path == "/memory/maria/nodes" && ctx.Request.HttpMethod == "POST")
+            {
+                using var reader = new StreamReader(ctx.Request.InputStream);
+                var body = await reader.ReadToEndAsync(ct);
+                var result = await MariaMemoryHost.AppendNodeAsync(body, ct);
+                var statusCode = result.TryGetProperty("success", out var successProp) && successProp.GetBoolean() ? 200 : 400;
+                await WriteJsonAsync(ctx.Response, statusCode, result);
+            }
+            else
+            {
+                await WriteJsonAsync(ctx.Response, 404, new { success = false, error = "Not Found" });
             }
         }
-
-        // Verify this is a WebSocket upgrade request
-        if (!string.Equals(headerDict.GetValueOrDefault("Upgrade"), "websocket", StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        if (!string.Equals(headerDict.GetValueOrDefault("Connection"), "Upgrade", StringComparison.OrdinalIgnoreCase)
-            && !(headerDict.GetValueOrDefault("Connection")?.Contains("Upgrade", StringComparison.OrdinalIgnoreCase) ?? false))
-            return null;
-
-        var key = headerDict.GetValueOrDefault("Sec-WebSocket-Key");
-        if (string.IsNullOrEmpty(key))
-            return null;
-
-        // Compute the accept key (WebSocket protocol magic)
-        var acceptKey = ComputeAcceptKey(key);
-
-        // Send 101 Switching Protocols response
-        var response = new StringBuilder();
-        response.Append("HTTP/1.1 101 Switching Protocols\r\n");
-        response.Append("Upgrade: websocket\r\n");
-        response.Append("Connection: Upgrade\r\n");
-        response.Append($"Sec-WebSocket-Accept: {acceptKey}\r\n");
-        response.Append("\r\n");
-
-        var responseBytes = Encoding.ASCII.GetBytes(response.ToString());
-        await stream.WriteAsync(responseBytes, ct);
-
-        // Create the server-side WebSocket from the stream
-        return System.Net.WebSockets.WebSocket.CreateFromStream(stream, isServer: true, subProtocol: null, keepAliveInterval: TimeSpan.FromSeconds(30));
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling HTTP route {Path}", path);
+            await WriteJsonAsync(ctx.Response, 500, new { success = false, error = ex.Message });
+        }
     }
 
-    /// <summary>
-    /// Compute the Sec-WebSocket-Accept value per RFC 6455.
-    /// </summary>
-    private static string ComputeAcceptKey(string key)
+    private static async Task WriteJsonAsync(HttpListenerResponse response, int status, object data)
     {
-        const string MagicGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-        var combined = key + MagicGuid;
-        var hash = SHA1.HashData(Encoding.ASCII.GetBytes(combined));
-        return Convert.ToBase64String(hash);
+        response.StatusCode = status;
+        response.ContentType = "application/json";
+        var json = JsonSerializer.Serialize(data);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        response.ContentLength64 = bytes.Length;
+        try
+        {
+            await response.OutputStream.WriteAsync(bytes);
+            response.Close();
+        }
+        catch { /* client disconnected */ }
     }
 
-    /// <summary>
-    /// Send a plain HTTP response (for non-WebSocket requests).
-    /// </summary>
-    private static async Task SendHttpResponseAsync(NetworkStream stream, int statusCode, string statusText, string body)
-    {
-        var response = new StringBuilder();
-        response.Append($"HTTP/1.1 {statusCode} {statusText}\r\n");
-        response.Append("Content-Type: text/plain\r\n");
-        response.Append($"Content-Length: {body.Length}\r\n");
-        response.Append("Connection: close\r\n");
-        response.Append("\r\n");
-        response.Append(body);
-
-        var bytes = Encoding.ASCII.GetBytes(response.ToString());
-        await stream.WriteAsync(bytes);
-        await stream.FlushAsync();
-    }
-
-    private async Task ReceiveLoopAsync(WebSocketConnection conn, CancellationToken ct)
+        private async Task ReceiveLoopAsync(WebSocketConnection conn, CancellationToken ct)
     {
         var buffer = new byte[1024 * 64]; // 64KB receive buffer
         var messageBuilder = new StringBuilder();
@@ -525,6 +591,34 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
                 case "command":
                     await HandleCommandAsync(conn, root, ct);
+                    break;
+
+                case "get_goals":
+                    await HandleGetGoalsAsync(conn, root, ct);
+                    break;
+
+                case "get_skills":
+                    await HandleGetSkillsAsync(conn, ct);
+                    break;
+
+                case "get_metrics":
+                    await HandleGetMetricsAsync(conn, ct);
+                    break;
+
+                case "get_telemetry":
+                    await HandleGetTelemetryAsync(conn, ct);
+                    break;
+
+                case "git_status":
+                    await HandleGitStatusAsync(conn, ct);
+                    break;
+
+                case "context_update":
+                    await HandleContextUpdateAsync(conn, root, ct);
+                    break;
+
+                case "stage_file":
+                    await HandleStageFileAsync(conn, root, ct);
                     break;
 
                 default:
@@ -675,6 +769,18 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
         // Resolve workspace path for the group (empty string fallback = root)
         var workspacePath = string.Empty;
+        if (_services is not null)
+        {
+            var configLoader = _services.GetService(typeof(Aether.Config.ConfigLoader)) as Aether.Config.ConfigLoader;
+            if (configLoader is not null)
+            {
+                var agentConfig = configLoader.GetAgentConfig(group);
+                if (agentConfig is not null && !string.IsNullOrEmpty(agentConfig.Workspace))
+                {
+                    workspacePath = agentConfig.Workspace;
+                }
+            }
+        }
 
         var ctx = new SlashCommandContext(
             Text: text,
@@ -708,6 +814,301 @@ public sealed class WebSocketChannel : IChannel, IDisposable
 
         _logger.LogDebug("command '{Text}' for group={Group} sent to {ChatId}",
             text, group, conn.ChatId);
+    }
+
+    private async Task HandleGetGoalsAsync(WebSocketConnection conn, JsonElement root, CancellationToken ct)
+    {
+        if (_services is null)
+        {
+            await SendErrorAsync(conn, "get_goals not available: services not injected", ct);
+            return;
+        }
+
+        var agentId = root.TryGetProperty("agent_id", out var agentProp) && agentProp.ValueKind == JsonValueKind.String
+            ? agentProp.GetString() ?? "maria"
+            : "maria";
+
+        List<Goal> goals;
+        using (var scope = _services.CreateScope())
+        {
+            var goalStore = scope.ServiceProvider.GetRequiredService<GoalStore>();
+            goals = await goalStore.GetActiveGoalsAsync(agentId, ct);
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "goals",
+            goals = goals.Select(g => new
+            {
+                id = g.Id,
+                title = g.Title,
+                description = g.Description,
+                status = g.Status,
+                priority = g.Priority,
+                created_at = g.CreatedAt.ToString("o"),
+                deadline = g.Deadline?.ToString("o")
+            })
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("get_goals for agent={Agent}: {Count} goals sent to {ChatId}",
+            agentId, goals.Count, conn.ChatId);
+    }
+
+    private async Task HandleGetSkillsAsync(WebSocketConnection conn, CancellationToken ct)
+    {
+        if (_services is null)
+        {
+            await SendErrorAsync(conn, "get_skills not available: services not injected", ct);
+            return;
+        }
+
+        var skillRegistry = _services.GetService<SkillRegistry>();
+        if (skillRegistry is null)
+        {
+            await SendErrorAsync(conn, "SkillRegistry not available", ct);
+            return;
+        }
+
+        var skills = skillRegistry.List().Select(s => new
+        {
+            name = s.Name,
+            description = s.Description,
+            when_to_use = s.WhenToUse,
+            tools = s.Tools,
+            auto_apply = s.AutoApply,
+            trigger_mode = s.TriggerMode.ToString()
+        }).ToList();
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "skills",
+            skills
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("get_skills: {Count} skills sent to {ChatId}",
+            skills.Count, conn.ChatId);
+    }
+
+    private async Task HandleGetMetricsAsync(WebSocketConnection conn, CancellationToken ct)
+    {
+        if (_services is null)
+        {
+            await SendErrorAsync(conn, "get_metrics not available: services not injected", ct);
+            return;
+        }
+
+        var pipelineTracker = _services.GetService<PipelineTracker>();
+        var skillEvolution = _services.GetService<SkillEvolution>();
+
+        IReadOnlyList<TrackedCandidate> candidates = Array.Empty<TrackedCandidate>();
+        if (pipelineTracker is not null)
+        {
+            candidates = await pipelineTracker.GetCandidatesAsync(ct);
+        }
+
+        var pipelineStates = candidates
+            .GroupBy(c => c.State.ToString())
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        int recidivismCount = 0;
+        if (skillEvolution is not null)
+        {
+            var recidivism = await skillEvolution.GetRecidivismCandidatesAsync(ct);
+            recidivismCount = recidivism.Count;
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "metrics",
+            pipeline_states = pipelineStates,
+            total_candidates = candidates.Count,
+            recidivism_count = recidivismCount,
+            recent_candidates = candidates.Take(10).Select(c => new
+            {
+                id = c.Id,
+                state = c.State.ToString(),
+                source = c.Source,
+                created_at = c.CreatedAt.ToString("o")
+            })
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("get_metrics: {Count} candidates, {Recidivism} recidivism sent to {ChatId}",
+            candidates.Count, recidivismCount, conn.ChatId);
+    }
+
+    private async Task HandleGetTelemetryAsync(WebSocketConnection conn, CancellationToken ct)
+    {
+        if (_services is null)
+        {
+            await SendErrorAsync(conn, "get_telemetry not available: services not injected", ct);
+            return;
+        }
+
+        int tensionLevel = 0;
+        int activeGoalsCount = 0;
+        using (var scope = _services.CreateScope())
+        {
+            var goalStore = scope.ServiceProvider.GetRequiredService<GoalStore>();
+            var goals = await goalStore.GetActiveGoalsAsync("maria", ct);
+            activeGoalsCount = goals.Count;
+            tensionLevel = Math.Min(100, activeGoalsCount * 20 + goals.Sum(g => g.Priority) * 5);
+        }
+
+        var skillRegistry = _services.GetService<SkillRegistry>();
+        int skillCount = skillRegistry?.List().Count() ?? 0;
+        bool hiveActive = skillCount > 0;
+
+        int heat = 0;
+        var pipelineTracker = _services.GetService<PipelineTracker>();
+        if (pipelineTracker is not null)
+        {
+            var candidates = await pipelineTracker.GetCandidatesAsync(ct);
+            int activeStates = candidates.Count(c =>
+                c.State == CandidateState.PROPOSED || c.State == CandidateState.APPLIED);
+            heat = Math.Min(100, activeStates * 10);
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "telemetry",
+            system_heat = heat,
+            tension_level = tensionLevel,
+            hive_active = hiveActive,
+            active_goals = activeGoalsCount,
+            skill_count = skillCount,
+            timestamp = DateTimeOffset.UtcNow.ToString("o")
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+    }
+
+    private async Task HandleGitStatusAsync(WebSocketConnection conn, CancellationToken ct)
+    {
+        var files = new List<object>();
+
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("git", "status --porcelain=v1 -b")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null)
+            {
+                await SendErrorAsync(conn, "git_status failed: could not start git process", ct);
+                return;
+            }
+
+            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith("## ")) continue;
+                if (line.Length < 3) continue;
+                var status = line.Substring(0, 2);
+                var path = line.Substring(3).Trim();
+                files.Add(new { path, status });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "git_status failed");
+            await SendErrorAsync(conn, $"git_status failed: {ex.Message}", ct);
+            return;
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "git_status_response",
+            files
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+    }
+
+    private async Task HandleContextUpdateAsync(WebSocketConnection conn, JsonElement root, CancellationToken ct)
+    {
+        var files = root.TryGetProperty("files", out var filesProp) && filesProp.ValueKind == JsonValueKind.Array
+            ? filesProp.EnumerateArray()
+                .Where(f => f.ValueKind == JsonValueKind.String)
+                .Select(f => f.GetString() ?? "")
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToList()
+            : new List<string>();
+
+        // Per-session context file persistence will be layered in a future change.
+        // For now, ack so the client knows the server accepted the update.
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "context_updated",
+            ok = true,
+            file_count = files.Count
+        }, JsonOptions);
+
+        await SendJsonAsync(conn, payload, ct);
+
+        _logger.LogDebug("context_update: {Count} files acked for {ChatId}",
+            files.Count, conn.ChatId);
+    }
+
+    private async Task HandleStageFileAsync(WebSocketConnection conn, JsonElement root, CancellationToken ct)
+    {
+        if (!root.TryGetProperty("file", out var fileProp)
+            || string.IsNullOrWhiteSpace(fileProp.GetString()))
+        {
+            await SendErrorAsync(conn, "Missing 'file' field in stage_file", ct);
+            return;
+        }
+
+        var file = fileProp.GetString()!;
+        var stage = root.TryGetProperty("stage", out var stageProp)
+            && stageProp.ValueKind == JsonValueKind.True;
+
+        try
+        {
+            var args = stage ? $"add \"{file}\"" : $"reset \"{file}\"";
+            var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null)
+            {
+                await SendErrorAsync(conn, "stage_file failed: could not start git process", ct);
+                return;
+            }
+
+            await process.WaitForExitAsync(ct);
+            var ok = process.ExitCode == 0;
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                type = "stage_file_response",
+                file,
+                staged = stage,
+                ok
+            }, JsonOptions);
+
+            await SendJsonAsync(conn, payload, ct);
+
+            _logger.LogDebug("stage_file {Action} {File}: ok={Ok}", stage ? "add" : "reset", file, ok);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "stage_file failed for {File}", file);
+            await SendErrorAsync(conn, $"stage_file failed: {ex.Message}", ct);
+        }
     }
 
     private async Task SendErrorAsync(WebSocketConnection conn, string errorText, CancellationToken ct)
@@ -760,23 +1161,24 @@ public sealed class WebSocketChannel : IChannel, IDisposable
         }
     }
 
-    public void Dispose()
+        public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         _cts?.Cancel();
         _cts?.Dispose();
-        _listener?.Stop();
+        if (_listener is not null)
+        {
+            try { _listener.Stop(); _listener.Close(); } catch { }
+        }
     }
 
-    /// <summary>
+        /// <summary>
     /// Represents an active WebSocket connection with its assigned chat_id.
     /// </summary>
     private sealed record WebSocketConnection(
         string ChatId,
         WebSocket WebSocket,
-        NetworkStream Stream,
-        TcpClient TcpClient,
         IPEndPoint? RemoteEndPoint);
 
     /// <summary>

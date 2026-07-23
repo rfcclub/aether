@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 use crate::app::AppState;
-use crate::ui::{BG, BORDER_FOCUS, AMBER, DIM, VIOLET};
+use crate::ui::{bg, border_focus, amber, dim, violet};
 
 pub fn draw_context_manager(f: &mut Frame, state: &AppState, area: Rect) {
     let popup_area = Rect {
@@ -20,8 +20,8 @@ pub fn draw_context_manager(f: &mut Frame, state: &AppState, area: Rect) {
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_FOCUS))
-        .style(Style::default().bg(BG))
+        .border_style(Style::default().fg(border_focus()))
+        .style(Style::default().bg(bg()))
         .title(" 📂 Context Files Manager (F4) ");
 
     let inner_area = outer_block.inner(popup_area);
@@ -37,23 +37,23 @@ pub fn draw_context_manager(f: &mut Frame, state: &AppState, area: Rect) {
         .enumerate()
         .map(|(idx, file)| {
             let style = if idx == state.context_selection {
-                Style::default().fg(Color::Black).bg(AMBER)
+                Style::default().fg(Color::Black).bg(amber())
             } else {
-                Style::default().fg(VIOLET)
+                Style::default().fg(violet())
             };
             ListItem::new(file.as_str()).style(style)
         })
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(DIM)))
-        .style(Style::default().bg(BG));
+        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(dim())))
+        .style(Style::default().bg(bg()));
     f.render_widget(list, chunks[0]);
 
     let help_msg = " [a] Add File | [d] Delete | [c] Clear All | [Esc/F4] Close Overlay ";
     let help_widget = Paragraph::new(help_msg)
         .alignment(ratatui::layout::Alignment::Center)
-        .style(Style::default().fg(DIM).bg(BG));
+        .style(Style::default().fg(dim()).bg(bg()));
     f.render_widget(help_widget, chunks[1]);
 
     if state.show_input_dialog {
@@ -68,8 +68,8 @@ pub fn draw_context_manager(f: &mut Frame, state: &AppState, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(BORDER_FOCUS))
-            .style(Style::default().bg(BG))
+            .border_style(Style::default().fg(border_focus()))
+            .style(Style::default().bg(bg()))
             .title(" Enter File Path: ");
             
         let inner = block.inner(dialog_area);

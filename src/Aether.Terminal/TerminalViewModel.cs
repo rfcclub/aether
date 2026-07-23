@@ -100,7 +100,7 @@ public partial class TerminalViewModel : ObservableObject
         try
         {
             // Try load from agent workspace first, fallback to default
-            var schemaPath = Path.Combine("agents", _agentName.ToLower(), "SUBSTRATE_SCHEMA.json");
+            var schemaPath = Path.Combine("agents", AgentName.ToLower(), "SUBSTRATE_SCHEMA.json");
             if (!File.Exists(schemaPath))
             {
                 schemaPath = Path.Combine(_profile.AgentDirectory, "SUBSTRATE_SCHEMA.json");

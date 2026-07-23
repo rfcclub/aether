@@ -22,7 +22,7 @@ public class ProviderRouterTests
     {
         var primary = new FakeLlmProvider("fireworks", model: "gpt-4", response: new LlmResponse("primary response"));
         var fallback = new FakeLlmProvider("openrouter", model: "claude", response: new LlmResponse("fallback response"));
-        using var db = CreateTempDb();
+        var db = CreateTempDb();
         var router = new ProviderRouter(
             new ILLMProvider[] { primary, fallback },
             new ProviderRoutingOptions
@@ -46,7 +46,7 @@ public class ProviderRouterTests
     {
         var primary = new FakeLlmProvider("fireworks", model: "gpt-4", throwOnCall: true);
         var fallback = new FakeLlmProvider("openrouter", model: "claude", response: new LlmResponse("fallback response"));
-        using var db = CreateTempDb();
+        var db = CreateTempDb();
         var router = new ProviderRouter(
             new ILLMProvider[] { primary, fallback },
             new ProviderRoutingOptions
@@ -71,7 +71,7 @@ public class ProviderRouterTests
     {
         var primary = new FakeLlmProvider("fireworks", model: "gpt-4", throwOnCall: true);
         var fallback = new FakeLlmProvider("openrouter", model: "claude", throwOnCall: true);
-        using var db = CreateTempDb();
+        var db = CreateTempDb();
         var router = new ProviderRouter(
             new ILLMProvider[] { primary, fallback },
             new ProviderRoutingOptions
@@ -91,7 +91,7 @@ public class ProviderRouterTests
     [Fact]
     public void Name_ReturnsRouter()
     {
-        using var db = CreateTempDb();
+        var db = CreateTempDb();
         var router = new ProviderRouter(
             Array.Empty<ILLMProvider>(),
             new ProviderRoutingOptions(),
@@ -107,7 +107,7 @@ public class ProviderRouterTests
     {
         var healthy = new FakeLlmProvider("healthy", model: "test", response: new LlmResponse("ok"));
         var unhealthy = new FakeLlmProvider("unhealthy", model: "test", throwOnHealthCheck: true);
-        using var db = CreateTempDb();
+        var db = CreateTempDb();
         var router = new ProviderRouter(
             new ILLMProvider[] { healthy, unhealthy },
             new ProviderRoutingOptions(),

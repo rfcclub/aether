@@ -4,6 +4,7 @@ mod ws;
 mod app;
 mod ui;
 mod commands;
+mod session;
 
 use config::Config;
 use events::{AppEvent, Message, Role};
@@ -39,6 +40,22 @@ async fn main() -> anyhow::Result<()> {
         args.group = agent;
     }
     let config = Config::resolve(args.url.clone(), args.group.clone());
+    let keybindings = config.ui.keybindings.clone();
+
+    // Apply user-configured waiting phrases (if any) and default waiting phrase.
+    let mut state = AppState::new(config.group.clone());
+    if !config.ui.waiting_phrases.is_empty() {
+        state.waiting_phrases = config.ui.waiting_phrases.clone();
+    }
+    state.current_waiting_phrase = config.ui.default_waiting_phrase.clone();
+
+    // Restore session if available
+    if let Some(saved) = session::load_latest_session(&state.group) {
+        state.scroll_offset = saved.scroll_offset;
+        state.input = saved.input_draft;
+        state.context_files = saved.context_files;
+        state.agent_selection = saved.current_agent_selection;
+    }
 
     // Setup terminal
     crossterm::terminal::enable_raw_mode()?;
@@ -74,7 +91,6 @@ async fn main() -> anyhow::Result<()> {
     let ws_tx = app_tx.clone();
     tokio::spawn(ws_task(ws_url, ws_group, ws_tx, ws_out_rx));
 
-    let mut state = AppState::new(config.group.clone());
     let mut last_key_was_g = false;
     let mut last_tick = std::time::Instant::now();
 
@@ -108,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
         while crossterm::event::poll(std::time::Duration::ZERO)? {
             match crossterm::event::read()? {
                 crossterm::event::Event::Key(key) => {
-                    if let Some(new_agent) = handle_key(&mut state, key, &ws_out_tx, &app_tx, &mut last_key_was_g).await {
+                    if let Some(new_agent) = handle_key(&mut state, key, &ws_out_tx, &app_tx, &mut last_key_was_g, &keybindings).await {
                         let (new_ws_out_tx, ws_out_rx) = mpsc::channel::<String>(64);
                         ws_out_tx = new_ws_out_tx;
 
@@ -136,13 +152,11 @@ async fn main() -> anyhow::Result<()> {
                 _ => {}
             }
         }
-
-        // Check if app should quit
-        if state.mode == AppMode::Normal && false {
-            // placeholder
-            break;
-        }
     }
+
+    // Save session before exit
+    session::save_session(&state);
+    session::clear_old_sessions(&state.group, 5);
 
     // Restore terminal
     crossterm::terminal::disable_raw_mode()?;
@@ -161,6 +175,7 @@ async fn handle_key(
     ws_out_tx: &mpsc::Sender<String>,
     app_tx: &mpsc::Sender<AppEvent>,
     last_key_was_g: &mut bool,
+    kb: &config::KeyBindings,
 ) -> Option<String> {
     match state.mode {
         AppMode::ShowHelp => {
@@ -275,6 +290,50 @@ async fn handle_key(
                                                 let _ = ws_out_tx_clone.send(backend_json.to_string()).await;
                                             });
                                         }
+                                        commands::LocalCommand::Theme(name) => {
+                                            if name.is_empty() {
+                                                let available = crate::ui::theme::available_themes().join(", ");
+                                                state.messages.push(Message {
+                                                    role: Role::User,
+                                                    content: format!("/theme {}", name),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                                state.messages.push(Message {
+                                                    role: Role::Assistant,
+                                                    content: format!("Available themes: {}", available),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                            } else if crate::ui::theme::set_theme(&name) {
+                                                state.messages.push(Message {
+                                                    role: Role::User,
+                                                    content: format!("/theme {}", name),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                                state.messages.push(Message {
+                                                    role: Role::Assistant,
+                                                    content: format!("🎨 Theme switched to '{}'", name),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                            } else {
+                                                let available = crate::ui::theme::available_themes().join(", ");
+                                                state.messages.push(Message {
+                                                    role: Role::User,
+                                                    content: format!("/theme {}", name),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                                state.messages.push(Message {
+                                                    role: Role::Assistant,
+                                                    content: format!("❌ Unknown theme '{}'. Available: {}", name, available),
+                                                    timestamp: Utc::now(),
+                                                    is_historical: false,
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                                 commands::CommandAction::Forward(json) => {
@@ -290,17 +349,17 @@ async fn handle_key(
                     }
                 }
             }
-                // Ctrl+Q → quit
-                (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
+                // Quit (configurable)
+                (code, mods) if (code, mods) == kb.quit => {
                     let _ = app_tx.send(AppEvent::Quit).await;
                 }
-                // Ctrl+L → clear
-                (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+                // Clear (configurable)
+                (code, mods) if (code, mods) == kb.clear => {
                     state.messages.clear();
                     state.streaming_buf.clear();
                 }
-                // Esc → cancel active streaming OR enter scroll mode
-                (KeyCode::Esc, _) => {
+                // Esc → cancel active streaming OR enter scroll mode (configurable)
+                (code, mods) if (code, mods) == kb.scroll_mode => {
                     if state.is_typing {
                         let cancel_req = serde_json::json!({
                             "type": "cancel",
@@ -313,46 +372,88 @@ async fn handle_key(
                         state.mode = AppMode::Scroll;
                     }
                 }
-                // F1 → help
-                (KeyCode::F(1), _) => {
+                // Help (configurable)
+                (code, mods) if (code, mods) == kb.help => {
                     state.mode = AppMode::ShowHelp;
                 }
-                // F2 or Ctrl+M → model picker
-                (KeyCode::F(2), _) | (KeyCode::Char('m'), KeyModifiers::CONTROL) => {
+                // Model picker (configurable) or Ctrl+M
+                (code, mods) if (code, mods) == kb.model_picker => {
                     state.mode = AppMode::ModelPicker;
                     state.picker_selection = 0;
                 }
-                // F3 or Ctrl+A → agent picker
-                (KeyCode::F(3), _) | (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                (KeyCode::Char('m'), KeyModifiers::CONTROL) => {
+                    state.mode = AppMode::ModelPicker;
+                    state.picker_selection = 0;
+                }
+                // Agent picker (configurable) or Ctrl+A
+                (code, mods) if (code, mods) == kb.agent_picker => {
                     state.load_agents();
                     state.mode = AppMode::AgentPicker;
                     state.agent_selection = 0;
                 }
-                // F4 → context files manager
-                (KeyCode::F(4), _) => {
+                (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                    state.load_agents();
+                    state.mode = AppMode::AgentPicker;
+                    state.agent_selection = 0;
+                }
+                // Context files manager (configurable)
+                (code, mods) if (code, mods) == kb.context_manager => {
                     state.mode = AppMode::ContextManager;
                     state.context_selection = 0;
                     state.show_input_dialog = false;
                 }
-                // F5 → brainstorming wizard
-                (KeyCode::F(5), _) => {
+                // Brainstorming wizard (configurable)
+                (code, mods) if (code, mods) == kb.brainstorm => {
                     state.mode = AppMode::BrainstormWizard;
                     state.brainstorm_step = 0;
                     state.brainstorm_answers = vec![String::new(); 4];
                 }
-                // F6 → TDD template injector
-                (KeyCode::F(6), _) => {
+                // TDD template injector (configurable)
+                (code, mods) if (code, mods) == kb.tdd_template => {
                     let tdd_template = "🔄 TDD Step: [RED / GREEN / REFACTOR / COMMIT]\n- **Goal:** [Enter target goal]\n- **Files:**\n  - [MODIFY/NEW] [file name](file://absolute/path)\n- **Step Details:**\n  - [Write out detailed execution steps - NO PLACEHOLDERS]";
                     state.input = tdd_template.to_string();
                     state.cursor_position = state.input.chars().count();
                 }
-                // F7 → interactive git dashboard
-                (KeyCode::F(7), _) => {
+                // Interactive git dashboard (configurable)
+                (code, mods) if (code, mods) == kb.git_dashboard => {
                     state.mode = AppMode::GitDashboard;
                     state.git_selection = 0;
                     state.selected_diff = "Loading diff...".to_string();
                     let req = serde_json::json!({
                         "type": "git_status",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
+                }
+                // Goals dashboard (configurable)
+                (code, mods) if (code, mods) == kb.goals_dashboard => {
+                    state.mode = AppMode::GoalsDashboard;
+                    state.goals_selection = 0;
+                    state.goals = None;
+                    let req = serde_json::json!({
+                        "type": "get_goals",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
+                }
+                // Skills panel (configurable)
+                (code, mods) if (code, mods) == kb.skills_panel => {
+                    state.mode = AppMode::SkillsPanel;
+                    state.skills_selection = 0;
+                    state.skills = None;
+                    let req = serde_json::json!({
+                        "type": "get_skills",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
+                }
+                // Self-improvement metrics dashboard (configurable)
+                (code, mods) if (code, mods) == kb.metrics_dashboard => {
+                    state.mode = AppMode::MetricsDashboard;
+                    state.metrics_scroll = 0;
+                    state.metrics = None;
+                    let req = serde_json::json!({
+                        "type": "get_metrics",
                         "group": state.group
                     });
                     let _ = ws_out_tx.send(req.to_string()).await;
@@ -645,6 +746,88 @@ async fn handle_key(
                         });
                         let _ = ws_out_tx.send(req.to_string()).await;
                     }
+                }
+                _ => {}
+            }
+        }
+        AppMode::GoalsDashboard => {
+            *last_key_was_g = false;
+            match key.code {
+                KeyCode::Esc | KeyCode::F(8) => {
+                    state.mode = AppMode::Normal;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.goals_selection = state.goals_selection.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let count = state.goals.as_ref()
+                        .and_then(|v| v["goals"].as_array().map(|a| a.len()))
+                        .unwrap_or(0);
+                    if count > 0 {
+                        state.goals_selection = (state.goals_selection + 1).min(count - 1);
+                    }
+                }
+                KeyCode::Char('r') => {
+                    let req = serde_json::json!({
+                        "type": "get_goals",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
+                }
+                _ => {}
+            }
+        }
+        AppMode::SkillsPanel => {
+            *last_key_was_g = false;
+            match key.code {
+                KeyCode::Esc | KeyCode::F(9) => {
+                    state.mode = AppMode::Normal;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.skills_selection = state.skills_selection.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let count = state.skills.as_ref()
+                        .and_then(|v| v["skills"].as_array().map(|a| a.len()))
+                        .unwrap_or(0);
+                    if count > 0 {
+                        state.skills_selection = (state.skills_selection + 1).min(count - 1);
+                    }
+                }
+                KeyCode::Char('r') => {
+                    let req = serde_json::json!({
+                        "type": "get_skills",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
+                }
+                _ => {}
+            }
+        }
+        AppMode::MetricsDashboard => {
+            *last_key_was_g = false;
+            match key.code {
+                KeyCode::Esc | KeyCode::F(10) => {
+                    state.mode = AppMode::Normal;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.metrics_scroll = state.metrics_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.metrics_scroll = state.metrics_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp => {
+                    state.metrics_scroll = state.metrics_scroll.saturating_sub(10);
+                }
+                KeyCode::PageDown => {
+                    state.metrics_scroll = state.metrics_scroll.saturating_add(10);
+                }
+                KeyCode::Char('r') => {
+                    let req = serde_json::json!({
+                        "type": "get_metrics",
+                        "group": state.group
+                    });
+                    let _ = ws_out_tx.send(req.to_string()).await;
                 }
                 _ => {}
             }

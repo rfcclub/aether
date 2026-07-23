@@ -1,5 +1,5 @@
 /// Commands handled locally by the TUI — never forwarded to server
-const LOCAL_COMMANDS: &[&str] = &["/clear", "/help", "/quit", "/q", "/run"];
+const LOCAL_COMMANDS: &[&str] = &["/clear", "/help", "/quit", "/q", "/run", "/theme"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandAction {
@@ -13,6 +13,7 @@ pub enum LocalCommand {
     Help,
     Quit,
     Run(String),
+    Theme(String),
 }
 
 pub fn dispatch(input: &str, group: &str) -> Option<CommandAction> {
@@ -32,6 +33,10 @@ pub fn dispatch(input: &str, group: &str) -> Option<CommandAction> {
         "/clear" => Some(CommandAction::Local(LocalCommand::Clear)),
         "/help"  => Some(CommandAction::Local(LocalCommand::Help)),
         "/quit" | "/q" => Some(CommandAction::Local(LocalCommand::Quit)),
+        "/theme" => {
+            let name = input.split_whitespace().nth(1).unwrap_or("").to_string();
+            Some(CommandAction::Local(LocalCommand::Theme(name)))
+        }
         _ => {
             // Forward to server
             let json = serde_json::json!({

@@ -114,3 +114,15 @@ CREATE TABLE IF NOT EXISTS goals (
     deadline TEXT,
     completed_at TEXT
 );
+
+-- Skill evolution records for persistence across restarts
+CREATE TABLE IF NOT EXISTS skill_evolution (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_name TEXT NOT NULL,
+    user_message TEXT NOT NULL,
+    helped INTEGER NOT NULL,
+    confidence_delta REAL NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_evolution_name ON skill_evolution(skill_name);

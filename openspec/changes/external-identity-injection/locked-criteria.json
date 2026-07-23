@@ -1,0 +1,46 @@
+{
+  "title": "external-identity-injection acceptance criteria",
+  "version": "1.0",
+  "criteria": [
+    {
+      "id": "C01",
+      "description": "WS handler accepts identity_system_prompt message type",
+      "source": "RIDER-01"
+    },
+    {
+      "id": "C02",
+      "description": "identity_system_prompt appends to existing system prompt, does not replace",
+      "source": "RIDER-02"
+    },
+    {
+      "id": "C03",
+      "description": "AetherSoul constructor does not call LoadIdentityContext from files",
+      "source": "RIDER-03"
+    },
+    {
+      "id": "C04",
+      "description": "Backward compatible: no identity injected = default system prompt only",
+      "source": "Constraints"
+    },
+    {
+      "id": "C05",
+      "description": "Không implement colony multi-agent hay boundary conflicts trong change này",
+      "source": "Non-Goals"
+    },
+    {
+      "id": "C06",
+      "description": "Không ANIMA integration trong change này",
+      "source": "Non-Goals"
+    },
+    {
+      "id": "C07",
+      "description": "Không compile/render identity như ANIMA ProjectionCompiler",
+      "source": "Non-Goals"
+    },
+    {
+      "id": "C08",
+      "description": "Identity từ rider gửi thẳng qua WS, không cần server-side compile",
+      "source": "Design Decision"
+    }
+  ]
+}

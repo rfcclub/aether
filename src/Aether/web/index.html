@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="forge">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Aether</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <a href="#chat-log" class="skip-link">Skip to chat</a>
+
+    <header class="header" role="banner">
+        <div class="header-left">
+            <span class="header-title" id="header-title">Aether</span>
+            <span class="header-subtitle" id="header-subtitle" aria-live="polite"></span>
+        </div>
+        <div class="header-right">
+            <span class="status-dot" id="status-dot" role="status" aria-label="Connection status"></span>
+            <span class="status-text" id="status-text" aria-live="polite">Disconnected</span>
+            <button id="theme-btn" class="header-btn" aria-label="Switch theme" title="Switch theme">Theme</button>
+            <button id="help-btn" class="header-btn" aria-label="Show help" title="Help (Ctrl+H)">?</button>
+        </div>
+    </header>
+
+    <main class="chat-container" role="main">
+        <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Chat messages" tabindex="0"></div>
+        <div id="scroll-btn" class="scroll-btn hidden" role="button" aria-label="Jump to latest messages" tabindex="0">↓ Latest</div>
+    </main>
+
+    <footer class="input-bar" role="contentinfo">
+        <div class="input-wrapper">
+            <textarea id="input" class="input" rows="1" placeholder="Send a message... (Enter to send, Shift+Enter for newline)" aria-label="Message input" autocomplete="off"></textarea>
+            <button id="send-btn" class="send-btn" aria-label="Send message">Send</button>
+            <button id="cancel-btn" class="cancel-btn hidden" aria-label="Cancel generation">Cancel</button>
+        </div>
+        <div class="input-hints">
+            <span class="hint"><kbd>Enter</kbd> send</span>
+            <span class="hint"><kbd>Shift+Enter</kbd> newline</span>
+            <span class="hint"><kbd>Ctrl+H</kbd> help</span>
+            <span class="hint"><kbd>Ctrl+K</kbd> models</span>
+            <span class="hint"><kbd>/theme</kbd> switch theme</span>
+        </div>
+    </footer>
+
+    <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal">
+            <div class="modal-header">
+                <span id="modal-title" class="modal-title"></span>
+                <button id="modal-close" class="modal-close" aria-label="Close dialog">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body"></div>
+        </div>
+    </div>
+
+    <div id="help-overlay" class="help-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="help-content">
+            <div class="help-header">
+                <span id="help-title" class="help-title">Keyboard Shortcuts & Commands</span>
+                <button id="help-close" class="modal-close" aria-label="Close help">&times;</button>
+            </div>
+            <div class="help-section">
+                <h3>Shortcuts</h3>
+                <div class="help-grid">
+                    <div><kbd>Enter</kbd></div><div>Send message</div>
+                    <div><kbd>Shift+Enter</kbd></div><div>Newline</div>
+                    <div><kbd>Ctrl+K</kbd></div><div>Model picker</div>
+                    <div><kbd>Ctrl+H</kbd></div><div>Help</div>
+                    <div><kbd>Esc</kbd></div><div>Cancel generation / close dialog</div>
+                </div>
+            </div>
+            <div class="help-section">
+                <h3>Slash Commands</h3>
+                <div class="help-grid">
+                    <div><code>/clear</code></div><div>Clear chat log</div>
+                    <div><code>/help</code></div><div>Show this help</div>
+                    <div><code>/theme &lt;name&gt;</code></div><div>Switch theme (forge, matrix, amber, mono, high-contrast)</div>
+                    <div><code>/status</code></div><div>Show connection status</div>
+                    <div><code>/models</code></div><div>Open model picker</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
